@@ -1,0 +1,8 @@
+﻿# Агент на Windows (читает MT5 и шлёт на сервер)
+MetaTrader5>=5.0.45
+requests>=2.31
+python-dotenv>=1.0
+
+# Бот и вебхук на сервере
+aiogram>=3.15
+aiohttp>=3.9
