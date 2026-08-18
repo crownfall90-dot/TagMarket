@@ -102,7 +102,8 @@ async def notify(app, text: str) -> None:
     try:
         await app["tg"].post(
             f"https://api.telegram.org/bot{os.environ['TELEGRAM_BOT_TOKEN']}/sendMessage",
-            data={"chat_id": chat_id, "parse_mode": "HTML", "text": text})
+            data={"chat_id": chat_id, "parse_mode": "HTML", "text": text},
+            proxy=app.get("proxy"))
     except Exception as e:
         log.warning("не отправил в Telegram: %s", e)
 
@@ -184,6 +185,9 @@ async def main():
     import aiohttp
     app = web.Application()
     app["db"] = partner.open_db()
+    # Telegram недоступен с сервера напрямую (Москва) — тот же прокси, что у бота.
+    # Без него вебхуки исправно приходили, а сообщения молча не доставлялись
+    app["proxy"] = os.getenv("TELEGRAM_PROXY", "").split(",")[0].strip() or None
     app["tg"] = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15))
     app["trades"] = store.open_db()
     app.router.add_route("*", "/hook/registration", on_registration)

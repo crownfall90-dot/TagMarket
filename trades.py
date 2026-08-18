@@ -36,9 +36,9 @@ BROKER_FEE = float(os.getenv("BROKER_FEE", 0.30))
 # С какой даты показывать историю. Сделки до неё в базе остаются, но в отчёты
 # не попадают — так отсечку можно двигать, ничего не теряя
 REPORT_FROM = datetime.fromisoformat(os.getenv("REPORT_FROM", "2026-07-01"))
-# Часовой пояс для отметок времени, показываемых человеку («гость зашёл в …»).
-# Сделки остаются по UTC: сдвиг перенёс бы поздние вечерние на следующий день
-TZ_HOURS = float(os.getenv("TZ_HOURS", 3))      # Москва
+# Пояс сервера брокера: его время стоит в метках сделок, по нему же считаются
+# дни и границы периодов. Совпадает с московским
+TZ_HOURS = float(os.getenv("TZ_HOURS", 3))
 
 # Брокер держит торговый баланс равным деньгам инвестора × множитель Amplify,
 # поэтому свои деньги считаются из баланса — депозиты и выводы подхватываются сами.
@@ -383,21 +383,26 @@ def account():
 
 
 def clock(ts: float = None) -> datetime:
-    """Время как в портале — UTC.
+    """Часы в том же масштабе, что и метки сделок.
 
-    Именно по нему группируются сделки по дням: сдвиг в местное перенёс бы
-    поздние вечерние сделки на следующий день и разошёлся бы с отчётами
-    стратегии. Для отметок вроде «гость зашёл» есть local() ниже.
+    Терминал отдаёт время сервера брокера, а это московское: реинвест с меткой
+    15:29:26 пришёл в Telegram в 15:30. Часы же возвращали UTC и отставали на
+    три часа — всё, что случилось за последние три часа, не попадало в выборку
+    «до сейчас». Из-за этого пропущенного пополнения доходность счёта считалась
+    от завышенного капитала: 6.72% вместо 7.79%.
     """
-    if ts is None:
-        return datetime.now(timezone.utc).replace(tzinfo=None)
-    return datetime.fromtimestamp(ts, timezone.utc).replace(tzinfo=None)
+    base = (datetime.now(timezone.utc) if ts is None
+            else datetime.fromtimestamp(ts, timezone.utc))
+    return (base + timedelta(hours=TZ_HOURS)).replace(tzinfo=None)
 
 
 def local(when: datetime) -> datetime:
-    """UTC → местное время. Только для показа человеку: часы события, когда
-    кто-то зашёл. Сделок не касается — их дни считаются по UTC."""
-    return when + timedelta(hours=TZ_HOURS)
+    """Время события для показа человеку.
+
+    Часы и метки сделок уже идут по Москве, так что переводить нечего —
+    функция осталась точкой правки, если сервер брокера сменит пояс.
+    """
+    return when
 
 
 def _convert(deal) -> dict:
@@ -724,7 +729,7 @@ def fmt_report(title: str, rows: list[dict], cur: str, subtitle: str = "",
             share = f" · <i>{col(pcts[d], wp)}</i>" if cap else ""
             lines.append(f"{d:%d.%m} · <b>{col(vals[d], wv)}</b>{share} · "
                          f"{len(by_day[d])} сд · <i>{WEEKDAYS[d.weekday()]}</i>")
-        out += ["", "📅 <b>По дням</b> <i>(UTC+0)</i>", quote(lines)]
+        out += ["", "📅 <b>По дням</b> <i>(МСК)</i>", quote(lines)]
     elif with_deals:
         shown = [r for r in rows if r["is_closing"]]
         vals = [net_of_fee(mine(r["net"])) for r in shown[-40:]]
@@ -737,7 +742,7 @@ def fmt_report(title: str, rows: list[dict], cur: str, subtitle: str = "",
             lines.append(f"{r['time']:%H:%M} · <b>{col(money(val), wv)}</b>{share} · "
                          f"<i>{r['side']} {short(r['symbol'])}</i>")
         if lines:
-            out += ["", "📊 <b>Сделки</b> <i>(UTC+0)</i>", quote(lines)]
+            out += ["", "📊 <b>Сделки</b> <i>(МСК)</i>", quote(lines)]
         if len(shown) > 40:
             out.append(f"<i>последние 40 из {len(shown)}</i>")
 
@@ -997,6 +1002,21 @@ def _nth_word(n: int) -> str:
     return words.get(n, f"{n}-я")
 
 
+def late_note(row: dict) -> str:
+    """Пометка, если событие догнало нас с опозданием.
+
+    Пока ноутбук выключен, сделки не отслеживаются, а после включения приходят
+    пачкой. Время в уведомлении — самой операции, но без оговорки старое
+    событие читается как только что случившееся.
+    """
+    behind = (clock() - row["time"]).total_seconds() / 60
+    if behind < 30:
+        return ""
+    if behind < 600:
+        return f"<i>пришло с опозданием на {behind / 60:.0f} ч — терминал был offline</i>"
+    return f"<i>событие от {row['time']:%d.%m}, пришло после включения терминала</i>"
+
+
 def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int = None,
                      total_net: float = None) -> str:
     """Уведомление о событии на счёте. Про открытие позиций не пишем."""
@@ -1089,4 +1109,5 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
             out.append(f"📈 Накоплено профита: <b>{amount(kept, cur, signed=True)}</b> "
                        f"<i>(не выведен)</i>")
         out.append(f"📊 Всего на стратегии: <b>{amount(total, cur)}</b>")
+    out.append(late_note(row))
     return "\n".join(out)
