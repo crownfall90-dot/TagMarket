@@ -705,17 +705,12 @@ def fmt_report(title: str, rows: list[dict], cur: str, subtitle: str = "",
     shape = spark([net_of_fee(mine(sum(by_day[d]))) for d in sorted(by_day)])
     if shape:
         out.append(f"<code>{shape}</code>  <i>по дням</i>")
-    out.append("<i>чистыми, на руки</i>")
-
-    detail = []
     if gross != net:
-        # человеку понятнее «сколько забрал брокер», чем «сколько было до него»
-        detail.append(f"заработано {amount(gross, signed=True)}, брокер удержал "
-                      f"{amount(abs(gross - net))} ({BROKER_FEE * 100:.0f}%)")
+        out.append(f"<i>заработано: {amount(gross, signed=True)}</i>")
+        out.append(f"<i>удержано: {amount(abs(gross - net))} "
+                   f"({BROKER_FEE * 100:.0f}%)</i>")
     if s["platform"]:
-        detail.append(f"плата платформы {amount(mine(s['platform']), signed=True)}")
-    if detail:
-        out.append("<i>" + " · ".join(detail) + "</i>")
+        out.append(f"<i>плата платформы: {amount(mine(s['platform']), signed=True)}</i>")
 
     count = s["count"] + old_count
     if count:
@@ -723,16 +718,16 @@ def fmt_report(title: str, rows: list[dict], cur: str, subtitle: str = "",
         # верна и для периодов, чьи сделки уже удалены из базы
         wins, losses = s["wins"] + old_wins, s["losses"] + old_losses
         rate = wins / count * 100
-        out.append(f"📈 <b>{count}</b> сделок: <b>{wins}</b> в плюс, "
-                   f"<b>{losses}</b> в минус <i>({rate:.2f}% удачных)</i>")
+        word = "сделка" if count % 10 == 1 and count % 100 != 11 else                "сделки" if count % 10 in (2, 3, 4) and count % 100 not in (12, 13, 14)                else "сделок"
+        out.append(f"📈 <b>{count}</b> {word}: {wins} в плюс, {losses} в минус "
+                   f"<i>({rate:.0f}%)</i>")
     if s["put_in"] or s["took_out"]:
         moves = []
         if s["put_in"]:
             moves.append(f"завёл <b>{amount(s['put_in'], cur)}</b>")
         if s["took_out"]:
             moves.append(f"вывел <b>{amount(abs(s['took_out']), cur)}</b>")
-        out.append("💵 " + " · ".join(moves) + f" <i>(это не заработок, "
-                   f"а перемещение денег)</i>")
+        out.append("💵 " + " · ".join(moves))
 
     # по дням — только чистый профит и число сделок, без путающего баланса
     if len(by_day) > 1:

@@ -129,10 +129,10 @@ trades.capital = lambda: 1000.0
 report = trades.fmt_report("Тест", rows, "USD", "подзаголовок")
 # главная цифра — чистыми: (95 − 53 − 4 платы) = 38 валовых, минус 30% комиссии брокера
 assert "+26.60" in report and "$" in report, report
-assert "+38.00" in report and "брокер удержал" in report, report
+assert "заработано: +38.00" in report and "удержано:" in report, report
 assert "по дням" in report, "мини-график формы периода"
 assert "11.40" in report, "видно, сколько именно удержал брокер: 38.00 − 26.60"
-assert "плата платформы -4.00" in report, report
+assert "плата платформы: -4.00" in report, report
 
 # капитал усиливается плечом (÷24), а вывод прибыли — реальные деньги (×1)
 trades._multiplier = 24
