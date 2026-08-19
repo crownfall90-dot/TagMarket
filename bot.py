@@ -218,7 +218,7 @@ def account_totals(acc: dict) -> dict | None:
             by_day.setdefault(r["time"].date(), 0.0)
             by_day[r["time"].date()] += r["net"]
 
-    return {"now": my, "pnl": earned,
+    return {"now": my, "pnl": earned, "kept": trades.retained(),
             "days": [trades.net_of_fee(trades.mine(by_day[d])) for d in sorted(by_day)],
             "month_pct": trades.growth_pct(month_rows, rows),
             "roi": trades.growth_all(),
@@ -235,12 +235,13 @@ def dashboard(owner) -> tuple[str, InlineKeyboardMarkup]:
 
     blocks, rows = [], []
     grand_now = grand_pnl = grand_month = 0.0
-    grand_weighted = grand_weighted_roi = 0.0
+    grand_weighted = grand_weighted_roi = grand_kept = 0.0
     cur = "USD"
     for cab, info in sorted(groups.items()):
         now = pnl = month = 0.0
         month_trades = dead = 0
         weighted = weighted_roi = 0.0   # проценты кабинета — средние по счетам
+        kept = 0.0                      # профит, не выведенный со стратегии
         days: list = []
         for acc in info["accounts"]:
             t = account_totals(acc)
@@ -248,6 +249,7 @@ def dashboard(owner) -> tuple[str, InlineKeyboardMarkup]:
                 dead += 1
                 continue
             now += t["now"]
+            kept += t["kept"]
             pnl += t["pnl"]
             month += t["month_net"]
             month_trades += t["month_trades"]
@@ -263,6 +265,7 @@ def dashboard(owner) -> tuple[str, InlineKeyboardMarkup]:
         grand_now += now
         grand_pnl += pnl
         grand_month += month
+        grand_kept += kept
         grand_weighted += weighted
         grand_weighted_roi += weighted_roi
         roi = weighted_roi / now if now else 0.0
@@ -283,7 +286,10 @@ def dashboard(owner) -> tuple[str, InlineKeyboardMarkup]:
         mark = "▲" if month >= 0 else "▼"
         blocks.append(
             f"👤 <b>{html.escape(who)}</b>\n"
-            f"<blockquote>💎 <b>{trades.amount(now, cur)}</b>\n"
+            # рядом с капиталом — профит, который лежит нетронутым: без него
+            # непонятно, сколько денег на стратегии на самом деле
+            f"<blockquote>💎 <b>{trades.amount(now, cur)}</b>"
+            f" + <b>{trades.amount(kept)}</b> <i>профит</i>\n"
             f"{mark} {MONTHS[trades.clock().month].lower()} <b>{trades.amount(month, signed=True)}</b>"
             f" · <i>{trades.pct(month_pct)}</i>\n"
             f"◆ всего <b>{trades.amount(pnl, signed=True)}</b> · <i>{trades.pct(roi)}</i>\n"
@@ -298,7 +304,8 @@ def dashboard(owner) -> tuple[str, InlineKeyboardMarkup]:
         total_roi = grand_weighted_roi / grand_now if grand_now else 0.0
         month_pct = grand_weighted / grand_now if grand_now else 0.0
         mark = "▲" if grand_month >= 0 else "▼"
-        head += (f"\n<blockquote>💎 <b>{trades.amount(grand_now, cur)}</b>\n"
+        head += (f"\n<blockquote>💎 <b>{trades.amount(grand_now, cur)}</b>"
+                 f" + <b>{trades.amount(grand_kept)}</b> <i>профит</i>\n"
                  f"{mark} {now_month.lower()} <b>{trades.amount(grand_month, signed=True)}</b>"
                  f" · <i>{trades.pct(month_pct)}</i>\n"
                  f"◆ всего <b>{trades.amount(grand_pnl, signed=True)}</b>"
