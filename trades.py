@@ -967,6 +967,56 @@ def fmt_archive(cur: str, since: datetime = None, until: datetime = None) -> str
             + quote(lines))
 
 
+def fmt_money_moves(cur: str, limit: int = 60) -> str:
+    """История движения денег по счёту: пополнения, реинвесты и выводы.
+
+    Сделки тут не нужны — они в отчётах. Здесь только перемещения: откуда
+    пришли деньги и куда ушли, помесячно, чтобы картина складывалась сразу.
+    """
+    rows = [r for r in fetch(REPORT_FROM, clock() + timedelta(days=1))
+            if r["is_balance"] and is_transfer(r)]
+    if not rows:
+        return f"💵 <b>Движение денег</b>\n{THIN}\n<i>Пополнений и выводов не было.</i>"
+
+    by_month: dict = {}
+    for r in rows[-limit:]:
+        by_month.setdefault(f"{r['time']:%Y-%m}", []).append(r)
+
+    out = ["💵 <b>Движение денег</b>", THIN]
+    for key in sorted(by_month, reverse=True):
+        moves = sorted(by_month[key], key=lambda r: r["time"], reverse=True)
+        put_in = sum(own_amount(r) for r in moves if r["net"] > 0)
+        took = sum(own_amount(r) for r in moves if r["net"] < 0)
+        name = MONTHS.get(int(key[5:7]), key)
+
+        lines = []
+        for r in moves:
+            own = own_amount(r)
+            note = (r["comment"] or "").lower()
+            # называем операцию так, как она есть на самом деле: откуда деньги
+            # пришли и куда ушли — иначе «пополнение» и «реинвест» неразличимы
+            if is_profit_side(r):
+                icon, what = (("➡️", "вывод профита на баланс Tag Markets") if own < 0
+                              else ("⬅️", "профит вернулся на стратегию"))
+            elif own < 0:
+                icon, what = "➡️", "вывод капитала на баланс Tag Markets"
+            elif "upgrade" in note:
+                icon, what = "🔄", "реинвест с профита в стратегию"
+            else:
+                icon, what = "⬅️", "депозит на стратегию"
+            lines.append(f"{r['time']:%d.%m %H:%M} · {icon} <b>{amount(own, signed=True)}</b>"
+                         f"\n<i>{what}</i>")
+        head = []
+        if put_in:
+            head.append(f"завёл {amount(put_in, cur)}")
+        if took:
+            head.append(f"вывел {amount(abs(took), cur)}")
+        summary_line = f" <i>({' · '.join(head)})</i>" if head else ""
+        out.append(f"\n<b>{name}</b>{summary_line}")
+        out.append(quote(lines))
+    return "\n".join(out)
+
+
 def fmt_head(cur: str) -> str:
     """Шапка счёта: баланс стратегии и весь заработок с процентом — одной строкой."""
     cap = capital()

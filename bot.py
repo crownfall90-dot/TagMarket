@@ -770,6 +770,8 @@ def account_menu(name: str, owner) -> tuple[str, InlineKeyboardMarkup]:
 
     base_txt = (f"💰 Invested {acc['base']:.0f}" if acc.get("base") is not None
                 else "💰 Указать Invested")
+    rows.append([InlineKeyboardButton(text="💵 Движение денег",
+                                      callback_data=f"cfg:moves:{name}")])
     rows.append([InlineKeyboardButton(text=base_txt, callback_data=f"cfg:base:{name}"),
                  InlineKeyboardButton(text="✏️ Имя", callback_data=f"cfg:ren:{name}"),
                  InlineKeyboardButton(text="🗑", callback_data=f"cfg:del:{name}")])
@@ -1443,6 +1445,23 @@ async def main():
         await cb.answer("удалён" if ok else "не найден")
         text, kb = settings_menu(cb.from_user.id, db)
         await swap(cb, text, kb)
+
+    @dp.callback_query(F.data.startswith("cfg:moves:"))
+    async def cfg_money_moves(cb: CallbackQuery):
+        name = cb.data.split(":", 2)[2]
+        acc = accounts.by_name(name, cb.from_user.id)
+        if not acc:
+            await cb.answer("Счёт не найден", show_alert=True)
+            return
+        await cb.answer()
+        if not connect(acc):
+            await swap(cb, no_mt5(acc), account_menu(name, cb.from_user.id)[1])
+            return
+        text = trades.fmt_money_moves(trades.currency())
+        await swap(cb, f"🏷 <b>{html.escape(name)}</b>\n{text}",
+                   InlineKeyboardMarkup(inline_keyboard=[[
+                       InlineKeyboardButton(text="↩︎ Назад",
+                                            callback_data=f"cfg:acc:{name}")]]))
 
     @dp.callback_query(F.data.startswith("cfg:base:"))
     async def cfg_base_ask(cb: CallbackQuery, state: FSMContext):
