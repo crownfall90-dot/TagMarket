@@ -33,6 +33,7 @@ THIN = "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
 SHARE = float(os.getenv("INVESTOR_SHARE", 1) or 1)
 # Доля брокера с прибыли: 30% удерживается, остальное — чистая прибыль инвестора
 BROKER_FEE = float(os.getenv("BROKER_FEE", 0.30))
+DUST = 0.5      # мельче этого — след округлений, а не остаток профита
 # С какой даты показывать историю. Сделки до неё в базе остаются, но в отчёты
 # не попадают — так отсечку можно двигать, ничего не теряя
 REPORT_FROM = datetime.fromisoformat(os.getenv("REPORT_FROM", "2026-07-01"))
@@ -288,6 +289,33 @@ def growth_pct(rows: list[dict], flows: list[dict] = None) -> float:
         if base > 0:
             total += net_of_fee(mine(r["net"])) / base
     return total * 100
+
+
+def retained() -> float:
+    """Накопленный профит чистыми — то, что реально лежит на стратегии.
+
+    В баланс счёта прибыль попадает валовой: свою долю брокер списывает не с
+    каждой сделки, а раз в неделю строкой PF Deduction. Поэтому «баланс минус
+    капитал» — это профит ДО удержания, и показывать его рядом с суммами
+    «чистыми» нельзя: после сделки на 36.31 валовых бот писал 49.21 накоплено,
+    хотя на руки причиталось 25.42.
+    Вычитаем долю с тех сделок, по которым брокер ещё не прошёлся.
+    """
+    gross = invested() - capital()
+    if not gross:
+        return 0.0
+    try:
+        rows = fetch(REPORT_FROM, clock() + timedelta(days=1))
+    except Exception:       # истории под рукой нет — отдаём как есть
+        return gross
+    last_fee = max((r["time"] for r in rows if is_perf_fee(r)), default=None)
+    pending = sum(r["net"] for r in rows
+                  if r["is_closing"] and (last_fee is None or r["time"] > last_fee))
+    left = gross - BROKER_FEE * max(pending, 0.0)
+    # Выводы записываются с точностью до копейки, и после нескольких операций
+    # остаётся пыль: вывели весь профит, а бот показывал +0.16. Считаем нулём —
+    # это не деньги, а округление.
+    return 0.0 if abs(left) < DUST else left
 
 
 def invested() -> float:
@@ -730,6 +758,25 @@ def fmt_report(title: str, rows: list[dict], cur: str, subtitle: str = "",
             lines.append(f"{d:%d.%m} · <b>{col(vals[d], wv)}</b>{share} · "
                          f"{len(by_day[d])} сд · <i>{WEEKDAYS[d.weekday()]}</i>")
         out += ["", "📅 <b>По дням</b> <i>(МСК)</i>", quote(lines)]
+
+        # Недели отдельным блоком: в месячном отчёте тридцать строк по дням
+        # не складываются в голове, а по неделям картина видна сразу.
+        weeks: dict = {}
+        for d in days:
+            key = d.isocalendar()[:2]       # год и номер недели
+            w = weeks.setdefault(key, {"from": d, "to": d, "money": 0.0,
+                                       "gain": 1.0, "trades": 0})
+            w["to"] = d
+            w["money"] += totals[d]
+            w["gain"] *= gains[d]
+            w["trades"] += len(by_day[d])
+        if len(weeks) > 1:
+            wm = widest([money(w["money"]) for w in weeks.values()])
+            wp2 = widest([pct((w["gain"] - 1) * 100) for w in weeks.values()])
+            wl = [f"{w['from']:%d.%m}–{w['to']:%d.%m} · <b>{col(money(w['money']), wm)}</b>"
+                  f" · <i>{col(pct((w['gain'] - 1) * 100), wp2)}</i> · {w['trades']} сд"
+                  for w in weeks.values()]
+            out += ["", "🗓 <b>По неделям</b>", quote(wl)]
     elif with_deals:
         shown = [r for r in rows if r["is_closing"]]
         vals = [net_of_fee(mine(r["net"])) for r in shown[-40:]]
@@ -1102,8 +1149,8 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
     # стратегии, и новые сделки прибавляются к нему. Раньше «всего» считалось
     # как капитал + профит одного дня — вчерашний нетронутый профит терялся.
     if cap:
-        total = invested()          # капитал + всё, что накопилось сверх него
-        kept = total - cap
+        kept = retained()           # чистыми, за вычетом доли брокера
+        total = cap + kept
         out.append(f"💰 Капитал: <b>{amount(cap, cur)}</b>")
         if abs(kept) >= 0.01:
             out.append(f"📈 Накоплено профита: <b>{amount(kept, cur, signed=True)}</b> "

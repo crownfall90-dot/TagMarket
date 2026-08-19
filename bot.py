@@ -865,6 +865,9 @@ def build_all(name: str, owner=None, cabinet: str = None) -> str:
     title, since, until, subtitle = period(name)
     lines, total_my, total_period, total_ever, cur = [], 0.0, 0.0, 0.0, ""
     total_kept = 0.0        # накопленный профит: лежит на стратегии, не выведен
+    # профит — величина «на сейчас». Рядом с прошлой неделей или месяцем он
+    # читался бы как профит того периода, чем он не является
+    now_view = name == "today"
     scope = accounts.in_cabinet(owner, cabinet) if cabinet else accounts.load(owner)
     for acc in scope:
         label = short_name(acc, cabinet)
@@ -873,7 +876,7 @@ def build_all(name: str, owner=None, cabinet: str = None) -> str:
             continue
         cur = trades.currency()
         my = trades.capital()       # реальные деньги, не торговый баланс ×плечо
-        kept = trades.invested() - my   # профит, который ещё не вывели
+        kept = trades.retained()    # профит чистыми, который ещё не вывели
         per = trades.net_of_fee(trades.mine(trades.summary(trades.fetch(since, until))["total"]))
         ever = trades.net_of_fee(trades.mine(trades.summary(trades.fetch(datetime(2000, 1, 1), trades.clock()))["total"]))
         total_my += my
@@ -881,7 +884,8 @@ def build_all(name: str, owner=None, cabinet: str = None) -> str:
         total_period += per
         total_ever += ever
         mark = "▲" if per > 0 else ("▼" if per < 0 else "•")
-        on_top = f" + {trades.amount(abs(kept))} профит" if abs(kept) >= 0.01 else ""
+        on_top = (f" + {trades.amount(abs(kept))} профит"
+                  if now_view and abs(kept) >= 0.01 else "")
         lines.append(f"{mark} <b>{html.escape(label)}</b> · {trades.amount(my)}{on_top}\n"
                      f"<i>период {trades.amount(per, signed=True)} · "
                      f"всего {trades.amount(ever, signed=True)}</i>")
@@ -891,9 +895,10 @@ def build_all(name: str, owner=None, cabinet: str = None) -> str:
     # не вывели, и одной суммой непонятно, сколько из этого заработано
     split = (f"\n<i>капитал {trades.amount(total_my)} · "
              f"профит {trades.amount(total_kept, signed=True)}</i>"
-             if abs(total_kept) >= 0.01 else "")
+             if now_view and abs(total_kept) >= 0.01 else "")
+    on_strategy = total_my + (total_kept if now_view else 0.0)
     head = (f"👤 <b>{html.escape(where)}</b>\n"
-            f"💎 <b>{trades.amount(total_my + total_kept, cur)}</b> на стратегии{split}\n"
+            f"💎 <b>{trades.amount(on_strategy, cur)}</b> на стратегии{split}\n"
             f"◆ <i>всего заработано {trades.amount(total_ever, signed=True)}</i>")
     table = trades.quote(lines)
     # пустая суббота — не поломка: рынок закрыт, и «+0.00» без пояснения пугает
@@ -2052,11 +2057,13 @@ async def main():
                         os._exit(1)     # именно так: обычный выход задачу не убьёт
 
         async def daily_digest():
-            """Раз в сутки — короткий отчёт, что всё живо.
+            """Раз в сутки — сводка о состоянии, если человек её просил.
 
-            Тишина бота двусмысленна: то ли выходной и сделок нет, то ли он
-            умер. Ежедневная строчка снимает этот вопрос, не дожидаясь, пока
-            пропажу заметят по отсутствию сделок.
+            Сама по себе строчка «счетов отслеживается 0 из 4» бесполезна:
+            утром ноутбук обычно выключен, и это норма, а не новость. Поэтому
+            сводка идёт только тем, кто включил уведомления о связи, и только
+            когда есть что сказать: доход с сети или счета реально отвалились
+            среди рабочего дня.
             """
             import store as _st
             while True:
