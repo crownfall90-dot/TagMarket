@@ -706,11 +706,11 @@ def fmt_report(title: str, rows: list[dict], cur: str, subtitle: str = "",
     if shape:
         out.append(f"<code>{shape}</code>  <i>по дням</i>")
     if gross != net:
-        out.append(f"<i>заработано: {amount(gross, signed=True)}</i>")
-        out.append(f"<i>удержано: {amount(abs(gross - net))} "
+        out.append(f"<i>заработано: {amount(gross, cur, signed=True)} · "
+                   f"удержано: {amount(abs(gross - net), cur)} "
                    f"({BROKER_FEE * 100:.0f}%)</i>")
     if s["platform"]:
-        out.append(f"<i>плата платформы: {amount(mine(s['platform']), signed=True)}</i>")
+        out.append(f"<i>плата платформы: {amount(mine(s['platform']), cur, signed=True)}</i>")
 
     count = s["count"] + old_count
     if count:
