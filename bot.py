@@ -878,7 +878,13 @@ def build_all(name: str, owner=None, cabinet: str = None) -> str:
         my = trades.capital()       # реальные деньги, не торговый баланс ×плечо
         kept = trades.retained()    # профит чистыми, который ещё не вывели
         per = trades.net_of_fee(trades.mine(trades.summary(trades.fetch(since, until))["total"]))
-        ever = trades.net_of_fee(trades.mine(trades.summary(trades.fetch(datetime(2000, 1, 1), trades.clock()))["total"]))
+        # плюс свёрнутые месяцы: их сделки удалены, остались только суммы —
+        # без них «за всё время» обрывалось на текущем месяце
+        ever = trades.net_of_fee(trades.mine(
+            trades.summary(trades.fetch(datetime(2000, 1, 1), trades.clock()))["total"]
+            + trades.archived_before_now()[0]))
+        if since <= trades.REPORT_FROM:     # период захватывает архив
+            per = ever
         total_my += my
         total_kept += kept
         total_period += per
@@ -889,6 +895,32 @@ def build_all(name: str, owner=None, cabinet: str = None) -> str:
         lines.append(f"{mark} <b>{html.escape(label)}</b> · {trades.amount(my)}{on_top}\n"
                      f"<i>период {trades.amount(per, signed=True)} · "
                      f"всего {trades.amount(ever, signed=True)}</i>")
+
+    # помесячная история — в отчёте за всё время: в карточке счёта она есть,
+    # а в сводке кабинета обрывалась, хотя данные те же
+    months = ""
+    if name == "all":
+        by_month: dict = {}
+        for acc in scope:
+            if not connect(acc):
+                continue
+            for m in trades.monthly(limit=1000):
+                got = by_month.setdefault(m["month"], {"net": 0.0, "trades": 0})
+                got["net"] += trades.net_of_fee(trades.mine(
+                    (m["gross"] or 0.0) + (m["platform"] or 0.0)))
+                got["trades"] += m["trades"] or 0
+        if len(by_month) > 1:
+            now_key = trades.clock().strftime("%Y-%m")
+            rows_m = []
+            for key in sorted(by_month):
+                got = by_month[key]
+                # своё имя переменной: title занят заголовком периода, и
+                # перезапись превращала «За всё время» в «Август»
+                month_name = trades.MONTHS.get(int(key[5:7]), key)
+                mark = " <i>(идёт)</i>" if key == now_key else ""
+                rows_m.append(f"<b>{trades.amount(got['net'], signed=True)}</b> · "
+                              f"{got['trades']} сд · <i>{month_name}</i>{mark}")
+            months = "\n\n📦 <b>По месяцам</b>\n" + trades.quote(rows_m)
 
     where = accounts.label(cabinet, owner) if cabinet else "Все счета"
     # капитал и накопленный профит порознь: профит лежит на стратегии, пока его
@@ -909,7 +941,7 @@ def build_all(name: str, owner=None, cabinet: str = None) -> str:
         total = (f"{'▲' if total_period >= 0 else '▼'} "
                  f"<b>{trades.amount(total_period, cur, signed=True)}</b>")
     return (f"{head}\n\n<b>{title}</b>  <i>{subtitle}</i>\n{trades.THIN}\n"
-            f"{total}\n\n{table}")
+            f"{total}\n\n{table}{months}")
 
 
 def parse_date(s: str) -> date:
