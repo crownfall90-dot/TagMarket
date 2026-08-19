@@ -59,15 +59,54 @@ def who(row: dict) -> str:
     return name or str(pick(row, "name", "full_name", "email", "customer_no", default="—"))
 
 
+def whose(row) -> tuple[str, bool]:
+    """Чей это кабинет: имя владельца и свой ли он.
+
+    Портал присылает номер вида CU261780 — сам по себе он ничего не говорит.
+    Если такой кабинет заведён у нас, подставляем имя человека, а событие
+    перестаёт быть «депозитом клиента»: это перемещение собственных денег.
+    """
+    number = str(pick(row, "customer_no", "customer", "client_no") or "").strip()
+    if number:
+        try:
+            import accounts
+            for acc in accounts.load():
+                if str(acc.get("cabinet") or "").strip() == number:
+                    return (acc.get("holder") or number), True
+        except Exception:       # счета недоступны — обойдёмся номером
+            pass
+    return (number or who(row)), False
+
+
+def _event(head: str, row, note: str = "") -> str:
+    stamp = str(when(row) or "").strip()
+    name, _ = whose(row)
+    out = [head, THIN, f"<b>{money(row)}</b>", f"👤 {html.escape(name)}"]
+    if note:
+        out.append(f"<i>{note}</i>")
+    if stamp:           # пустые часы только засоряли сообщение
+        out.append(f"🕒 {stamp}")
+    return "\n".join(out)
+
+
 def fmt_deposit(row):
     ftd = str(pick(row, "is_ftd", "ftd")).lower() in ("true", "1", "yes")
-    head = "🔥 <b>ПЕРВЫЙ депозит клиента (FTD)</b>" if ftd else "💰 <b>Депозит клиента</b>"
-    return f"{head}\n{THIN}\n<b>{money(row)}</b>\n👤 {html.escape(who(row))}\n🕒 {when(row)}"
+    _, mine = whose(row)
+    if ftd:
+        return _event("🔥 <b>Первый депозит клиента</b>", row)
+    if mine:
+        # деньги пришли на баланс собственного кабинета: обычно это вывод
+        # профита со стратегии, и «депозит клиента» тут прямо врал
+        return _event("💰 <b>Пополнение баланса кабинета</b>", row,
+                      "деньги на балансе Tag Markets — можно вывести "
+                      "или вернуть в стратегию")
+    return _event("💰 <b>Депозит клиента</b>", row)
 
 
 def fmt_withdrawal(row):
-    return (f"💸 <b>Вывод у клиента</b>\n{THIN}\n<b>{money(row)}</b>\n"
-            f"👤 {html.escape(who(row))}\n🕒 {when(row)}")
+    _, mine = whose(row)
+    return _event("💸 <b>Вывод с баланса кабинета</b>" if mine
+                  else "💸 <b>Вывод у клиента</b>", row)
 
 
 def fmt_lead(row):

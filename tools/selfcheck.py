@@ -60,8 +60,12 @@ assert partner.money({"amount": "3073.00¤cy=ZAR"}) == "3073.00 ZAR", \
 assert partner.money({"amount": "50", "currency": "EUR"}) == "50 EUR"
 assert partner.money({"amount": "50"}) == "50 USD", "без валюты подставляем USD"
 
-assert "FTD" in fmt_deposit({"id": "9", "amount": "100", "is_ftd": "true"})
-assert "FTD" not in fmt_deposit({"id": "8", "amount": "100"})
+# первый депозит клиента выделяется отдельно от обычного
+assert "Первый депозит" in fmt_deposit({"id": "9", "amount": "100", "is_ftd": "true"})
+assert "Первый депозит" not in fmt_deposit({"id": "8", "amount": "100"})
+# свой кабинет узнаётся по номеру: это не «депозит клиента», а свои деньги
+import partner as _p
+assert _p.whose({"customer_no": "CU-неизвестный"}) == ("CU-неизвестный", False)
 assert "&lt;b&gt;" in fmt_lead({"id": "7", "name": "<b>x"}), "HTML в именах должен экранироваться"
 assert fmt_deposit({}) and fmt_lead({}), "пустая запись не должна ронять форматтер"
 
