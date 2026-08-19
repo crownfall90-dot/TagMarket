@@ -739,14 +739,17 @@ def fmt_report(title: str, rows: list[dict], cur: str, subtitle: str = "",
         scale = max(abs(v) for v in totals.values())
         # процент дня — перемноженные доходности его сделок, каждая к капиталу
         # на свой момент: пополнение в середине дня иначе задирает весь день
-        gains = {d: 1.0 for d in days}
+        # доходности складываем, а не перемножаем: прибыль не остаётся на
+        # стратегии и базу не увеличивает. Иначе недельный блок расходился с
+        # процентом того же периода в заголовке — 3.759% против 3.709%
+        gains = {d: 0.0 for d in days}
         for r in rows:
             if r["is_closing"] and r["time"].date() in gains:
                 base = capital_at(r["time"], flows)
                 if base > 0:
-                    gains[r["time"].date()] *= 1 + net_of_fee(mine(r["net"])) / base
+                    gains[r["time"].date()] += net_of_fee(mine(r["net"])) / base
         vals = {d: money(totals[d]) for d in days}
-        pcts = {d: pct((gains[d] - 1) * 100) for d in days}
+        pcts = {d: pct(gains[d] * 100) for d in days}
         wv, wp = widest(vals.values()), widest(pcts.values())
         lines = []
         week = None
@@ -765,16 +768,16 @@ def fmt_report(title: str, rows: list[dict], cur: str, subtitle: str = "",
         for d in days:
             key = d.isocalendar()[:2]       # год и номер недели
             w = weeks.setdefault(key, {"from": d, "to": d, "money": 0.0,
-                                       "gain": 1.0, "trades": 0})
+                                       "gain": 0.0, "trades": 0})
             w["to"] = d
             w["money"] += totals[d]
-            w["gain"] *= gains[d]
+            w["gain"] += gains[d]
             w["trades"] += len(by_day[d])
         if len(weeks) > 1:
             wm = widest([money(w["money"]) for w in weeks.values()])
-            wp2 = widest([pct((w["gain"] - 1) * 100) for w in weeks.values()])
+            wp2 = widest([pct(w["gain"] * 100) for w in weeks.values()])
             wl = [f"{w['from']:%d.%m}–{w['to']:%d.%m} · <b>{col(money(w['money']), wm)}</b>"
-                  f" · <i>{col(pct((w['gain'] - 1) * 100), wp2)}</i> · {w['trades']} сд"
+                  f" · <i>{col(pct(w['gain'] * 100), wp2)}</i> · {w['trades']} сд"
                   for w in weeks.values()]
             out += ["", "🗓 <b>По неделям</b>", quote(wl)]
     elif with_deals:
