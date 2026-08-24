@@ -69,7 +69,7 @@ print("\n═══ РАСЧЁТЫ ПО СЧЕТАМ ═══")
 for acc in accounts.load():
     trades.use(acc)
     name = acc["name"][:26]
-    rows = trades.fetch(datetime(2000, 1, 1), now)
+    rows = trades.fetch(datetime(2000, 1, 1), now + timedelta(days=1))
 
     # 1. заработано = сделки в базе + свёрнутые месяцы
     live = trades.summary(rows)["total"]
@@ -146,7 +146,8 @@ for owner in {a["owner"] for a in accounts.load()}:
         rows = trades.fetch(month_start, now + timedelta(days=1))
         if any(r["is_closing"] for r in rows):
             same.setdefault(acc["strategy"], []).append(
-                trades.growth_pct(rows, trades.fetch(datetime(2000, 1, 1), now)))
+                trades.growth_pct(rows, trades.fetch(datetime(2000, 1, 1),
+                                                     now + timedelta(days=1))))
     for strategy, values in same.items():
         if len(values) > 1:
             check(max(values) - min(values) < 0.5,

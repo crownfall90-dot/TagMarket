@@ -1131,7 +1131,7 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
         if is_profit and is_transfer(row):
             # профит лежит отдельно от капитала, поэтому капитал не меняется
             head = ("♻️ <b>Реинвест: профит → капитал</b>" if moved_in
-                    else "💸 <b>Вывод профита</b>")
+                    else "📤 <b>Профит списан со стратегии</b>")
             where = ("⬇️ Списано из профита, сейчас уйдёт в капитал" if moved_in
                      else "➡️ Профит ушёл на баланс Tag Markets")
             out = [f"🕒 <b>{when}</b>", head, THIN,
@@ -1144,8 +1144,8 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
         if is_transfer(row):
             # изменение капитала: пополнение/реинвест (+) или вывод капитала (−)
             out_of = own < 0
-            head = ("💸 <b>Вывод капитала</b>" if out_of
-                    else "💵 <b>Пополнение / реинвест</b>")
+            head = ("📤 <b>Капитал выведен со стратегии</b>" if out_of
+                    else "📥 <b>Заведено на стратегию</b>")
             where = ("➡️ Ушло на баланс Tag Markets" if out_of
                      else "⬅️ Капитал добавлен в стратегию")
             was, became = capital_around(row)   # состояние ровно на момент операции

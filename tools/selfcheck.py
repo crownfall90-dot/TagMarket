@@ -186,7 +186,7 @@ try:
     dep = {"is_balance": True, "is_opening": False, "is_closing": False,
            "net": 720.0, "comment": "Deposit", "time": datetime(2026, 8, 14, 12, 0)}
     n = trades.fmt_notification(dep, "USD")
-    assert "+30.00$" in n and "Пополнение" in n, n     # 720 ÷ 24 = 30 реальных
+    assert "+30.00$" in n and "Заведено на стратегию" in n, n   # 720 ÷ 24 = 30
     # разряды разделяет узкий неразрывный пробел — сверяем через него же
     _sep = trades.NBSP
     assert f"было 2{_sep}470.00" in n and f"2{_sep}500.00" in n, n
