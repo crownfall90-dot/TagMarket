@@ -78,10 +78,22 @@ def whose(row) -> tuple[str, bool]:
     return (number or who(row)), False
 
 
-def _event(head: str, row, note: str = "") -> str:
+def pretty_money(row: dict, signed: bool = False) -> str:
+    """Сумма в том же виде, что и в остальных уведомлениях: «+0.31 $»."""
+    raw = money(row)                # «0.31 USD» — после разбора мусора портала
+    number, _, currency = raw.rpartition(" ")
+    try:
+        import trades
+        return trades.amount(float(number.replace(" ", "")), currency, signed=signed)
+    except Exception:               # непонятная сумма — отдаём как пришла
+        return raw
+
+
+def _event(head: str, row, note: str = "", sign: str = "") -> str:
     stamp = str(when(row) or "").strip()
     name, _ = whose(row)
-    out = [head, THIN, f"<b>{money(row)}</b>", f"👤 {html.escape(name)}"]
+    out = [head, THIN, f"<b>{pretty_money(row, bool(sign))}</b>",
+           f"👤 {html.escape(name)}"]
     if note:
         out.append(f"<i>{note}</i>")
     if stamp:           # пустые часы только засоряли сообщение
@@ -98,8 +110,8 @@ def fmt_deposit(row):
         # деньги пришли на баланс собственного кабинета: обычно это вывод
         # профита со стратегии, и «депозит клиента» тут прямо врал
         return _event("💰 <b>Пополнение баланса кабинета</b>", row,
-                      "деньги на балансе Tag Markets — можно вывести "
-                      "или вернуть в стратегию")
+                      "на балансе Tag Markets — можно вывести "
+                      "или вернуть в стратегию", sign="+")
     return _event("💰 <b>Депозит клиента</b>", row)
 
 

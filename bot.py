@@ -1058,12 +1058,15 @@ async def poll_mt5(bot: Bot, db) -> int:
                 total_net = trades.mine(trades.summary(
                     trades.fetch(datetime(2000, 1, 1), trades.clock()))["total"])
 
-            # шапка: какая стратегия и чей это кабинет — счета у разных
-            # владельцев могут называться одинаково, и без этого их не различить
-            tag = f"🏷 <b>{html.escape(acc['name'])}</b>"
+            # Шапка как в карточке счёта: сверху стратегия, ниже владелец и
+            # номер. Раньше брали имя счёта, а в нём уже сидит владелец — он
+            # повторялся дважды, а у счетов без суффикса (ALA SHAULIUKOVA)
+            # стратегия не показывалась вовсе.
+            title = acc.get("strategy") or acc["name"]
             who = acc.get("holder") or acc.get("cabinet") or ""
-            if who:
-                tag += f"\n<i>{html.escape(who)}</i>"
+            sub = " · ".join(x for x in (html.escape(who),
+                                         f"<code>{acc['login']}</code>") if x)
+            tag = f"🏷 <b>{html.escape(title)}</b>" + (f"\n<i>{sub}</i>" if sub else "")
             body = trades.fmt_notification(row, cur, day_net, day_count, total_net)
             if not body:            # форматтер решил, что писать не о чем
                 kv_set(db, key, row["ticket"])
