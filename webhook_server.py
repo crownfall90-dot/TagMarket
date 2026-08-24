@@ -171,7 +171,8 @@ async def agent_sync(request):
     login = int(data["login"])
 
     store.save_state(db, login, data.get("balance", 0.0), data.get("equity", 0.0),
-                     data.get("currency", ""), data.get("server", ""))
+                     data.get("currency", ""), data.get("server", ""),
+                     data.get("capital_hist"))
     if data.get("command_done"):        # агент выполнил команду — снимаем её
         store.clear_command(db, login)
     new = store.save_deals(db, login, data.get("deals", []))

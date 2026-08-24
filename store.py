@@ -48,8 +48,10 @@ CREATE TABLE IF NOT EXISTS state (
     currency TEXT,
     server   TEXT,
     synced   TEXT,                 -- когда агент последний раз выходил на связь
-    max_ticket INTEGER DEFAULT 0   -- переживает чистку сделок: иначе агент
-);                                 -- решит, что счёт новый, и зальёт всё заново
+    max_ticket INTEGER DEFAULT 0,  -- переживает чистку сделок: иначе агент
+                                   -- решит, что счёт новый, и зальёт всё заново
+    capital_hist REAL              -- капитал, сложенный агентом из всей истории
+);
 
 -- Сделки храним за текущий месяц, прошлые сворачиваем сюда: детали за годы
 -- не нужны, а итоги должны остаться навсегда.
@@ -89,6 +91,8 @@ def open_db(path: str = None) -> sqlite3.Connection:
     have = {r["name"] for r in db.execute("PRAGMA table_info(state)").fetchall()}
     if "max_ticket" not in have:
         db.execute("ALTER TABLE state ADD COLUMN max_ticket INTEGER DEFAULT 0")
+    if "capital_hist" not in have:
+        db.execute("ALTER TABLE state ADD COLUMN capital_hist REAL")
     # колонки статистики появились позже — базы прошлых версий дополняем
     have = {r["name"] for r in db.execute("PRAGMA table_info(months)").fetchall()}
     for col, kind in (("wins", "INTEGER"), ("losses", "INTEGER"),
@@ -120,13 +124,16 @@ def save_deals(db, login: int, deals: list[dict]) -> int:
     return new
 
 
-def save_state(db, login: int, balance: float, equity: float, currency: str, server: str) -> None:
+def save_state(db, login: int, balance: float, equity: float, currency: str,
+               server: str, capital_hist: float = None) -> None:
     db.execute(
-        "INSERT INTO state (login, balance, equity, currency, server, synced) "
-        "VALUES (?, ?, ?, ?, ?, ?) "
+        "INSERT INTO state (login, balance, equity, currency, server, synced, capital_hist) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(login) DO UPDATE SET balance=excluded.balance, equity=excluded.equity, "
-        "currency=excluded.currency, server=excluded.server, synced=excluded.synced",
-        (int(login), balance, equity, currency, server, utcnow().isoformat()))
+        "currency=excluded.currency, server=excluded.server, synced=excluded.synced, "
+        # капитал агент считает по всей истории; если не смог — держим прежний
+        "capital_hist=COALESCE(excluded.capital_hist, state.capital_hist)",
+        (int(login), balance, equity, currency, server, utcnow().isoformat(), capital_hist))
     db.commit()
 
 

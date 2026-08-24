@@ -208,17 +208,31 @@ def capital() -> float:
     if _base is not None:
         extra = _capital_moves(_base_at) if _base_at else 0.0
         return _base + extra
-    # без привязки: баланс = капитал×плечо + прибыль. Прибыль лежит 1:1 и мала
-    # относительно капитала, поэтому баланс÷плечо — верная оценка вложенного.
-    # Считать по переводам из базы нельзя: депозиты до августа уже свёрнуты в
-    # месячные итоги, и капитал занизился бы почти до нуля (тогда invested()
-    # показывал бы весь торговый баланс ×24 — это и была ошибка «60055$»).
-    # ponytail: overshoot на удержанную_прибыль÷плечо (~0.06%). Задай acc['base']
-    # (Invested из портала) — тогда капитал точный до цента.
+
+    # Капитал, сложенный агентом из всей истории счёта: он видит терминал
+    # целиком, тогда как на сервере старые сделки свёрнуты в месячные итоги.
+    # Это точная величина, и прибыль в неё не попадает.
+    from_history = _stored_capital()
+    if from_history:
+        return from_history
+
+    # Последний рубеж, если агент ещё не присылал: баланс÷плечо. Оценка
+    # завышена на прибыль÷плечо, и отделить прибыль от капитала по ней нельзя —
+    # уравнение одно, неизвестных два.
     a = account()
     if a and _multiplier and _multiplier != 1:
         return a.balance / _multiplier
     return _capital_moves(datetime(2000, 1, 1))
+
+
+def _stored_capital() -> float:
+    """Капитал по всей истории — его считает агент и присылает вместе с балансом."""
+    if HAS_MT5:                     # у терминала история под рукой, считаем сами
+        return _capital_moves(datetime(2000, 1, 1))
+    if not _login:
+        return 0.0
+    row = store.get_state(_store_db(), _login)
+    return float(row["capital_hist"] or 0.0) if row else 0.0
 
 
 def capital_moves_after(rows: list[dict], when: datetime) -> float:

@@ -785,6 +785,17 @@ def account_menu(name: str, owner) -> tuple[str, InlineKeyboardMarkup]:
         tail = "<i>Данные обновляются, отчёты работают — только сообщения не приходят.</i>"
     else:
         tail = "Что присылать:"
+
+    # Invested — та самая опора, без которой профит неотличим от капитала.
+    # Объясняем это прямо в карточке, а не оставляем догадываться
+    if acc.get("base") is None:
+        tail += ("\n\n<i>💰 Invested — сколько своих денег вложено в стратегию. "
+                 "Без него бот не может отделить прибыль от вложенного: в балансе "
+                 "они лежат вместе. Возьми цифру из портала и впиши — тогда "
+                 "профит будет виден отдельно.</i>")
+    else:
+        tail += (f"\n\n<i>💰 Invested {acc['base']:.2f} — от него считается "
+                 f"накопленный профит. Если в портале цифра другая, поправь.</i>")
     cab = f" · {acc['cabinet']}" if acc.get("cabinet") else ""
     strat = f" · {html.escape(acc['strategy'])}" if acc.get("strategy") else ""
     text = (f"⚙︎ <b>{html.escape(name)}</b>\n{trades.THIN}\n"

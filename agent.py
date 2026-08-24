@@ -102,9 +102,20 @@ def collect(acc: dict) -> dict:
         deals = trades.fetch(HISTORY_FROM, trades.clock() + timedelta(days=1))
     deals = [d for d in deals if d["time"] >= HISTORY_FROM]
 
+    # Капитал из истории: складываем все пополнения и выводы капитала с самого
+    # открытия счёта. Терминал хранит их полностью, а на сервере история
+    # обрезана — поэтому считаем здесь и присылаем готовое число. Так капитал
+    # не приходится вводить руками, и он не путается с прибылью в балансе.
+    try:
+        capital_hist = trades._capital_moves(datetime(2000, 1, 1))
+    except Exception as e:
+        log.warning("не посчитал капитал по истории: %s", e)
+        capital_hist = None
+
     return {
         "login": int(acc["login"]),
         "balance": info.balance,
+        "capital_hist": capital_hist,
         "equity": info.equity,
         "currency": info.currency,
         "server": info.server,
