@@ -40,6 +40,9 @@ log = logging.getLogger("webhook")
 PORT = int(os.getenv("WEBHOOK_PORT", 8443))
 HOST = os.getenv("WEBHOOK_HOST", "127.0.0.1")
 TOKEN = os.getenv("WEBHOOK_TOKEN", "")
+# столько секунд считаем повтор тем же событием: портал шлёт зачисление и
+# перевод в стратегию порознь, а выглядят они одинаково
+HOOK_REPEAT = int(os.getenv("HOOK_REPEAT", 300))
 
 
 def ensure_token() -> str:
@@ -86,13 +89,33 @@ async def handle(request: web.Request, kind: str, fmt) -> web.Response:
     row.pop("token", None)
     db = request.app["db"]
     fresh, first_run = partner.unseen(db, kind, [row])
-    if fresh and not first_run:
+    if fresh and not first_run and not _just_sent(db, kind, row):
         # Telegram с этого сервера отвечает медленно, а портал ждёт ответа
         # считанные секунды и по таймауту шлёт событие заново — поэтому
         # подтверждаем сразу, а сообщение отправляем следом
         asyncio.create_task(notify(request.app, fmt(row)))
     log.info("вебхук %s: %s", kind, row.get("customer_no", row.get("tx_id", "?")))
     return web.Response(text="ok")
+
+
+def _just_sent(db, kind: str, row: dict) -> bool:
+    """Не то же ли самое мы отправляли минуту назад.
+
+    Портал шлёт одно событие дважды: сначала зачисление на баланс, следом
+    перевод в стратегию — суммы и кабинет совпадают, и в чат падали два
+    одинаковых сообщения. Дедупликация по id не спасает: id у них разные.
+    """
+    key = ("hook:" + kind + ":" + str(partner.pick(row, "customer_no", "customer") or "")
+           + ":" + str(partner.pick(row, "amount", "sum") or ""))
+    seen_at = partner.kv_get(db, key)
+    now = datetime.utcnow()
+    partner.kv_set(db, key, now.isoformat())
+    if not seen_at:
+        return False
+    try:
+        return (now - datetime.fromisoformat(seen_at)).total_seconds() < HOOK_REPEAT
+    except ValueError:
+        return False
 
 
 async def notify(app, text: str) -> None:

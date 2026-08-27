@@ -429,15 +429,17 @@ def account():
 def clock(ts: float = None) -> datetime:
     """Часы в том же масштабе, что и метки сделок.
 
-    Терминал отдаёт время сервера брокера, а это московское: реинвест с меткой
-    15:29:26 пришёл в Telegram в 15:30. Часы же возвращали UTC и отставали на
-    три часа — всё, что случилось за последние три часа, не попадало в выборку
-    «до сейчас». Из-за этого пропущенного пополнения доходность счёта считалась
-    от завышенного капитала: 6.72% вместо 7.79%.
+    Терминал считает время по серверу брокера, и в метках сделок стоит именно
+    оно. Поэтому «сейчас» = UTC + смещение сервера: без этого всё, что
+    случилось за последние часы, не попадало в выборку «до сейчас», и
+    доходность считалась от завышенного капитала (6.72% вместо 7.79%).
+
+    А вот метку сделки сдвигать нельзя: MT5 отдаёт её отметкой уже в шкале
+    сервера. Прибавив смещение второй раз, мы показывали 09:43 вместо 06:43.
     """
-    base = (datetime.now(timezone.utc) if ts is None
-            else datetime.fromtimestamp(ts, timezone.utc))
-    return (base + timedelta(hours=TZ_HOURS)).replace(tzinfo=None)
+    if ts is not None:
+        return datetime.fromtimestamp(ts, timezone.utc).replace(tzinfo=None)
+    return (datetime.now(timezone.utc) + timedelta(hours=TZ_HOURS)).replace(tzinfo=None)
 
 
 def local(when: datetime) -> datetime:
