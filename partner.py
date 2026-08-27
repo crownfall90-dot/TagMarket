@@ -89,11 +89,48 @@ def pretty_money(row: dict, signed: bool = False) -> str:
         return raw
 
 
+def cabinet_state(row) -> str:
+    """Что сейчас на стратегиях этого кабинета — капитал и накопленный профит.
+
+    Вебхук говорит только про сумму движения. Рядом полезно видеть, сколько
+    денег работает: тогда уведомление отвечает и на вопрос «сколько всего»,
+    а не только «сколько пришло».
+    """
+    number = str(pick(row, "customer_no", "customer", "client_no") or "").strip()
+    if not number:
+        return ""
+    try:
+        import accounts
+        import trades
+        cap = kept = 0.0
+        seen = set()        # счёт роздан гостям копиями — считаем его один раз
+        for acc in accounts.load():
+            if str(acc.get("cabinet") or "").strip() != number:
+                continue
+            if int(acc["login"]) in seen:
+                continue
+            seen.add(int(acc["login"]))
+            trades.use(acc)
+            cap += trades.capital()
+            kept += trades.retained()
+        if not cap:
+            return ""
+        line = f"💎 на стратегиях <b>{trades.amount(cap, 'USD')}</b>"
+        if kept >= 0.01:
+            line += f" + <b>{trades.amount(kept)}</b> профит"
+        return line
+    except Exception:       # счета или база недоступны — обойдёмся без строки
+        return ""
+
+
 def _event(head: str, row, note: str = "", sign: str = "") -> str:
     stamp = str(when(row) or "").strip()
     name, _ = whose(row)
     out = [head, THIN, f"<b>{pretty_money(row, bool(sign))}</b>",
            f"👤 {html.escape(name)}"]
+    state = cabinet_state(row)
+    if state:
+        out.append(state)
     if note:
         out.append(f"<i>{note}</i>")
     if stamp:           # пустые часы только засоряли сообщение
