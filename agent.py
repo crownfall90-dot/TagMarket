@@ -183,13 +183,33 @@ def _run_git(*args, timeout=30) -> str:
 
 
 def _remote_commit() -> str | None:
-    """Хэш HEAD в GitHub, без скачивания — только обращение к remote."""
+    """Хэш HEAD в GitHub — git fetch (не reset), чтобы дальше можно было
+    прочитать сообщение этого коммита локально (_remote_commit_host)."""
     try:
-        out = _run_git("ls-remote", GIT_REMOTE, GIT_BRANCH)
-        return out.split()[0] if out else None
+        _run_git("fetch", GIT_REMOTE, GIT_BRANCH, timeout=60)
+        return _run_git("rev-parse", f"{GIT_REMOTE}/{GIT_BRANCH}") or None
     except Exception as e:
         log.warning("не проверил обновления в git: %s", e)
         return None
+
+
+def _remote_commit_host(commit: str) -> str | None:
+    """Значение Origin-Host: из тела коммита, если он его содержит.
+
+    Коммит с этой машины (и с той, что сейчас его сделала) несёт свой
+    hostname в trailer'е — так агент отличает «это мой пуш, обновляюсь
+    сразу» от «пуш пришёл откуда-то ещё, жду обычную канареечную задержку».
+    Коммит без такой строки (например, сделанный не через это соглашение)
+    просто не даёт немедленного пути — обычная задержка применится и тут.
+    """
+    try:
+        msg = _run_git("log", "-1", "--format=%B", commit)
+    except Exception:
+        return None
+    for line in msg.splitlines():
+        if line.startswith("Origin-Host:"):
+            return line.split(":", 1)[1].strip()
+    return None
 
 
 def _local_commit() -> str | None:
@@ -225,9 +245,14 @@ def report_canary(commit: str) -> None:
 def check_for_update(lock: socket.socket) -> None:
     """Раз в UPDATE_CHECK_EVERY проверяет GitHub и обновляется, если можно.
 
-    primary и standby решают по-разному: standby обновляется сразу же (он
-    не в терминале — упасть не страшно), primary — только когда тот же
-    коммит уже CANARY_DELAY секунд крутится на standby без остановки.
+    Задержка привязана не к роли primary/standby (торговый failover — это
+    про то, кто сейчас опрашивает терминал), а к тому, ОТКУДА пришёл коммит:
+    машина, с которой его запушили (Origin-Host в теле коммита совпадает с
+    её hostname), обновляется сразу — её только что явно попросили это
+    сделать. Любая другая машина всегда ждёт CANARY_DELAY, независимо от
+    того, primary она или standby: обкатка нужна именно на «не той», что
+    только что стала источником изменения.
+
     Не поднимаем tools/keeper.ps1 самостоятельно: перезапуск через новый
     процесс + выход из этого — сторож (если настроен) просто увидит живой
     agent.beat и не вмешается; если сторожа нет, задача планировщика,
@@ -241,18 +266,19 @@ def check_for_update(lock: socket.socket) -> None:
     if not local or local == remote:
         return      # уже на актуальном коде — или git недоступен, не рискуем
 
-    if ROLE == "standby":
-        log.info("резерв: найдено обновление %s -> %s, обновляюсь сразу", local[:8], remote[:8])
+    if _remote_commit_host(remote) == socket.gethostname():
+        log.info("это моя машина запушила %s -> %s — обновляюсь сразу, без задержки",
+                 local[:8], remote[:8])
         _self_update_and_restart(lock, remote)
         return
 
     age = _canary_age(remote)
     if age is None or age < CANARY_DELAY:
-        log.info("primary: коммит %s ещё не обкатан резервом (%s из %d с) — жду",
+        log.info("коммит %s ещё не обкатан (%s из %d с) — жду",
                  remote[:8], f"{age:.0f}" if age is not None else "не запускался",
                  CANARY_DELAY)
         return
-    log.info("primary: коммит %s %d с на резерве без сбоев — обновляюсь", remote[:8], age)
+    log.info("коммит %s %d с без сбоев — обновляюсь", remote[:8], age)
     _self_update_and_restart(lock, remote)
 
 
@@ -393,7 +419,13 @@ def main():
     standing_by = None
     last_env_sync = 0.0
     last_update_check = 0.0
-    my_commit = _local_commit() if AUTO_UPDATE else None
+    last_canary_report = 0.0
+    # закэшировано на весь процесс: код меняется только через рестарт после
+    # обновления, так что local-commit и «свой ли это коммит» не меняются
+    # между запусками git заново на каждый круг
+    canary_commit = _local_commit() if AUTO_UPDATE else None
+    is_own_commit = (canary_commit and AUTO_UPDATE
+                     and _remote_commit_host(canary_commit) == socket.gethostname())
     while True:
         # раз в ENV_SYNC_EVERY, а не каждый круг — токены меняются редко,
         # незачем дёргать сервер лишним запросом каждые 15 секунд
@@ -405,14 +437,22 @@ def main():
             check_for_update(lock)     # обновится и выйдет сама, если можно
             last_update_check = time.monotonic()
 
+        # Канарейка: любая машина, которая НЕ источник текущего коммита,
+        # подтверждает серверу, что она на нём работает и не падает — не
+        # только standby в ожидании, а вообще любое живое состояние (в том
+        # числе активная работа с терминалом). Источник сам себя не
+        # репортует — обкатка нужна именно на другой машине
+        if (AUTO_UPDATE and canary_commit and not is_own_commit
+                and time.monotonic() - last_canary_report > INTERVAL):
+            report_canary(canary_commit)
+            last_canary_report = time.monotonic()
+
         if ROLE == "standby" and server_alive():
             if standing_by is not True:
                 log.info("резерв: синк идёт с другой машины, жду молча")
                 if standing_by is False:      # реальный переход, не первый запуск
                     notify_role_change("standby")
                 standing_by = True
-            if AUTO_UPDATE and my_commit:
-                report_canary(my_commit)   # подтверждаем: жив на этом коде
             time.sleep(INTERVAL)
             continue
         if standing_by is True:
