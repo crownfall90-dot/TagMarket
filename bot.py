@@ -944,11 +944,14 @@ def build_all(name: str, owner=None, cabinet: str = None) -> str:
 
     where = accounts.label(cabinet, owner) if cabinet else "Все счета"
     # капитал и накопленный профит порознь: профит лежит на стратегии, пока его
-    # не вывели, и одной суммой непонятно, сколько из этого заработано
+    # не вывели, и одной суммой непонятно, сколько из этого заработано.
+    # Профит — величина «на сейчас», а не результат периода отчёта, поэтому
+    # показываем его независимо от выбранного periода (как на дашборде) —
+    # иначе за неделю/месяц «на стратегии» тихо показывал только капитал
     split = (f"\n<i>капитал {trades.amount(total_my)} · "
              f"профит {trades.amount(total_kept, signed=True)}</i>"
-             if now_view and abs(total_kept) >= 0.01 else "")
-    on_strategy = total_my + (total_kept if now_view else 0.0)
+             if abs(total_kept) >= 0.01 else "")
+    on_strategy = total_my + total_kept
     head = (f"👤 <b>{html.escape(where)}</b>\n"
             f"💎 <b>{trades.amount(on_strategy, cur)}</b> на стратегии{split}\n"
             f"◆ <i>всего заработано {trades.amount(total_ever, signed=True)}</i>")
@@ -975,6 +978,37 @@ def parse_date(s: str) -> date:
 
 # ── партнёрский кабинет ───────────────────────────────────────────────────
 
+PORTAL_REPEAT = int(os.getenv("PORTAL_REPEAT", 900))
+
+
+def _repeat_of_recent(db, row: dict) -> bool:
+    """Не присылали ли это же событие только что под другим номером.
+
+    Кабинет иногда заводит одно событие дважды: зачисление на баланс и перевод
+    в стратегию приходят порознь, с разными id, но одинаковым текстом. Дедуп
+    по id их не ловит, и в чат падали два одинаковых «Пополнение +5.25».
+    """
+    key = "portal_seen:" + hashlib.sha1(
+        f"{row.get('eventType')}|{row.get('title')}|{row.get('body')}".encode()
+    ).hexdigest()[:16]
+    seen_at = kv_get(db, key)
+    now = utcnow()
+    kv_set(db, key, now.isoformat())
+
+    # метки живут только ради окна повтора; без уборки их накопились бы
+    # десятки тысяч — чистим протухшие за компанию с записью новой
+    stale = (now - timedelta(seconds=PORTAL_REPEAT * 4)).isoformat()
+    db.execute("DELETE FROM kv WHERE key LIKE 'portal_seen:%' AND value < ?", (stale,))
+    db.commit()
+
+    if not seen_at:
+        return False
+    try:
+        return (now - datetime.fromisoformat(seen_at)).total_seconds() < PORTAL_REPEAT
+    except ValueError:
+        return False
+
+
 async def poll_portal(session, bot: Bot, db, chat_id: str) -> int:
     """Лента событий кабинета IB Portal → Telegram.
 
@@ -994,6 +1028,8 @@ async def poll_portal(session, bot: Bot, db, chat_id: str) -> int:
             # доход с сети капает по копейке — копим на сводку, а не спамим
             income += partner.portal_amount(row)
             trades_n += 1
+            continue
+        if _repeat_of_recent(db, row):
             continue
         await send(bot, chat_id, partner.fmt_portal(row), DASHBOARD_BTN)
         sent += 1
@@ -1064,7 +1100,10 @@ async def poll_mt5(bot: Bot, db) -> int:
 
             day_net = day_count = total_net = None
             if row["is_closing"]:
-                today = trades.summary(trades.fetch(*day_bounds(trades.clock().date())))
+                # день берём у самой сделки, а не текущий: уведомления приходят
+                # пачкой после включения терминала, и для вчерашней сделки
+                # выборка за сегодня пуста — в уведомлении стояло «+0.00 (0 сделок)»
+                today = trades.summary(trades.fetch(*day_bounds(row["time"].date())))
                 day_net, day_count = today["total"], today["count"]
                 total_net = trades.mine(trades.summary(
                     trades.fetch(datetime(2000, 1, 1), trades.clock()))["total"])
@@ -1153,7 +1192,10 @@ async def finish_add(bot: Bot, chat_id, owner, data: dict) -> str:
 
     a = trades.account()
     if not acc["holder"] and getattr(a, "name", ""):
-        # имя владельца берём из профиля MT5-счёта — спрашивать не нужно
+        # если бот работает напрямую с MT5 (без сервера-посредника), имя
+        # владельца можно взять из профиля счёта — там, где сервер работает
+        # через store.py, у _Account такого поля нет, и holder уже спрошен
+        # текстом на шаге AddAcc.holder
         accounts.update(acc["name"], owner, holder=a.name)
     my = trades.capital()       # реальные деньги, не торговый баланс ×плечо
     return (f"✅ <b>Счёт {acc['name']} добавлен</b>\n{trades.THIN}\n"
@@ -1831,23 +1873,39 @@ async def main():
             "он в портале внизу слева, например <code>CU228816</code>." + hint,
             reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
 
+    async def _after_cabinet(answer, state: FSMContext, owner, cab: str):
+        # holder берём из уже известного кабинета; на сервере бот работает
+        # без MT5, и взять имя из профиля счёта, как раньше, неоткуда —
+        # для нового кабинета имя владельца приходится спросить самим
+        known = accounts.cabinets(owner).get(cab, {})
+        await state.update_data(cabinet=cab, holder=known.get("holder", ""))
+        if known.get("holder"):
+            await state.set_state(AddAcc.name)
+            await answer("Как называть счёт в боте? Например <code>SONIC #1</code>",
+                        reply_markup=CANCEL)
+        else:
+            await state.set_state(AddAcc.holder)
+            await answer("Имя и фамилия владельца кабинета? Например <code>Ivan Petrov</code>",
+                        reply_markup=CANCEL)
+
     @dp.callback_query(F.data.startswith("cab:"), AddAcc.cabinet)
     async def add_cabinet_known(cb: CallbackQuery, state: FSMContext):
         await cb.answer()
         cab = cb.data.split(":", 1)[1]
-        known = accounts.cabinets(cb.from_user.id).get(cab, {})
-        await state.update_data(cabinet=cab, holder=known.get("holder", ""))
-        await state.set_state(AddAcc.name)
-        await cb.message.answer("Как называть счёт в боте? Например <code>SONIC #1</code>",
-                                reply_markup=CANCEL)
+        await _after_cabinet(cb.message.answer, state, cb.from_user.id, cab)
 
     @dp.message(AddAcc.cabinet)
     async def add_cabinet(msg: Message, state: FSMContext):
         cab = msg.text.strip().upper()
-        # владельца не спрашиваем — его имя возьмём из профиля счёта в MT5
-        # само (accounts_info().name), когда счёт подключится в finish_add
-        known = accounts.cabinets(msg.from_user.id).get(cab, {})
-        await state.update_data(cabinet=cab, holder=known.get("holder", ""))
+        await _after_cabinet(msg.answer, state, msg.from_user.id, cab)
+
+    @dp.message(AddAcc.holder)
+    async def add_holder(msg: Message, state: FSMContext):
+        holder = msg.text.strip()
+        if not holder:
+            await msg.answer("Имя не может быть пустым. Попробуй ещё раз.")
+            return
+        await state.update_data(holder=holder)
         await state.set_state(AddAcc.name)
         await msg.answer("Как называть счёт в боте? Например <code>SONIC #1</code>",
                          reply_markup=CANCEL)

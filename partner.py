@@ -115,7 +115,10 @@ def cabinet_state(row) -> str:
             kept += trades.retained()
         if not cap:
             return ""
-        line = f"💎 на стратегиях <b>{trades.amount(cap, 'USD')}</b>"
+        # сколько стратегий сложили — иначе сумма по кабинету читается как
+        # капитал одной стратегии и спорит с уведомлением о сделке
+        where = f"на {len(seen)} стратегиях" if len(seen) > 1 else "на стратегии"
+        line = f"💎 {where} <b>{trades.amount(cap, 'USD')}</b>"
         if kept >= 0.01:
             line += f" + <b>{trades.amount(kept)}</b> профит"
         return line

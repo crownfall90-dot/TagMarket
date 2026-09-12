@@ -166,6 +166,7 @@ assert "баланс" in deals, "балансовые операции видн�
 
 # мои деньги = капитал + удержанная прибыль (прибыль ×1, не делится на плечо).
 # Сверено с порталом: SONIC капитал 2500, баланс 60039.40 → мои 2539.40.
+# Капитал считается из баланса: (60039.40 − профит 39.40) ÷ 24 = 2500.
 class _Acc:
     login, balance, currency, server, equity = 50712138, 60039.40, "USD", "s", 60039.40
 
@@ -173,15 +174,19 @@ class _Acc:
 trades._base, trades._base_at, trades._multiplier = 2500.0, datetime(2026, 8, 14), 24
 _saved_account = trades.account
 _saved_capmoves = trades._capital_moves
+_saved_profit = trades._profit_on_account
+_saved_retained = trades.retained
 trades.account = lambda: _Acc()
 trades._capital_moves = lambda since: 0.0       # пока движений капитала нет
+trades._profit_on_account = lambda: 39.40       # столько прибыли лежит в балансе
+trades.retained = lambda: 39.40                 # она же чистыми (доля уже удержана)
 try:
     assert abs(trades.invested() - 2539.40) < 0.01, trades.invested()
-    assert abs(trades.capital() - 2500.0) < 0.01
-    # реинвест 30$ (на счёте +720) после привязки → капитал 2530
-    trades._capital_moves = lambda since: 30.0
+    assert abs(trades.capital() - 2500.0) < 0.01, trades.capital()
+    # пополнение на 30$ (на счёте +720) поднимает баланс, а с ним и капитал
+    _Acc.balance = 60039.40 + 720.0
     assert abs(trades.capital() - 2530.0) < 0.01, trades.capital()
-    trades._capital_moves = lambda since: 0.0
+    _Acc.balance = 60039.40
     # пополнение/реинвест меняет капитал: было → стало
     dep = {"is_balance": True, "is_opening": False, "is_closing": False,
            "net": 720.0, "comment": "Deposit", "time": datetime(2026, 8, 14, 12, 0)}
@@ -200,6 +205,8 @@ try:
 finally:
     trades.account = _saved_account
     trades._capital_moves = _saved_capmoves
+    trades._profit_on_account = _saved_profit
+    trades.retained = _saved_retained
     trades._base, trades._base_at, trades._multiplier = None, None, 1
 
 # ── оформление ────────────────────────────────────────────────────────────
@@ -210,10 +217,13 @@ assert trades.bar(1, 0) == "", "нулевой масштаб не должен 
 assert trades.winrate_bar(5, 10, 10).count("▰") == 5
 
 _saved_capital, _saved_invested = trades.capital, trades.invested
+_saved_kept = trades.retained
 trades.capital = lambda: 100.0          # капитал стратегии
+trades.retained = lambda: 42.63         # накопленный профит поверх него
 trades.invested = lambda: 142.63        # он же плюс накопленный профит
 note = trades.fmt_notification(rows[0], "USD", day_net=1.5, day_count=3, total_net=9.0)
 trades.capital, trades.invested = _saved_capital, _saved_invested
+trades.retained = _saved_kept
 # порядок: дата/время, какая сделка за день, потом чистый профит
 assert note.index("11.08.2026") < note.index("сделка за день") < note.index("66.50"), note
 assert "+66.50" in note, "результат сделки чистыми (95 × 0.7)"
