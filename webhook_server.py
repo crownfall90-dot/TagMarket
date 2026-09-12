@@ -173,6 +173,23 @@ def check_token(request) -> None:
         raise web.HTTPForbidden(text="bad token")
 
 
+# Настройки, общие для всех агентских машин — раздаём тем же токеном, что и
+# /agent/accounts. Не всё из .env: приватные ключи портала и токен Telegram
+# агенту не нужны и не должны покидать сервер лишний раз. MT5_TERMINAL,
+# AGENT_ROLE, STANDBY_TIMEOUT, AGENT_LOCK_PORT — машинно-специфичные,
+# каждая машина держит их сама.
+AGENT_ENV_KEYS = ("AGENT_SERVER", "WEBHOOK_TOKEN", "AGENT_INTERVAL",
+                  "HISTORY_FROM", "INVESTOR_SHARE", "BROKER_FEE",
+                  "REPORT_FROM", "TZ_HOURS")
+
+
+async def agent_env(request):
+    """Общие настройки для агента — чтобы .env не приходилось править вручную
+    на каждой машине при смене токена или доли инвестора."""
+    check_token(request)
+    return web.json_response({k: os.environ[k] for k in AGENT_ENV_KEYS if k in os.environ})
+
+
 async def agent_accounts(request):
     """Список счетов, которые агенту надо опрашивать (с паролями)."""
     check_token(request)
@@ -184,6 +201,32 @@ async def agent_accounts(request):
          "command": store.get_command(db, a["login"])}   # напр. «restart_terminal»
         for a in accounts.load() if a.get("enabled", True)
     ])
+
+
+async def agent_role_change(request):
+    """Агентская машина сообщила о смене роли (резерв включился/выключился).
+
+    Сама рассылка через notify() живёт здесь, а не на агенте: у него нет и
+    не должно быть токена Telegram-бота на клиентской машине, а сервер его
+    уже держит для всех остальных уведомлений.
+    """
+    check_token(request)
+    data = await request.json()
+    host = str(data.get("host") or "неизвестная машина")
+    became = data.get("became")     # "active" | "standby"
+    if became == "active":
+        text = (f"🔀 <b>Резерв подключился</b>\n{partner.THIN}\n"
+               f"<b>{host}</b> взял на себя опрос терминала — "
+               f"основная машина не отвечала.")
+    elif became == "standby":
+        text = (f"🔀 <b>Резерв отключился</b>\n{partner.THIN}\n"
+               f"<b>{host}</b> увидел, что основная машина снова на связи, "
+               f"и вернулся в ожидание.")
+    else:
+        return web.json_response({"ok": False, "error": "bad became"}, status=400)
+    asyncio.create_task(notify(request.app, text))
+    log.info("смена роли: %s -> %s", host, became)
+    return web.json_response({"ok": True})
 
 
 async def agent_sync(request):
@@ -219,7 +262,9 @@ async def main():
     app.router.add_get("/health", health)
     app.router.add_get("/status", status)
     app.router.add_get("/agent/accounts", agent_accounts)
+    app.router.add_get("/agent/env", agent_env)
     app.router.add_post("/agent/sync", agent_sync)
+    app.router.add_post("/agent/role_change", agent_role_change)
 
     runner = web.AppRunner(app)
     await runner.setup()

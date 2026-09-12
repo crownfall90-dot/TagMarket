@@ -1188,8 +1188,14 @@ def late_note(row: dict) -> str:
 
 
 def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int = None,
-                     total_net: float = None) -> str:
-    """Уведомление о событии на счёте. Про открытие позиций не пишем."""
+                     total_net: float = None, pair: dict = None) -> str:
+    """Уведомление о событии на счёте. Про открытие позиций не пишем.
+
+    pair — парная строка реинвеста (Adjust + Upgrade приходят вместе, одним
+    моментом): если она передана, обе половины складываются в одно
+    сообщение вместо двух подряд «профит списан» / «капитал добавлен» про
+    одни и те же деньги — раньше это выглядело как дублирующее уведомление.
+    """
     when = f"{row['time']:%d.%m.%Y  %H:%M:%S}"
 
     if row["is_balance"]:
@@ -1200,6 +1206,17 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
         # секунду вернутся капиталом. Называть это «выводом» неверно
         moved_in = "adjust" in (row["comment"] or "").lower()
         note = f"<i>{row['comment']}</i>" if row["comment"] else ""
+
+        if is_profit and is_transfer(row) and moved_in and pair is not None:
+            # обе половины сразу: профит списан и в тот же момент добавлен
+            # в капитал — раньше это были два отдельных, спорящих сообщения
+            was, became = capital_around(pair)
+            out = [f"🕒 <b>{when}</b>", "♻️ <b>Реинвест: профит → капитал</b>", THIN,
+                   f"<b>{money(own)}{sign(cur)}</b>",
+                   "🔁 Списано из профита и в тот же момент добавлено в капитал"]
+            out.append(f"💰 Капитал: было {amount(was)} → стало "
+                       f"<b>{amount(became, cur)}</b>")
+            return "\n".join(out)
 
         if is_profit and is_transfer(row):
             # профит лежит отдельно от капитала, поэтому капитал не меняется

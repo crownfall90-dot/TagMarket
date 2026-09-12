@@ -9,6 +9,15 @@
     AGENT_SERVER=https://crownfail.shop/tagmarkets
     WEBHOOK_TOKEN=...          — тот же токен, что у сервера
     AGENT_INTERVAL=15          — пауза между кругами, секунды
+
+Резерв (две машины на одни и те же счета):
+    AGENT_ROLE=primary|standby — по умолчанию primary (работает всегда)
+    STANDBY_TIMEOUT=90         — секунд без синка отовсюду, прежде чем
+                                 standby сам включится (по умолчанию)
+Двух primary одновременно быть не должно: они будут выбивать друг друга
+из терминала при каждом логине в один счёт. standby молчит, пока видит
+через публичный /status сервера, что кто-то (primary) недавно слал данные;
+включается сам, только если синк отовсюду пропал дольше STANDBY_TIMEOUT.
 """
 
 import logging
@@ -59,6 +68,85 @@ LOCK_PORT = int(os.getenv("AGENT_LOCK_PORT", 47653))    # признак «аг�
 # на ПК: если отметке ≥3 минут или процесса нет, сторож перезапускает агента
 # (раньше, чем на 5-й минуте сработает уведомление сервера)
 BEAT = os.path.join(ROOT, "data", "agent.beat")
+
+ROLE = os.getenv("AGENT_ROLE", "primary").strip().lower()
+# ощутимо больше цикла синка (по умолчанию 15с) — короткая сетевая заминка
+# на primary не должна включать вторую машину поверх первой
+STANDBY_TIMEOUT = int(os.getenv("STANDBY_TIMEOUT", 90))
+
+
+def server_alive() -> bool:
+    """Кто-то (обычно primary) недавно слал данные на сервер.
+
+    Смотрим /status — тот же публичный эндпоинт, что использует пульт
+    управления. Он не привязан к конкретной машине: агенту не нужно знать
+    про другую машину напрямую, достаточно видеть общий признак «синк идёт».
+    Сетевая ошибка тут — не повод включаться: считаем, что кто-то жив, и
+    подождём следующего круга, а не бросаемся занимать терминал вслепую.
+    """
+    try:
+        r = requests.get(f"{SERVER}/status", timeout=15)
+        r.raise_for_status()
+        last = r.json().get("last_sync")
+        if not last:
+            return False
+        age = (utcnow() - datetime.fromisoformat(last)).total_seconds()
+        return age < STANDBY_TIMEOUT
+    except Exception as e:
+        log.warning("не проверил /status: %s — считаю, что кто-то жив", e)
+        return True
+
+
+# Ключи, которые машина решает сама — сервер их не присылает и не должен
+# перезаписывать, иначе AGENT_ROLE=standby одной машины стёрло бы роль другой
+_LOCAL_ENV_KEYS = ("MT5_TERMINAL", "AGENT_ROLE", "STANDBY_TIMEOUT", "AGENT_LOCK_PORT")
+ENV_FILE = os.getenv("ENV_FILE", os.path.join(ROOT, ".env"))
+ENV_SYNC_EVERY = int(os.getenv("ENV_SYNC_EVERY", 600))     # раз в 10 минут — токены меняются редко
+
+
+def sync_env() -> None:
+    """Подтягивает общие настройки (токены, доли) с сервера в локальный .env.
+
+    Так смену WEBHOOK_TOKEN или INVESTOR_SHARE не нужно вручную повторять на
+    каждой агентской машине. Машинно-специфичные строки (путь к терминалу,
+    роль primary/standby) не трогаем — сервер их и не присылает.
+    """
+    try:
+        r = requests.get(f"{SERVER}/agent/env", params={"token": TOKEN}, timeout=15)
+        r.raise_for_status()
+        remote = r.json()
+    except Exception as e:
+        log.warning("не подтянул общие настройки: %s", e)
+        return
+    if not remote:
+        return
+
+    try:
+        with open(ENV_FILE, encoding="utf-8-sig") as f:
+            lines = f.read().splitlines()
+    except FileNotFoundError:
+        lines = []
+
+    kept = [l for l in lines if not any(
+        l.startswith(k + "=") for k in remote if k not in _LOCAL_ENV_KEYS)]
+    changed = [f"{k}={v}" for k, v in remote.items() if k not in _LOCAL_ENV_KEYS]
+    new_lines = kept + changed
+    if new_lines != lines:
+        with open(ENV_FILE, "w", encoding="utf-8") as f:
+            f.write("\n".join(new_lines) + "\n")
+        log.info("общие настройки обновлены с сервера (%d ключей)", len(changed))
+        load_dotenv(ENV_FILE, override=True)
+
+
+def notify_role_change(became: str) -> None:
+    """Сообщить серверу о смене роли — сам Telegram-токен агенту не нужен,
+    сервер уже держит его для всех остальных уведомлений и разошлёт сам."""
+    try:
+        requests.post(f"{SERVER}/agent/role_change",
+                      json={"host": socket.gethostname(), "became": became},
+                      headers={"X-Token": TOKEN}, timeout=15)
+    except Exception as e:
+        log.warning("не сообщил серверу о смене роли: %s", e)
 
 
 def fetch_accounts() -> list[dict]:
@@ -139,9 +227,34 @@ def main():
     if not TOKEN:
         raise SystemExit("не задан WEBHOOK_TOKEN — агент не сможет авторизоваться")
     lock = only_one_copy()      # держим до конца работы
-    log.info("агент запущен, сервер %s, круг раз в %d с", SERVER, INTERVAL)
+    log.info("агент запущен (роль: %s), сервер %s, круг раз в %d с", ROLE, SERVER, INTERVAL)
 
+    # None = роль ещё не определялась (первый круг); дальше True — в резерве,
+    # False — активен. Уведомляем сервер только на смене None->False->True
+    # или None->True->False, а не на самом первом определении роли: обычный
+    # старт standby — это не авария, тревожить незачем
+    standing_by = None
+    last_env_sync = 0.0
     while True:
+        # раз в ENV_SYNC_EVERY, а не каждый круг — токены меняются редко,
+        # незачем дёргать сервер лишним запросом каждые 15 секунд
+        if time.monotonic() - last_env_sync > ENV_SYNC_EVERY:
+            sync_env()
+            last_env_sync = time.monotonic()
+
+        if ROLE == "standby" and server_alive():
+            if standing_by is not True:
+                log.info("резерв: синк идёт с другой машины, жду молча")
+                if standing_by is False:      # реальный переход, не первый запуск
+                    notify_role_change("standby")
+                standing_by = True
+            time.sleep(INTERVAL)
+            continue
+        if standing_by is True:
+            log.warning("резерв: синк отовсюду пропал (>%d с) — включаюсь", STANDBY_TIMEOUT)
+            notify_role_change("active")
+        standing_by = False
+
         try:
             accs = fetch_accounts()
         except Exception as e:

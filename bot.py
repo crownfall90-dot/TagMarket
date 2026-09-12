@@ -14,6 +14,7 @@ import sqlite3
 import sys
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta, timezone
+from urllib.parse import quote
 
 import aiohttp
 from aiogram import Bot, Dispatcher, F
@@ -588,17 +589,18 @@ def describe(logins: list, owner) -> str:
     return "\n".join(f"{h}: {', '.join(s)}" for h, s in groups.items())
 
 
-def link_buttons(link: str, inline_ok: bool) -> list[InlineKeyboardButton]:
+def link_buttons(link: str, inline_ok: bool = False) -> list[InlineKeyboardButton]:
     """Копировать и переслать. Обе — родные средства Telegram, без ботовской возни.
 
-    Кнопка пересылки работает только при включённом инлайн-режиме (BotFather,
-    /setinline). Если он выключен, кнопка молча ничего не сделает — поэтому
-    показываем её лишь когда она действительно работает.
+    Переслать — через https://t.me/share/url: открывает список чатов и уже
+    готовое сообщение со ссылкой, без участия самого бота. switch_inline_query
+    для этого не подходит: он подставляет в поле ввода «@имя_бота ссылка» —
+    ответ на такой запрос отдаёт inline_query, а бот его не обрабатывает,
+    поэтому в чат буквально улетал текст «@tagmarketgold_bot https://...».
     """
-    row = [InlineKeyboardButton(text="📋 Копировать", copy_text=CopyTextButton(text=link))]
-    if inline_ok:
-        row.append(InlineKeyboardButton(text="↗️ Переслать", switch_inline_query=link))
-    return row
+    share = f"https://t.me/share/url?url={quote(link, safe='')}"
+    return [InlineKeyboardButton(text="📋 Копировать", copy_text=CopyTextButton(text=link)),
+           InlineKeyboardButton(text="↗️ Переслать", url=share)]
 
 
 def guests_view(db, owner) -> tuple[str, InlineKeyboardMarkup]:
@@ -1085,7 +1087,13 @@ async def poll_mt5(bot: Bot, db) -> int:
             continue
 
         cur = trades.currency()
-        for row in trades.since_ticket(last):
+        rows = trades.since_ticket(last)
+        skip_ticket = None      # Upgrade, уже показанный вместе со своим Adjust
+        for i, row in enumerate(rows):
+            if row["ticket"] == skip_ticket:
+                kv_set(db, key, row["ticket"])
+                continue
+
             # курсор двигаем всегда: выключенный тип уведомлений не должен
             # копиться и вывалиться пачкой, когда его снова включат
             kind = ("deposits" if row["net"] >= 0 else "withdrawals") \
@@ -1097,6 +1105,19 @@ async def poll_mt5(bot: Bot, db) -> int:
             if row["is_opening"]:   # про вход не пишем — интересен результат
                 kv_set(db, key, row["ticket"])
                 continue
+
+            # реинвест приходит парой строк одним моментом: Adjust списывает
+            # из профита, Upgrade тут же кладёт то же самое в капитал. Раньше
+            # это были два отдельных, спорящих друг с другом уведомления
+            pair = None
+            if (row["is_balance"] and trades.is_profit_side(row)
+                    and "adjust" in (row["comment"] or "").lower()):
+                nxt = rows[i + 1] if i + 1 < len(rows) else None
+                if (nxt and nxt["is_balance"] and not trades.is_profit_side(nxt)
+                        and "upgrade" in (nxt["comment"] or "").lower()
+                        and nxt["time"] == row["time"]):
+                    pair = nxt
+                    skip_ticket = nxt["ticket"]
 
             day_net = day_count = total_net = None
             if row["is_closing"]:
@@ -1117,7 +1138,7 @@ async def poll_mt5(bot: Bot, db) -> int:
             sub = " · ".join(x for x in (html.escape(who),
                                          f"<code>{acc['login']}</code>") if x)
             tag = f"🏷 <b>{html.escape(title)}</b>" + (f"\n<i>{sub}</i>" if sub else "")
-            body = trades.fmt_notification(row, cur, day_net, day_count, total_net)
+            body = trades.fmt_notification(row, cur, day_net, day_count, total_net, pair=pair)
             if not body:            # форматтер решил, что писать не о чем
                 kv_set(db, key, row["ticket"])
                 continue
@@ -1128,6 +1149,8 @@ async def poll_mt5(bot: Bot, db) -> int:
                 log.warning("не доставил уведомление %s: %s", owner, e)
                 break
             kv_set(db, key, row["ticket"])
+            if pair is not None:
+                kv_set(db, key, pair["ticket"])     # курсор дальше пары целиком
             sent += 1
             await asyncio.sleep(0.05)
     return sent
