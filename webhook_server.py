@@ -237,6 +237,47 @@ async def agent_role_change(request):
     return web.json_response({"ok": True})
 
 
+async def agent_update_report(request):
+    """Резервная машина отчиталась: работает на таком-то коммите столько-то.
+
+    Канареечный деплой: standby не трогает терминал, поэтому обновляется на
+    новый код сразу и без риска. primary мог бы обновиться следом за ним, но
+    ждёт, пока станет видно, что standby на новом коде уже какое-то время не
+    падал (через тот же /agent/sync — если синк не прервался, значит код
+    рабочий) — прежде чем самому рисковать активной сессией в терминале.
+    """
+    check_token(request)
+    data = await request.json()
+    host = str(data.get("host") or "")
+    commit = str(data.get("commit") or "")
+    if not host or not commit:
+        return web.json_response({"ok": False}, status=400)
+    db = request.app["db"]
+    # первая метка по этому (host, commit) остаётся первой — она и есть
+    # «с какого момента standby живёт на этом коде», а не последний репорт
+    key = f"canary:{host}:{commit}"
+    if not partner.kv_get(db, key):
+        partner.kv_set(db, key, utcnow().isoformat())
+    partner.kv_set(db, "canary_latest_commit", commit)
+    partner.kv_set(db, f"canary_latest_seen:{host}", utcnow().isoformat())
+    return web.json_response({"ok": True})
+
+
+async def agent_update_status(request):
+    """Можно ли обновляться на этот коммит — и как давно кто-то на нём живёт."""
+    check_token(request)
+    commit = request.query.get("commit", "")
+    db = request.app["db"]
+    since = None
+    if commit:
+        # берём самую раннюю метку среди всех машин, репортовавших этот коммит
+        stamps = [partner.kv_get(db, k) for k in partner.kv_keys(db, f"canary:%:{commit}")]
+        stamps = [s for s in stamps if s]
+        since = min(stamps) if stamps else None
+    age = (utcnow() - datetime.fromisoformat(since)).total_seconds() if since else None
+    return web.json_response({"canary_age_seconds": round(age) if age is not None else None})
+
+
 async def agent_sync(request):
     """Агент прислал состояние счёта и новые сделки."""
     check_token(request)
@@ -273,6 +314,8 @@ async def main():
     app.router.add_get("/agent/env", agent_env)
     app.router.add_post("/agent/sync", agent_sync)
     app.router.add_post("/agent/role_change", agent_role_change)
+    app.router.add_post("/agent/update_report", agent_update_report)
+    app.router.add_get("/agent/update_status", agent_update_status)
 
     runner = web.AppRunner(app)
     await runner.setup()

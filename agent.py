@@ -18,6 +18,16 @@
 из терминала при каждом логине в один счёт. standby молчит, пока видит
 через публичный /status сервера, что кто-то (primary) недавно слал данные;
 включается сам, только если синк отовсюду пропал дольше STANDBY_TIMEOUT.
+
+Автообновление (канареечный деплой между машинами):
+    AUTO_UPDATE=1              — включено по умолчанию, 0/false выключает
+    UPDATE_CHECK_EVERY=900     — как часто проверять GitHub, секунды
+    CANARY_DELAY=1800          — сколько reserv должен проработать на новом
+                                 коде без сбоев, прежде чем обновится primary
+standby подтягивает новый коммит из GIT_REMOTE/GIT_BRANCH сразу (git fetch +
+reset --hard) и перезапускает себя — он не в терминале, риск минимален.
+primary ждёт, пока тот же коммит не проходит CANARY_DELAY на standby (сервер
+хранит это в /agent/update_status, машины друг про друга напрямую не знают).
 """
 
 import logging
@@ -151,6 +161,140 @@ def sync_env() -> None:
         load_dotenv(ENV_FILE, override=True)
 
 
+# Автообновление кода: канареечный деплой между двумя агентскими машинами.
+# standby не занимает терминал, поэтому обновляется сразу же и безопасно;
+# primary ждёт, пока standby не проработает на новом коде CANARY_DELAY
+# секунд без сбоев (подтверждается через сервер, не напрямую между машинами —
+# агенты друг про друга ничего не знают, кроме общего /status).
+AUTO_UPDATE = os.getenv("AUTO_UPDATE", "1") not in ("0", "false", "no")
+UPDATE_CHECK_EVERY = int(os.getenv("UPDATE_CHECK_EVERY", 900))     # раз в 15 минут
+CANARY_DELAY = int(os.getenv("CANARY_DELAY", 1800))                # 30 минут пробега на standby
+GIT_REMOTE = os.getenv("GIT_REMOTE", "origin")
+GIT_BRANCH = os.getenv("GIT_BRANCH", "main")
+
+
+def _run_git(*args, timeout=30) -> str:
+    import subprocess
+    r = subprocess.run(["git", *args], cwd=ROOT, capture_output=True,
+                       text=True, timeout=timeout)
+    if r.returncode != 0:
+        raise RuntimeError(f"git {' '.join(args)}: {r.stderr.strip()[:200]}")
+    return r.stdout.strip()
+
+
+def _remote_commit() -> str | None:
+    """Хэш HEAD в GitHub, без скачивания — только обращение к remote."""
+    try:
+        out = _run_git("ls-remote", GIT_REMOTE, GIT_BRANCH)
+        return out.split()[0] if out else None
+    except Exception as e:
+        log.warning("не проверил обновления в git: %s", e)
+        return None
+
+
+def _local_commit() -> str | None:
+    try:
+        return _run_git("rev-parse", "HEAD")
+    except Exception as e:
+        log.warning("не прочитал текущий коммит: %s", e)
+        return None
+
+
+def _canary_age(commit: str) -> float | None:
+    """Сколько секунд назад standby впервые отчитался об этом коммите (по данным сервера)."""
+    try:
+        r = requests.get(f"{SERVER}/agent/update_status",
+                         params={"token": TOKEN, "commit": commit}, timeout=15)
+        r.raise_for_status()
+        return r.json().get("canary_age_seconds")
+    except Exception as e:
+        log.warning("не проверил статус канарейки: %s", e)
+        return None
+
+
+def report_canary(commit: str) -> None:
+    """standby отчитывается серверу: жив и работает на таком-то коммите."""
+    try:
+        requests.post(f"{SERVER}/agent/update_report",
+                      json={"host": socket.gethostname(), "commit": commit},
+                      headers={"X-Token": TOKEN}, timeout=15)
+    except Exception as e:
+        log.warning("не отчитался о коммите: %s", e)
+
+
+def check_for_update(lock: socket.socket) -> None:
+    """Раз в UPDATE_CHECK_EVERY проверяет GitHub и обновляется, если можно.
+
+    primary и standby решают по-разному: standby обновляется сразу же (он
+    не в терминале — упасть не страшно), primary — только когда тот же
+    коммит уже CANARY_DELAY секунд крутится на standby без остановки.
+    Не поднимаем tools/keeper.ps1 самостоятельно: перезапуск через новый
+    процесс + выход из этого — сторож (если настроен) просто увидит живой
+    agent.beat и не вмешается; если сторожа нет, задача планировщика,
+    которая изначально запустила агент, никак не пострадает — сам процесс
+    просто сменился.
+    """
+    remote = _remote_commit()
+    if not remote:
+        return
+    local = _local_commit()
+    if not local or local == remote:
+        return      # уже на актуальном коде — или git недоступен, не рискуем
+
+    if ROLE == "standby":
+        log.info("резерв: найдено обновление %s -> %s, обновляюсь сразу", local[:8], remote[:8])
+        _self_update_and_restart(lock, remote)
+        return
+
+    age = _canary_age(remote)
+    if age is None or age < CANARY_DELAY:
+        log.info("primary: коммит %s ещё не обкатан резервом (%s из %d с) — жду",
+                 remote[:8], f"{age:.0f}" if age is not None else "не запускался",
+                 CANARY_DELAY)
+        return
+    log.info("primary: коммит %s %d с на резерве без сбоев — обновляюсь", remote[:8], age)
+    _self_update_and_restart(lock, remote)
+
+
+def _self_update_and_restart(lock: socket.socket, target_commit: str) -> None:
+    """git pull, запуск нового процесса, выход из текущего.
+
+    lock (only_one_copy) закрываем ПОСЛЕ старта нового процесса — иначе окно
+    между освобождением порта и его захватом новым agent.py может занять
+    что-то ещё (маловероятно, но локальный TCP-порт — не эксклюзивный lock,
+    просто самое дешёвое, что было под рукой).
+    """
+    try:
+        dirty = _run_git("status", "--porcelain")
+        if dirty:
+            # кто-то вручную правил файлы на этой машине без коммита —
+            # reset --hard стёр бы это молча и без возможности вернуть.
+            # Автообновление тут не должно решать за человека
+            log.warning("в рабочей копии есть незакоммиченные изменения — "
+                       "автообновление пропущено, разберитесь вручную:\n%s", dirty)
+            return
+        _run_git("fetch", GIT_REMOTE, GIT_BRANCH, timeout=60)
+        _run_git("reset", "--hard", f"{GIT_REMOTE}/{GIT_BRANCH}", timeout=30)
+    except Exception as e:
+        log.error("обновление не удалось, остаюсь на текущем коде: %s", e)
+        return
+
+    log.info("код обновлён до %s, перезапускаюсь", target_commit[:8])
+    try:
+        import subprocess
+        pythonw = sys.executable.replace("python.exe", "pythonw.exe")
+        subprocess.Popen([pythonw, os.path.join(ROOT, "agent.py")], cwd=ROOT,
+                         creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
+    except Exception as e:
+        log.error("не запустил новый процесс, остаюсь на старом коде до ручного рестарта: %s", e)
+        return
+
+    time.sleep(2)     # даём новому процессу шанс встать до того, как мы освободим порт
+    lock.close()
+    log.info("новый процесс запущен, этот завершается")
+    sys.exit(0)
+
+
 def notify_role_change(became: str) -> None:
     """Сообщить серверу о смене роли — сам Telegram-токен агенту не нужен,
     сервер уже держит его для всех остальных уведомлений и разошлёт сам."""
@@ -248,6 +392,8 @@ def main():
     # старт standby — это не авария, тревожить незачем
     standing_by = None
     last_env_sync = 0.0
+    last_update_check = 0.0
+    my_commit = _local_commit() if AUTO_UPDATE else None
     while True:
         # раз в ENV_SYNC_EVERY, а не каждый круг — токены меняются редко,
         # незачем дёргать сервер лишним запросом каждые 15 секунд
@@ -255,12 +401,18 @@ def main():
             sync_env()
             last_env_sync = time.monotonic()
 
+        if AUTO_UPDATE and time.monotonic() - last_update_check > UPDATE_CHECK_EVERY:
+            check_for_update(lock)     # обновится и выйдет сама, если можно
+            last_update_check = time.monotonic()
+
         if ROLE == "standby" and server_alive():
             if standing_by is not True:
                 log.info("резерв: синк идёт с другой машины, жду молча")
                 if standing_by is False:      # реальный переход, не первый запуск
                     notify_role_change("standby")
                 standing_by = True
+            if AUTO_UPDATE and my_commit:
+                report_canary(my_commit)   # подтверждаем: жив на этом коде
             time.sleep(INTERVAL)
             continue
         if standing_by is True:
