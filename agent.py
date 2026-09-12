@@ -81,13 +81,26 @@ def server_alive() -> bool:
     Смотрим /status — тот же публичный эндпоинт, что использует пульт
     управления. Он не привязан к конкретной машине: агенту не нужно знать
     про другую машину напрямую, достаточно видеть общий признак «синк идёт».
+
+    Берём готовый sync_seconds_ago, посчитанный на сервере его же часами —
+    не вычисляем разность сами из last_sync и своего utcnow(). Часы агентской
+    машины и сервера ничем не синхронизированы: если агент спешит хотя бы на
+    STANDBY_TIMEOUT, он решил бы, что синк устарел, и включился поверх живого
+    primary — оба агента одновременно ломятся в один MT5-логин.
+
     Сетевая ошибка тут — не повод включаться: считаем, что кто-то жив, и
     подождём следующего круга, а не бросаемся занимать терминал вслепую.
     """
     try:
         r = requests.get(f"{SERVER}/status", timeout=15)
         r.raise_for_status()
-        last = r.json().get("last_sync")
+        data = r.json()
+        ago = data.get("sync_seconds_ago")
+        if ago is not None:
+            return ago < STANDBY_TIMEOUT
+        # старый сервер без sync_seconds_ago (до обновления) — считаем сами,
+        # хуже часов агента опоры всё равно нет
+        last = data.get("last_sync")
         if not last:
             return False
         age = (utcnow() - datetime.fromisoformat(last)).total_seconds()

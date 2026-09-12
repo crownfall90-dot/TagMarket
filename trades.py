@@ -242,9 +242,14 @@ def capital() -> float:
     стратегии (0.866% против 0.841%), хотя стратегия у счетов одна.
 
     base остаётся опорой там, где баланса нет (агент ещё не присылал).
+
+    Проверяем именно a is not None, а не a.balance: нулевой баланс — валидное
+    состояние (клиент вывел всё), а не «данных ещё нет». Если бы условие
+    было on a.balance (0.0 — falsy), счёт с честным нулевым балансом откатился
+    бы на устаревший base и показал бы капитал, которого уже нет на счёте.
     """
     a = account()
-    if a and a.balance and _multiplier:
+    if a is not None and _multiplier:
         return (a.balance - _profit_on_account()) / _multiplier
 
     if _base is not None:
@@ -1232,12 +1237,19 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
             return "\n".join(out)
 
         if is_transfer(row):
-            # изменение капитала: пополнение/реинвест (+) или вывод капитала (−)
+            # изменение капитала: пополнение/реинвест (+) или вывод капитала (−).
+            # Upgrade без парного Adjust рядом (пара разъехалась между кругами
+            # опроса — Adjust уже отправлен отдельно, или наоборот) — это тоже
+            # реинвест, просто его вторая половина; отмечаем явно, а не как
+            # обычное пополнение, иначе два сообщения выглядят как спорящие
+            is_upgrade = "upgrade" in (row["comment"] or "").lower()
             out_of = own < 0
             head = ("📤 <b>Капитал выведен со стратегии</b>" if out_of
+                    else "♻️ <b>Реинвест: капитал пополнен</b>" if is_upgrade
                     else "📥 <b>Заведено на стратегию</b>")
             where = ("➡️ Ушло на баланс Tag Markets" if out_of
-                     else "⬅️ Капитал добавлен в стратегию")
+                     else "⬅️ Вторая половина реинвеста — профит уже списан отдельно"
+                     if is_upgrade else "⬅️ Капитал добавлен в стратегию")
             was, became = capital_around(row)   # состояние ровно на момент операции
             out = [f"🕒 <b>{when}</b>", head, THIN, f"<b>{money(own)}{sign(cur)}</b>", where]
             if note:

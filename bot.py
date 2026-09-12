@@ -1108,16 +1108,20 @@ async def poll_mt5(bot: Bot, db) -> int:
 
             # реинвест приходит парой строк одним моментом: Adjust списывает
             # из профита, Upgrade тут же кладёт то же самое в капитал. Раньше
-            # это были два отдельных, спорящих друг с другом уведомления
+            # это были два отдельных, спорящих друг с другом уведомления.
+            # Ищем пару в окне соседних строк, а не строго следующую: тикеты
+            # не гарантируют порядок при равном времени, и между Adjust и
+            # Upgrade может затесаться третья сделка с той же секундой
             pair = None
             if (row["is_balance"] and trades.is_profit_side(row)
                     and "adjust" in (row["comment"] or "").lower()):
-                nxt = rows[i + 1] if i + 1 < len(rows) else None
-                if (nxt and nxt["is_balance"] and not trades.is_profit_side(nxt)
-                        and "upgrade" in (nxt["comment"] or "").lower()
-                        and nxt["time"] == row["time"]):
-                    pair = nxt
-                    skip_ticket = nxt["ticket"]
+                for nxt in rows[i + 1:i + 4]:
+                    if (nxt["is_balance"] and not trades.is_profit_side(nxt)
+                            and "upgrade" in (nxt["comment"] or "").lower()
+                            and nxt["time"] == row["time"]):
+                        pair = nxt
+                        skip_ticket = nxt["ticket"]
+                        break
 
             day_net = day_count = total_net = None
             if row["is_closing"]:
@@ -1220,11 +1224,75 @@ async def finish_add(bot: Bot, chat_id, owner, data: dict) -> str:
         # через store.py, у _Account такого поля нет, и holder уже спрошен
         # текстом на шаге AddAcc.holder
         accounts.update(acc["name"], owner, holder=a.name)
+
+    if not a:
+        # ни одна агентская машина сейчас не отвечает (обе выключены, или
+        # опрос ещё не дошёл до этого счёта — цикл раз в 15 секунд) — счёт
+        # уже сохранён, но падать на a.login/a.currency было бы AttributeError,
+        # и пользователь решил бы, что счёт вообще не добавился
+        asyncio.create_task(_await_first_sync(bot, chat_id, owner, acc))
+        return (f"✅ <b>Счёт {acc['name']} добавлен</b>\n{trades.THIN}\n"
+                f"Номер <b>{acc['login']}</b>\n"
+                f"<i>{acc['server']}</i>\n\n"
+                f"⏳ <i>Данные ожидаются через некоторое время — ни одна машина "
+                f"с терминалом сейчас не на связи. Мы вас уведомим.</i>")
+
     my = trades.capital()       # реальные деньги, не торговый баланс ×плечо
     return (f"✅ <b>Счёт {acc['name']} добавлен</b>\n{trades.THIN}\n"
             f"Номер <b>{a.login}</b>\n"
             f"Мои деньги <b>{my:.2f} {a.currency}</b>\n"
             f"<i>{a.server}</i>\n\nУведомления по нему пойдут с ближайшей сделки.")
+
+
+AWAIT_FIRST_SYNC_TIMEOUT = int(os.getenv("AWAIT_FIRST_SYNC_TIMEOUT", 300))
+
+
+async def _await_first_sync(bot: Bot, chat_id, owner, acc: dict) -> None:
+    """Ждёт, пока агент впервые пришлёт состояние нового счёта, и сообщает.
+
+    Опрос идёт раз в 15 секунд на стороне агента — здесь просто поглядываем
+    на store.get_state() тем же интервалом, не дёргая терминал напрямую.
+
+    Задача живёт до AWAIT_FIRST_SYNC_TIMEOUT и не привязана к жизни счёта —
+    если его успеют удалить (или отдать другому владельцу тем же login через
+    share()) до того, как агент впервые отзовётся, замыкание всё ещё держит
+    старые owner/acc. На каждом круге проверяем счёт заново по имени и
+    владельцу — если его больше нет, тихо прекращаем: слать «на связи» или
+    «нет связи» про несуществующий счёт (или про чужие данные, пришедшие для
+    того же login под новым владельцем) было бы неверным адресатом.
+    """
+    deadline = trades.clock() + timedelta(seconds=AWAIT_FIRST_SYNC_TIMEOUT)
+    while trades.clock() < deadline:
+        await asyncio.sleep(15)
+        if not accounts.by_name(acc["name"], owner):
+            return      # счёт удалили, пока ждали — уведомлять больше некого
+        try:
+            trades.use(acc)
+            a = trades.account()
+        except Exception:
+            a = None
+        if a:
+            my = trades.capital()
+            try:
+                await send(bot, owner,
+                          f"📡 <b>Счёт {acc['name']} на связи</b>\n{trades.THIN}\n"
+                          f"Номер <b>{a.login}</b>\n"
+                          f"Мои деньги <b>{my:.2f} {a.currency}</b>\n"
+                          f"<i>{a.server}</i>\n\n"
+                          f"Уведомления по нему пойдут с ближайшей сделки.")
+            except Exception as e:
+                log.warning("не доставил уведомление о первом синке %s: %s", owner, e)
+            return
+    if not accounts.by_name(acc["name"], owner):
+        return          # удалили ровно на последнем круге — тайм-аут не про что слать
+    try:
+        await send(bot, owner,
+                  f"⚠️ <b>{acc['name']}: всё ещё нет связи</b>\n{trades.THIN}\n"
+                  f"Ни одна машина с терминалом не ответила за "
+                  f"{AWAIT_FIRST_SYNC_TIMEOUT // 60} мин. Счёт остался в настройках — "
+                  f"данные подтянутся сами, когда терминал будет доступен.")
+    except Exception as e:
+        log.warning("не доставил предупреждение о тайм-ауте %s: %s", owner, e)
 
 
 # ── запуск ────────────────────────────────────────────────────────────────
@@ -1897,12 +1965,15 @@ async def main():
             reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
 
     async def _after_cabinet(answer, state: FSMContext, owner, cab: str):
-        # holder берём из уже известного кабинета; на сервере бот работает
-        # без MT5, и взять имя из профиля счёта, как раньше, неоткуда —
-        # для нового кабинета имя владельца приходится спросить самим
+        # holder берём из уже известного кабинета — сначала среди своих
+        # счетов, потом глобально: кабинет это реальный клиент портала, и
+        # его счета мог первым завести другой человек (гость, второй Telegram
+        # ID). Не глядя дальше своих счетов, бот заново спрашивал имя,
+        # которое уже есть в системе под тем же номером кабинета.
         known = accounts.cabinets(owner).get(cab, {})
-        await state.update_data(cabinet=cab, holder=known.get("holder", ""))
-        if known.get("holder"):
+        holder = known.get("holder") or accounts.holder_of(cab)
+        await state.update_data(cabinet=cab, holder=holder)
+        if holder:
             await state.set_state(AddAcc.name)
             await answer("Как называть счёт в боте? Например <code>SONIC #1</code>",
                         reply_markup=CANCEL)

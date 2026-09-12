@@ -155,11 +155,19 @@ async def status(request):
 
     trades_db = request.app["trades"]
     row = trades_db.execute("SELECT COUNT(*), MAX(synced) FROM state").fetchone()
+    # секунды считаем здесь же, часами сервера с обеих сторон разности —
+    # агент сравнивал last_sync (время сервера) со своими часами напрямую,
+    # и рассинхрон часов агент/сервер ложно показывал то устаревший, то
+    # свежий синк. sync_seconds_ago нейтрален к любому перекосу часов агента.
+    last_sync = row[1] if row else None
+    sync_ago = (utcnow() - datetime.fromisoformat(last_sync)).total_seconds() \
+        if last_sync else None
     return web.json_response({
         "bot": "работает" if alive else "остановлен",
         "bot_seconds_ago": round(ago) if ago is not None else None,
         "accounts": row[0] if row else 0,
-        "last_sync": row[1] if row else None,
+        "last_sync": last_sync,
+        "sync_seconds_ago": round(sync_ago) if sync_ago is not None else None,
     })
 
 
