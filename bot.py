@@ -869,7 +869,29 @@ def account_head(acc: dict, cur: str) -> str:
     title = acc.get("strategy") or acc["name"]
     who = acc.get("holder") or acc.get("cabinet") or ""
     sub = " · ".join(x for x in (html.escape(who), f"<code>{acc['login']}</code>") if x)
-    return f"🏷 <b>{html.escape(title)}</b>\n<i>{sub}</i>\n{trades.fmt_head(cur)}"
+    out = f"🏷 <b>{html.escape(title)}</b>\n<i>{sub}</i>\n{trades.fmt_head(cur)}"
+    wallet = _wallet_line(acc, cur)
+    return f"{out}\n{wallet}" if wallet else out
+
+
+def _wallet_line(acc: dict, cur: str) -> str:
+    """Отдельная строка с балансом кабинета Tag Markets, если по нему уже
+    приходили вебхуки о пополнении. Явно подписываем «накоплено с даты»,
+    а не «баланс» — портал не сообщает о выводах с кошелька, и число может
+    быть больше, чем на самом деле, если деньги вывели не через стратегию."""
+    cabinet = str(acc.get("cabinet") or "").strip()
+    if not cabinet:
+        return ""
+    try:
+        db = open_db()      # partner.open_db() — та же база, что у вебхуков (таблица kv)
+        amount, since = partner.wallet_balance(db, cabinet)
+        if not since:
+            return ""
+        when = datetime.fromisoformat(since).strftime("%d.%m.%Y")
+        return f"👛 На балансе Tag Markets <b>{trades.amount(amount, cur)}</b> <i>(накоплено с {when})</i>"
+    except Exception:
+        log.exception("не посчитал баланс кабинета")
+        return ""
 
 
 def short_name(acc: dict, cabinet: str = None) -> str:

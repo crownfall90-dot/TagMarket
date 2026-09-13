@@ -112,11 +112,15 @@ def _remember_wallet_income(db, kind: str, row: dict) -> None:
     if not mine:        # депозит клиента, а не движение своих денег
         return
     cabinet = str(partner.pick(row, "customer_no", "customer", "client_no") or "").strip()
-    raw = partner.money(row).split()[0].replace(" ", "").replace(" ", "")
+    # money() отдаёт "1234.56 USD" — та же форма, что уже разбирает pretty_money()
+    # по всему боту; берём число тем же способом (rpartition по последнему
+    # пробелу — устойчивее, чем брать первое слово, если в сумме вдруг
+    # окажется внутренний пробел)
+    number, _, _ = partner.money(row).rpartition(" ")
     try:
-        partner.wallet_add(db, cabinet, float(raw))
+        partner.wallet_add(db, cabinet, float(number.replace(" ", "").replace(" ", "")))
     except (TypeError, ValueError):
-        log.warning("не разобрал сумму депозита для кошелька: %r", raw)
+        log.warning("не разобрал сумму депозита для кошелька: %r", number)
 
 
 def _just_sent(db, kind: str, row: dict) -> bool:
