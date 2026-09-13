@@ -441,9 +441,27 @@ def only_one_copy() -> socket.socket:
     return guard
 
 
+def _run_quietly() -> None:
+    """Самый низкий приоритет для самого агента — он лишь дёргает терминал
+    и шлёт HTTP-запросы раз в несколько секунд, процессору пользователя
+    это не должно быть заметно вообще, даже под большой нагрузкой."""
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        IDLE_PRIORITY_CLASS = 0x00000040
+        PROCESS_MODE_BACKGROUND_BEGIN = 0x00100000
+        h = ctypes.windll.kernel32.GetCurrentProcess()
+        ctypes.windll.kernel32.SetPriorityClass(h, IDLE_PRIORITY_CLASS)
+        ctypes.windll.kernel32.SetPriorityClass(h, PROCESS_MODE_BACKGROUND_BEGIN)
+    except Exception as e:
+        log.warning("не понизил приоритет агента: %s", e)
+
+
 def main():
     if not TOKEN:
         raise SystemExit("не задан WEBHOOK_TOKEN — агент не сможет авторизоваться")
+    _run_quietly()
     lock = only_one_copy()      # держим до конца работы
     log.info("агент запущен (роль: %s), сервер %s, круг раз в %d с", ROLE, SERVER, INTERVAL)
 

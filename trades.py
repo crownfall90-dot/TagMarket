@@ -56,15 +56,18 @@ _history_seen: set[str] = set()     # у каких счетов история 
 
 # CREATE_NO_WINDOW — не даёт мигнуть чёрной консолью самому запускаемому
 # процессу (актуально не для терминала, а для его дочерних консольных утилит).
-# BELOW_NORMAL_PRIORITY_CLASS — терминал не мешает другим, более приоритетным
-# программам на этом же компьютере: он опрашивается редко и не должен отбирать
-# процессор у того, чем человек занят прямо сейчас.
+# IDLE_PRIORITY_CLASS — максимальное понижение: терминал получает процессор
+# только когда он не нужен вообще никому другому, и не мешает ни большим,
+# ни маленьким приоритетным задачам пользователя. Для фонового опроса раз
+# в несколько секунд это не заметно на скорости получения данных.
 _NO_WINDOW = 0x08000000 if os.name == "nt" else 0
-_BELOW_NORMAL = 0x00004000 if os.name == "nt" else 0
+_IDLE_PRIORITY = 0x00000040 if os.name == "nt" else 0
+_IDLE_IO = 0     # PROCESS_MODE_BACKGROUND_BEGIN — заодно понижает и I/O-приоритет
+_BACKGROUND_MODE = 0x00100000 if os.name == "nt" else 0     # PROCESS_MODE_BACKGROUND_BEGIN
 
 
 def _launch() -> None:
-    """Поднять терминал скрытым и с пониженным приоритетом, если он ещё не запущен.
+    """Поднять терминал скрытым и с минимальным приоритетом, если он ещё не запущен.
 
     Терминалу нужен рабочий стол, поэтому службой его не сделать, но окно
     можно не показывать вовсе: работает молча, не мешает и не закрывается
@@ -75,7 +78,7 @@ def _launch() -> None:
         startup = subprocess.STARTUPINFO()
         startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startup.wShowWindow = 0     # SW_HIDE — ни окна, ни кнопки в панели задач
-    flags = (getattr(subprocess, "DETACHED_PROCESS", 0) | _NO_WINDOW | _BELOW_NORMAL)
+    flags = (getattr(subprocess, "DETACHED_PROCESS", 0) | _NO_WINDOW | _IDLE_PRIORITY)
     proc = subprocess.Popen([TERMINAL], cwd=os.path.dirname(TERMINAL), startupinfo=startup,
                             creationflags=flags)
     time.sleep(20)      # терминалу нужно время подняться
@@ -84,15 +87,26 @@ def _launch() -> None:
 
 
 def _lower_priority(pid: int) -> None:
-    """На случай если сам терминал перевыставит себе приоритет после старта."""
+    """Прижать терминал к минимуму: и CPU-приоритет, и I/O, и память.
+
+    На случай если сам терминал перевыставит себе приоритет после старта —
+    флаг при запуске такое не гарантирует.
+    """
     if os.name != "nt":
         return
     try:
         import ctypes
         PROCESS_SET_INFORMATION = 0x0200
-        h = ctypes.windll.kernel32.OpenProcess(PROCESS_SET_INFORMATION, False, pid)
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        h = ctypes.windll.kernel32.OpenProcess(
+            PROCESS_SET_INFORMATION | PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
         if h:
-            ctypes.windll.kernel32.SetPriorityClass(h, _BELOW_NORMAL)
+            ctypes.windll.kernel32.SetPriorityClass(h, _IDLE_PRIORITY)
+            # PROCESS_MODE_BACKGROUND_BEGIN: заодно понижает приоритет памяти
+            # и дисковых операций — Windows сам держит процесс в самом
+            # незаметном для системы режиме, максимум, что можно выжать
+            # без риска сломать сам терминал.
+            ctypes.windll.kernel32.SetPriorityClass(h, _BACKGROUND_MODE)
             ctypes.windll.kernel32.CloseHandle(h)
     except Exception:
         pass     # не критично — терминал и так стартовал с пониженным приоритетом
