@@ -126,6 +126,63 @@ def cabinet_state(row) -> str:
         return ""
 
 
+def wallet_add(db, cabinet: str, amount: float) -> None:
+    """Запомнить приход на баланс кабинета (вывод профита со стратегии).
+
+    Портал шлёт вебхук только на пополнение кошелька; сколько там лежало до
+    того, как бот начал слушать, он не сообщает и отдельного метода «покажи
+    остаток» у кабинета нет. Поэтому копим сами — с оговоркой, что это
+    «пришло с такой-то даты», а не истинный остаток.
+    """
+    if not cabinet or not amount:
+        return
+    key = f"wallet_in:{cabinet}"
+    was = float(kv_get(db, key, 0) or 0)
+    kv_set(db, key, f"{was + amount:.2f}")
+    if not kv_get(db, f"wallet_since:{cabinet}"):
+        import trades
+        kv_set(db, f"wallet_since:{cabinet}", trades.clock().isoformat())
+
+
+def wallet_balance(db, cabinet: str) -> tuple[float, str]:
+    """Сколько на балансе кабинета и с какой даты считаем. (сумма, дата ISO).
+
+    Приход — из вебхуков портала, расход — то, что вернулось на стратегию
+    (это видно в истории MT5 как пополнение капитала). Внешние выводы с
+    кошелька портал никак не сообщает, поэтому их тут нет — о чём и
+    предупреждаем подписью рядом с цифрой.
+    """
+    since = kv_get(db, f"wallet_since:{cabinet}")
+    if not since:
+        return 0.0, ""
+    came_in = float(kv_get(db, f"wallet_in:{cabinet}", 0) or 0)
+
+    went_out = 0.0
+    try:
+        import accounts
+        import trades
+        from datetime import datetime, timedelta
+        start = datetime.fromisoformat(since)
+        seen = set()
+        for acc in accounts.load():
+            if str(acc.get("cabinet") or "").strip() != cabinet:
+                continue
+            if int(acc["login"]) in seen:
+                continue
+            seen.add(int(acc["login"]))
+            trades.use(acc)
+            for r in trades.fetch(start, trades.clock() + timedelta(days=1)):
+                # деньги вернулись с кошелька в стратегию: для кошелька это расход
+                if (r["is_balance"] and trades.is_transfer(r)
+                        and not trades.is_profit_side(r)):
+                    own = trades.own_amount(r)
+                    if own > 0:
+                        went_out += own
+    except Exception:
+        pass        # счета недоступны — покажем хотя бы приход
+    return max(came_in - went_out, 0.0), since
+
+
 def _event(head: str, row, note: str = "", sign: str = "") -> str:
     stamp = str(when(row) or "").strip()
     name, _ = whose(row)

@@ -94,8 +94,29 @@ async def handle(request: web.Request, kind: str, fmt) -> web.Response:
         # считанные секунды и по таймауту шлёт событие заново — поэтому
         # подтверждаем сразу, а сообщение отправляем следом
         asyncio.create_task(notify(request.app, fmt(row)))
+        _remember_wallet_income(db, kind, row)
     log.info("вебхук %s: %s", kind, row.get("customer_no", row.get("tx_id", "?")))
     return web.Response(text="ok")
+
+
+def _remember_wallet_income(db, kind: str, row: dict) -> None:
+    """Депозит на свой кабинет — это приход на баланс Tag Markets.
+
+    Копим только приход: портал шлёт вебхук на пополнение кошелька, а на
+    вывод с него — нет. Расход (возврат денег в стратегию) partner считает
+    сам по истории MT5, см. wallet_balance().
+    """
+    if kind != "deposit":
+        return
+    _, mine = partner.whose(row)
+    if not mine:        # депозит клиента, а не движение своих денег
+        return
+    cabinet = str(partner.pick(row, "customer_no", "customer", "client_no") or "").strip()
+    raw = partner.money(row).split()[0].replace(" ", "").replace(" ", "")
+    try:
+        partner.wallet_add(db, cabinet, float(raw))
+    except (TypeError, ValueError):
+        log.warning("не разобрал сумму депозита для кошелька: %r", raw)
 
 
 def _just_sent(db, kind: str, row: dict) -> bool:
@@ -222,7 +243,9 @@ async def agent_role_change(request):
     data = await request.json()
     host = str(data.get("host") or "неизвестная машина")
     became = data.get("became")     # "active" | "standby"
+    db = request.app["db"]
     if became == "active":
+        partner.kv_set(db, "active_machine", host)
         text = (f"🔀 <b>Резерв подключился</b>\n{partner.THIN}\n"
                f"<b>{host}</b> взял на себя опрос терминала — "
                f"основная машина не отвечала.")
@@ -278,6 +301,35 @@ async def agent_update_status(request):
     return web.json_response({"canary_age_seconds": round(age) if age is not None else None})
 
 
+async def agent_heartbeat(request):
+    """Машина в резерве отмечается: жива, ждёт молча — она не шлёт agent_sync
+    (терминал не опрашивает), и без этого сервер не знал бы её hostname."""
+    check_token(request)
+    data = await request.json()
+    host = str(data.get("host") or "")
+    if not host:
+        return web.json_response({"ok": False}, status=400)
+    db = request.app["db"]
+    partner.kv_set(db, f"machine_seen:{host}", utcnow().isoformat())
+    return web.json_response({"ok": True})
+
+
+async def agent_machines_status(request):
+    """Кто из известных машин недавно был на связи — для /status и уведомлений."""
+    check_token(request)
+    db = request.app["db"]
+    stale_after = int(request.query.get("stale_after", 60))
+    out = {}
+    for key in partner.kv_keys(db, "machine_seen:%"):
+        host = key.split(":", 1)[1]
+        seen = partner.kv_get(db, key)
+        age = (utcnow() - datetime.fromisoformat(seen)).total_seconds() if seen else None
+        out[host] = {"seconds_ago": round(age) if age is not None else None,
+                    "alive": age is not None and age < stale_after}
+    return web.json_response({"machines": out,
+                             "active_machine": partner.kv_get(db, "active_machine")})
+
+
 async def agent_sync(request):
     """Агент прислал состояние счёта и новые сделки."""
     check_token(request)
@@ -293,6 +345,13 @@ async def agent_sync(request):
     new = store.save_deals(db, login, data.get("deals", []))
     if new:
         log.info("счёт %s: %d новых сделок", login, new)
+
+    host = data.get("host")
+    if host:
+        # какая машина реально опрашивает терминал прямо сейчас — для
+        # /agent/machines_status и для текста в agent_role_change
+        partner.kv_set(db, "active_machine", host)
+        partner.kv_set(db, f"machine_seen:{host}", utcnow().isoformat())
     return web.json_response({"ok": True, "new": new})
 
 
@@ -316,6 +375,8 @@ async def main():
     app.router.add_post("/agent/role_change", agent_role_change)
     app.router.add_post("/agent/update_report", agent_update_report)
     app.router.add_get("/agent/update_status", agent_update_status)
+    app.router.add_post("/agent/heartbeat", agent_heartbeat)
+    app.router.add_get("/agent/machines_status", agent_machines_status)
 
     runner = web.AppRunner(app)
     await runner.setup()

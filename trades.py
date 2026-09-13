@@ -54,8 +54,17 @@ TERMINAL = os.getenv("MT5_TERMINAL", r"D:\MetaTrader5\terminal64.exe")
 _history_seen: set[str] = set()     # у каких счетов история уже подгружалась
 
 
+# CREATE_NO_WINDOW — не даёт мигнуть чёрной консолью самому запускаемому
+# процессу (актуально не для терминала, а для его дочерних консольных утилит).
+# BELOW_NORMAL_PRIORITY_CLASS — терминал не мешает другим, более приоритетным
+# программам на этом же компьютере: он опрашивается редко и не должен отбирать
+# процессор у того, чем человек занят прямо сейчас.
+_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
+_BELOW_NORMAL = 0x00004000 if os.name == "nt" else 0
+
+
 def _launch() -> None:
-    """Поднять терминал скрытым, если он ещё не запущен.
+    """Поднять терминал скрытым и с пониженным приоритетом, если он ещё не запущен.
 
     Терминалу нужен рабочий стол, поэтому службой его не сделать, но окно
     можно не показывать вовсе: работает молча, не мешает и не закрывается
@@ -66,10 +75,27 @@ def _launch() -> None:
         startup = subprocess.STARTUPINFO()
         startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startup.wShowWindow = 0     # SW_HIDE — ни окна, ни кнопки в панели задач
+    flags = (getattr(subprocess, "DETACHED_PROCESS", 0) | _NO_WINDOW | _BELOW_NORMAL)
     proc = subprocess.Popen([TERMINAL], cwd=os.path.dirname(TERMINAL), startupinfo=startup,
-                            creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
+                            creationflags=flags)
     time.sleep(20)      # терминалу нужно время подняться
     hide_terminal(proc.pid)
+    _lower_priority(proc.pid)
+
+
+def _lower_priority(pid: int) -> None:
+    """На случай если сам терминал перевыставит себе приоритет после старта."""
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        PROCESS_SET_INFORMATION = 0x0200
+        h = ctypes.windll.kernel32.OpenProcess(PROCESS_SET_INFORMATION, False, pid)
+        if h:
+            ctypes.windll.kernel32.SetPriorityClass(h, _BELOW_NORMAL)
+            ctypes.windll.kernel32.CloseHandle(h)
+    except Exception:
+        pass     # не критично — терминал и так стартовал с пониженным приоритетом
 
 
 def hide_terminal(pid: int = None) -> int:
@@ -1272,14 +1298,24 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
     gross = mine(row["net"])          # результат сделки до комиссии брокера
     profit = net_of_fee(gross)        # чистыми — профит именно этой сделки
     plus = profit >= 0
-    cap = capital()                   # баланс стратегии (профит лежит отдельно)
+    cap = capital()                   # баланс стратегии сейчас (профит лежит отдельно)
+    # процент — к капиталу НА МОМЕНТ сделки, не к сегодняшнему: уведомления
+    # доставляются не мгновенно (late_note — отдельный случай, но и обычная
+    # пауза между сделкой и опросом бывает), и если между ними счёт успел
+    # вырасти депозитом, процент к текущему капиталу занижен — тот же счёт,
+    # что и соседние по стратегии, показывал бы другое число на ту же сделку
+    try:
+        cap_then = capital_at(row["time"], fetch(datetime(2000, 1, 1), clock() + timedelta(days=1)))
+    except Exception:
+        cap_then = cap
+    pct_base = cap_then if cap_then else cap
     nth, total = ordinal_today(row)
 
     # порядок как просили: дата/время, какая сделка за день, потом профит крупно
     out = [f"🕒 <b>{row['time']:%d.%m.%Y  %H:%M:%S}</b>",
            f"📊 {_nth_word(nth)} сделка за день{'' if total == nth else f' из {total}'}",
            f"{'✅' if plus else '❌'} <b>{money(profit)}{sign(cur)}</b> чистыми"
-           + (f"  <i>{pct(profit / cap * 100)}</i>" if cap else "")]
+           + (f"  <i>{pct(profit / pct_base * 100)}</i>" if pct_base else "")]
 
     details = [f"{short(row['symbol'], 12)} {row['side']}"]
     if gross != profit:

@@ -64,6 +64,12 @@ MT5_POLL_SECONDS = int(os.getenv("MT5_POLL_SECONDS", 5))
 MT5_ALERT_AFTER = int(os.getenv("MT5_ALERT_AFTER", 40))
 # агент синхронизирует раз в 15 сек; молчит дольше 5 минут — терминал/ПК недоступен
 TERMINAL_STALE = int(os.getenv("TERMINAL_STALE", 300))
+# то же самое, но для отслеживания «сколько агентских машин живо» — короче,
+# чем TERMINAL_STALE: это не тревога о простое торговли (тем занят failover
+# внутри agent.py), а просто информационная сводка на смену состояния
+MACHINE_STALE = int(os.getenv("MACHINE_STALE", 60))
+MACHINES_CHECK_SECONDS = int(os.getenv("MACHINES_CHECK_SECONDS", 30))
+INVITE_STALE_DAYS = int(os.getenv("INVITE_STALE_DAYS", 2))
 LOOKBACK_DAYS = int(os.getenv("LOOKBACK_DAYS", 3))
 # сколько минут молчания Telegram терпим, прежде чем перезапуститься
 TELEGRAM_DEAD_MIN = int(os.getenv("TELEGRAM_DEAD_MIN", 5))
@@ -2156,6 +2162,37 @@ async def main():
                     log.exception("свёртка месяцев")
                 await asyncio.sleep(24 * 3600)
 
+        async def stale_invites_cleanup():
+            """Раз в сутки убирает приглашения старше 2 дней, по которым
+            никто не прошёл — не важно, привязаны к ним счета или нет.
+
+            Одноразовые ссылки, которыми не воспользовались, только копятся
+            в базе и путают владельца в списке «Гости»/«Приглашения» —
+            использованные (uses > 0) не трогаем, они и так гаснут сами.
+            """
+            while True:
+                try:
+                    deadline = trades.clock() - timedelta(days=INVITE_STALE_DAYS)
+                    removed = 0
+                    for key in kv_keys(db, "invite:%"):
+                        raw = kv_get(db, key)
+                        try:
+                            inv = json.loads(raw) if raw else None
+                        except ValueError:
+                            continue
+                        if not inv or inv.get("uses", 0) > 0:
+                            continue
+                        created = inv.get("created")
+                        if created and datetime.fromisoformat(created) < deadline:
+                            kv_del(db, key)
+                            removed += 1
+                    if removed:
+                        log.info("убрано неиспользованных приглашений старше %d дн: %d",
+                                 INVITE_STALE_DAYS, removed)
+                except Exception:
+                    log.exception("уборка старых приглашений")
+                await asyncio.sleep(24 * 3600)
+
         async def heartbeat():
             """Отметка «бот жив» в общей базе: по ней пульт управления видит
             состояние даже когда SSH до сервера не отвечает."""
@@ -2280,6 +2317,52 @@ async def main():
                         log.error("перезапускаюсь ради выбора рабочего прокси")
                         os._exit(1)     # именно так: обычный выход задачу не убьёт
 
+        async def machines_watchdog():
+            """Сколько агентских машин сейчас на связи — уведомляем при смене.
+
+            Обе (или единственная) машины держат свой ключ machine_seen:<host>
+            свежим: активная — через agent/sync (каждый круг синка), резервная
+            через agent/heartbeat. Само переключение primary<->standby уже
+            освещает agent_role_change; здесь — более общая картина «сколько
+            машин вообще откликается», включая обе разом пропавшие или обе
+            разом появившиеся, которые role_change в принципе не видит: он
+            срабатывает только на переходе резерва между ожиданием и работой.
+            """
+            last_alive_count = None
+            while True:
+                await asyncio.sleep(MACHINES_CHECK_SECONDS)
+                try:
+                    now_ = utcnow()
+                    hosts = {}
+                    for key in kv_keys(db, "machine_seen:%"):
+                        host = key.split(":", 1)[1]
+                        seen = kv_get(db, key)
+                        if not seen:
+                            continue
+                        age = (now_ - datetime.fromisoformat(seen)).total_seconds()
+                        hosts[host] = age < MACHINE_STALE
+                    alive = sorted(h for h, ok in hosts.items() if ok)
+                    count = len(alive)
+                    if last_alive_count is None:
+                        last_alive_count = count      # первый круг — не тревога, просто запомнили
+                        continue
+                    if count == last_alive_count:
+                        continue
+                    total = len(hosts) or 1
+                    if count == 0:
+                        text = (f"🔴 <b>Все агентские машины офлайн</b>\n{trades.THIN}\n"
+                               f"Терминал никто не опрашивает — данные перестали обновляться.")
+                    elif count < last_alive_count:
+                        text = (f"🟡 <b>{alive[0] if alive else '?'} — единственная на связи</b>\n"
+                               f"{trades.THIN}\nОсталось {count} из {total} машин.")
+                    else:
+                        text = (f"🟢 <b>Связь восстановлена: {count} из {total} машин</b>\n"
+                               f"{trades.THIN}\n{', '.join(alive)}")
+                    await send(bot, chat_id, text)
+                    last_alive_count = count
+                except Exception:
+                    log.exception("сбой наблюдения за агентскими машинами")
+
         async def daily_digest():
             """Раз в сутки — сводка о состоянии, если человек её просил.
 
@@ -2336,8 +2419,10 @@ async def main():
         asyncio.create_task(daily_digest())
         asyncio.create_task(heartbeat())
         asyncio.create_task(monthly_rollup())
+        asyncio.create_task(stale_invites_cleanup())
         asyncio.create_task(telegram_watchdog())
         asyncio.create_task(terminal_watchdog())
+        asyncio.create_task(machines_watchdog())
         asyncio.create_task(mt5_loop())
         asyncio.create_task(loop(lambda: poll_portal(session, bot, db, chat_id),
                                  POLL_SECONDS, "кабинет"))

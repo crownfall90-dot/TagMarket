@@ -49,6 +49,28 @@ LOGS = os.path.join(ROOT, "logs")
 os.makedirs(LOGS, exist_ok=True)
 os.makedirs(os.path.join(ROOT, "data"), exist_ok=True)
 
+# Вспомогательные консольные утилиты (git, taskkill) при запуске из-под pythonw
+# окна не создают сами по себе, но если агент когда-нибудь запущен из-под
+# обычного python.exe (или из планировщика с видимой консолью) — каждый такой
+# вызов на миг мигает своим чёрным окном. CREATE_NO_WINDOW глушит это всегда,
+# независимо от того, как запущен сам агент — не мешает другим процессам
+# компьютера и не отвлекает пользователя.
+_NO_WINDOW = 0x08000000 if os.name == "nt" else 0     # CREATE_NO_WINDOW
+
+
+def _quiet_run(args, **kw):
+    import subprocess
+    kw.setdefault("creationflags", 0)
+    kw["creationflags"] |= _NO_WINDOW
+    return subprocess.run(args, **kw)
+
+
+def _quiet_popen(args, **kw):
+    import subprocess
+    kw.setdefault("creationflags", 0)
+    kw["creationflags"] |= _NO_WINDOW
+    return subprocess.Popen(args, **kw)
+
 # в фоне консоли нет, поэтому пишем ещё и в файл — его показывает пульт управления.
 # Файл крутится по кругу: агент пишет каждые 15 секунд и без ограничения
 # за год оставил бы десятки мегабайт.
@@ -174,9 +196,8 @@ GIT_BRANCH = os.getenv("GIT_BRANCH", "main")
 
 
 def _run_git(*args, timeout=30) -> str:
-    import subprocess
-    r = subprocess.run(["git", *args], cwd=ROOT, capture_output=True,
-                       text=True, timeout=timeout)
+    r = _quiet_run(["git", *args], cwd=ROOT, capture_output=True,
+                   text=True, timeout=timeout)
     if r.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)}: {r.stderr.strip()[:200]}")
     return r.stdout.strip()
@@ -240,6 +261,20 @@ def report_canary(commit: str) -> None:
                       headers={"X-Token": TOKEN}, timeout=15)
     except Exception as e:
         log.warning("не отчитался о коммите: %s", e)
+
+
+def send_heartbeat() -> None:
+    """Отмечаемся живыми, пока ждём в резерве и не шлём agent/sync.
+
+    Без этого сервер не знал бы hostname машины, которая просто молча
+    стоит наготове — machines_watchdog в bot.py не увидел бы её вовсе.
+    """
+    try:
+        requests.post(f"{SERVER}/agent/heartbeat",
+                      json={"host": socket.gethostname()},
+                      headers={"X-Token": TOKEN}, timeout=15)
+    except Exception as e:
+        log.warning("не отправил heartbeat: %s", e)
 
 
 def check_for_update(lock: socket.socket) -> None:
@@ -309,8 +344,8 @@ def _self_update_and_restart(lock: socket.socket, target_commit: str) -> None:
     try:
         import subprocess
         pythonw = sys.executable.replace("python.exe", "pythonw.exe")
-        subprocess.Popen([pythonw, os.path.join(ROOT, "agent.py")], cwd=ROOT,
-                         creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
+        _quiet_popen([pythonw, os.path.join(ROOT, "agent.py")], cwd=ROOT,
+                     creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
     except Exception as e:
         log.error("не запустил новый процесс, остаюсь на старом коде до ручного рестарта: %s", e)
         return
@@ -352,9 +387,8 @@ def collect(acc: dict) -> dict:
         # кнопка «запустить» из бота: убиваем терминал и поднимаем заново
         log.info("%s: команда перезапуска терминала", acc["name"])
         try:
-            import subprocess
-            subprocess.run(["taskkill", "/F", "/IM", "terminal64.exe"],
-                           capture_output=True, timeout=15)
+            _quiet_run(["taskkill", "/F", "/IM", "terminal64.exe"],
+                      capture_output=True, timeout=15)
             time.sleep(3)
             trades._current = ""            # заставить переоткрыть терминал
         except Exception as e:
@@ -392,6 +426,7 @@ def collect(acc: dict) -> dict:
         "server": info.server,
         "deals": [{**d, "time": d["time"].isoformat()} for d in deals],
         "command_done": done,       # сервер снимет команду после выполнения
+        "host": socket.gethostname(),   # сервер знает, кто именно сейчас активен
     }
 
 
@@ -453,6 +488,7 @@ def main():
                 if standing_by is False:      # реальный переход, не первый запуск
                     notify_role_change("standby")
                 standing_by = True
+            send_heartbeat()
             time.sleep(INTERVAL)
             continue
         if standing_by is True:
