@@ -2224,7 +2224,12 @@ async def main():
             состояние даже когда SSH до сервера не отвечает."""
             while True:
                 try:
-                    kv_set(db, "bot_heartbeat", trades.clock().isoformat())
+                    # именно UTC, а не trades.clock() (он сдвинут на TZ_HOURS для
+                    # отображения): /status сравнивает отметку с datetime.utcnow(),
+                    # и сдвинутое время давало отрицательные bot_seconds_ago —
+                    # проверка живости решала бы, что бот жив, даже будь он мёртв
+                    kv_set(db, "bot_heartbeat",
+                           datetime.now(timezone.utc).replace(tzinfo=None).isoformat())
                 except Exception:
                     log.exception("не записал отметку живости")
                 await asyncio.sleep(30)
