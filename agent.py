@@ -485,6 +485,140 @@ def _run_quietly() -> None:
         log.warning("не понизил приоритет агента: %s", e)
 
 
+# Игра не должна замечать агента вообще: ни лишней нагрузки, ни тем более
+# мелькающего окна консоли при alt-tab или сворачивании. Но правило именно
+# такое, как попросили: мешает только игра В ФОКУСЕ и на весь экран —
+# свёрнутая или в оконном режиме игра агенту не мешает, можно опрашивать.
+#
+# SHQueryUserNotificationState (QUNS_RUNNING_D3D_FULL_SCREEN) казался бы
+# готовым решением, но на практике ложно срабатывает от любого фонового D3D-
+# рендера — например, Wallpaper Engine (живые обои) держит этот флаг
+# постоянно включённым, даже когда активна обычная программа на рабочем
+# столе. Проверено на реальной машине: пока в фокусе был редактор кода,
+# а не игра, флаг всё равно стоял «полноэкранная игра». Полагаться на него
+# нельзя — агент бы никогда не запускался.
+#
+# Вместо системного флага — окно переднего плана реально ли занимает весь
+# экран без рамки (так рисуют игры в exclusive/borderless fullscreen) И
+# принадлежит известному игровому процессу или просто безрамочное на весь
+# экран. Отдельно, независимо — общая загрузка CPU уже высокая сама по себе:
+# если что-то и так забирает почти весь процессор, неважно, игра это или нет.
+_GAME_CHECK_EVERY = int(os.getenv("GAME_CHECK_EVERY", 20))     # секунд между проверками
+_last_game_check = 0.0
+_last_game_state = False
+
+# По имени процесса — известные игры/лаунчеры, которые пользователь сам
+# назвал (CS:GO/CS2 и похожие). Учитываются только если такой процесс СЕЙЧАС
+# в фокусе — свёрнутый Steam или CS2 в фоне агенту не мешает.
+_HEAVY_FOREGROUND_PROCESSES = {
+    "cs2.exe", "csgo.exe", "hl2.exe", "steam.exe",
+    "faceitclient.exe", "faceitservice.exe",
+    "dota2.exe", "valorant.exe", "valorant-win64-shipping.exe",
+    "riotclientservices.exe", "fortniteclient-win64-shipping.exe",
+    "gta5.exe", "eafc24.exe", "r5apex.exe",
+}
+
+
+def heavy_process_running() -> bool:
+    """Игра в полноэкранном фокусе (или другая тяжёлая нагрузка на CPU)
+    сейчас идёт — агенту сюда не лезть. Свёрнутая игра не в счёт. Кэшируем
+    на _GAME_CHECK_EVERY секунд: измерение CPU занимает время, незачем
+    делать его каждый круг."""
+    global _last_game_check, _last_game_state
+    if os.name != "nt":
+        return False
+    now = time.monotonic()
+    if now - _last_game_check < _GAME_CHECK_EVERY:
+        return _last_game_state
+    _last_game_check = now
+    _last_game_state = _foreground_is_heavy() or _cpu_saturated()
+    return _last_game_state
+
+
+def _foreground_is_heavy() -> bool:
+    """Активное окно — игра/лаунчер по имени процесса, или реально
+    безрамочное окно на весь экран (типичный fullscreen-рендер игры).
+    Оба признака про окно ПЕРЕДНЕГО ПЛАНА — свёрнутая игра тут не всплывёт."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return False
+
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if not pid.value:
+            return False
+
+        name = ""
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        h = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value)
+        if h:
+            buf = ctypes.create_unicode_buffer(260)
+            size = wintypes.DWORD(260)
+            if kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+                name = os.path.basename(buf.value).lower()
+            kernel32.CloseHandle(h)
+
+        if name in _HEAVY_FOREGROUND_PROCESSES:
+            return True
+
+        # безрамочное окно ровно по границам экрана — типичный fullscreen игры;
+        # обычные окна (даже развёрнутые) оставляют системную рамку/панель задач
+        rect = wintypes.RECT()
+        if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+            return False
+        sw = user32.GetSystemMetrics(0)   # SM_CXSCREEN
+        sh = user32.GetSystemMetrics(1)   # SM_CYSCREEN
+        covers_screen = (rect.left <= 0 and rect.top <= 0
+                        and rect.right >= sw and rect.bottom >= sh)
+        if not covers_screen:
+            return False
+        # explorer.exe (рабочий стол/панель задач) тоже иногда «во весь экран» —
+        # не считаем игрой
+        return name not in ("", "explorer.exe", "shellexperiencehost.exe",
+                            "searchhost.exe", "textinputhost.exe")
+    except Exception as e:
+        log.warning("не проверил активное окно: %s", e)
+        return False
+
+
+def _cpu_saturated(threshold: float = 90.0) -> bool:
+    """Игра иногда не эксклюзивно-полноэкранная (оконный режим, alt-tab
+    выключен), но грузит процессор так же сильно — тогда ловим по нагрузке.
+    Без psutil: считаем по системным счётчикам времени самой Windows.
+    """
+    try:
+        import ctypes
+
+        class FILETIME(ctypes.Structure):
+            _fields_ = [("low", ctypes.c_uint32), ("high", ctypes.c_uint32)]
+
+        def _to_int(ft):
+            return (ft.high << 32) | ft.low
+
+        idle1, kernel1, user1 = FILETIME(), FILETIME(), FILETIME()
+        ctypes.windll.kernel32.GetSystemTimes(
+            ctypes.byref(idle1), ctypes.byref(kernel1), ctypes.byref(user1))
+        time.sleep(0.2)     # короткая выборка — не задерживаем цикл агента
+        idle2, kernel2, user2 = FILETIME(), FILETIME(), FILETIME()
+        ctypes.windll.kernel32.GetSystemTimes(
+            ctypes.byref(idle2), ctypes.byref(kernel2), ctypes.byref(user2))
+
+        idle_delta = _to_int(idle2) - _to_int(idle1)
+        total_delta = (_to_int(kernel2) + _to_int(user2)) - (_to_int(kernel1) + _to_int(user1))
+        if total_delta <= 0:
+            return False
+        busy_pct = 100.0 * (1 - idle_delta / total_delta)
+        return busy_pct >= threshold
+    except Exception as e:
+        log.warning("не измерил загрузку процессора: %s", e)
+        return False
+
+
 def main():
     if not TOKEN:
         raise SystemExit("не задан WEBHOOK_TOKEN — агент не сможет авторизоваться")
@@ -500,6 +634,7 @@ def main():
     # или None->True->False, а не на самом первом определении роли: обычный
     # старт standby — это не авария, тревожить незачем
     standing_by = None
+    gaming_paused = False
     last_env_sync = 0.0
     last_update_check = 0.0
     last_canary_report = 0.0
@@ -543,6 +678,22 @@ def main():
             log.warning("резерв: синк отовсюду пропал (>%d с) — включаюсь", STANDBY_TIMEOUT)
             notify_role_change("active")
         standing_by = False
+
+        # игра в полноэкранном фокусе (или другая тяжёлая нагрузка) — терминал
+        # сейчас не трогаем вообще: ни лишней нагрузки на CPU/GPU, ни риска,
+        # что MT5 всплывёт окном или мигнёт консоль при alt-tab/сворачивании.
+        # Как только игра свернётся или закроется, следующий круг отработает
+        # как обычно — задержка в несколько секунд для уведомлений не критична
+        is_heavy = heavy_process_running()
+        if is_heavy and not gaming_paused:
+            log.info("на переднем плане игра/тяжёлый процесс — опрос терминала приостановлен")
+            gaming_paused = True
+        elif not is_heavy and gaming_paused:
+            log.info("тяжёлый процесс закрыт/свёрнут — опрос терминала возобновлён")
+            gaming_paused = False
+        if is_heavy:
+            time.sleep(INTERVAL)
+            continue
 
         try:
             accs = fetch_accounts()
