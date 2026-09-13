@@ -327,7 +327,14 @@ async def agent_machines_status(request):
     for key in partner.kv_keys(db, "machine_seen:%"):
         host = key.split(":", 1)[1]
         seen = partner.kv_get(db, key)
-        age = (utcnow() - datetime.fromisoformat(seen)).total_seconds() if seen else None
+        age = None
+        if seen:
+            try:
+                age = (utcnow() - datetime.fromisoformat(seen)).total_seconds()
+            except ValueError:
+                # битая метка не должна валить весь эндпоинт для всех машин —
+                # просто не знаем возраст этой конкретной записи
+                log.warning("machines_status: не разобрал метку времени %s=%r", key, seen)
         out[host] = {"seconds_ago": round(age) if age is not None else None,
                     "alive": age is not None and age < stale_after}
     return web.json_response({"machines": out,

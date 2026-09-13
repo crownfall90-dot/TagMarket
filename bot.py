@@ -34,7 +34,7 @@ import ibportal
 import partner
 import trades
 from partner import (fmt_deposit, fmt_lead,  # noqa: F401 — их зовёт webhook_server
-                     kv_del, kv_get, kv_keys, kv_set, open_db, pick, row_id, unseen)
+                     kv_del, kv_del_exact, kv_get, kv_keys, kv_set, open_db, pick, row_id, unseen)
 
 load_dotenv()
 # в фоне (pythonw) консоли нет и вывод в поток падает, поэтому пишем в файл
@@ -2206,7 +2206,11 @@ async def main():
                             continue
                         created = inv.get("created")
                         if created and datetime.fromisoformat(created) < deadline:
-                            kv_del(db, key)
+                            # kv_del — это LIKE, а токен приглашения (из
+                            # secrets.token_urlsafe) может случайно содержать
+                            # «_», что для LIKE — спецсимвол «любой символ»:
+                            # удалило бы заодно и чужие совпавшие ключи
+                            kv_del_exact(db, key)
                             removed += 1
                     if removed:
                         log.info("убрано неиспользованных приглашений старше %d дн: %d",
@@ -2361,7 +2365,14 @@ async def main():
                         seen = kv_get(db, key)
                         if not seen:
                             continue
-                        age = (now_ - datetime.fromisoformat(seen)).total_seconds()
+                        try:
+                            age = (now_ - datetime.fromisoformat(seen)).total_seconds()
+                        except ValueError:
+                            # битая метка (например, от старой версии кода) не
+                            # должна навсегда останавливать весь вотчдог — этот
+                            # хост просто не посчитаем живым в этом круге
+                            log.warning("machines_watchdog: не разобрал метку времени %s=%r", key, seen)
+                            continue
                         hosts[host] = age < MACHINE_STALE
                     alive = sorted(h for h, ok in hosts.items() if ok)
                     count = len(alive)

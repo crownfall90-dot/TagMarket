@@ -3,12 +3,15 @@
 Свою базу не ведём: MT5 хранит историю сам и подтягивает её с сервера брокера.
 """
 
+import logging
 import os
 import subprocess
 import time
 from datetime import date, datetime, time as dtime, timedelta, timezone
 
 from dotenv import load_dotenv
+
+log = logging.getLogger("trades")
 
 try:                        # на сервере библиотеки MT5 нет — она только под Windows
     import MetaTrader5 as mt5
@@ -1320,7 +1323,11 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
     # что и соседние по стратегии, показывал бы другое число на ту же сделку
     try:
         cap_then = capital_at(row["time"], fetch(datetime(2000, 1, 1), clock() + timedelta(days=1)))
-    except Exception:
+    except Exception as e:
+        # история недоступна (терминал занят/переподключается) — не падаем,
+        # но это откат ровно к той просадке процента, ради которой и
+        # придумали capital_at, так что тихо мимо лога она проходить не должна
+        log.warning("капитал на момент сделки не посчитан, беру текущий: %s", e)
         cap_then = cap
     pct_base = cap_then if cap_then else cap
     nth, total = ordinal_today(row)

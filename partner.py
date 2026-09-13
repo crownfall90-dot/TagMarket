@@ -63,15 +63,20 @@ def whose(row) -> tuple[str, bool]:
     """Чей это кабинет: имя владельца и свой ли он.
 
     Портал присылает номер вида CU261780 — сам по себе он ничего не говорит.
-    Если такой кабинет заведён у нас, подставляем имя человека, а событие
-    перестаёт быть «депозитом клиента»: это перемещение собственных денег.
+    Если такой кабинет заведён у НАС (владельца бота, TELEGRAM_CHAT_ID) —
+    подставляем имя человека, а событие перестаёт быть «депозитом клиента»:
+    это перемещение собственных денег. Бот многопользовательский: гость тоже
+    может завести свой счёт с любым cabinet — было бы ошибкой посчитать
+    депозит клиента «своим» только потому, что кто-то чужой ввёл тот же номер.
     """
     number = str(pick(row, "customer_no", "customer", "client_no") or "").strip()
     if number:
         try:
             import accounts
+            operator = str(os.getenv("TELEGRAM_CHAT_ID", "")).strip()
             for acc in accounts.load():
-                if str(acc.get("cabinet") or "").strip() == number:
+                if (str(acc.get("cabinet") or "").strip() == number
+                        and (not operator or str(acc.get("owner")) == operator)):
                     return (acc.get("holder") or number), True
         except Exception:       # счета недоступны — обойдёмся номером
             pass
@@ -295,6 +300,18 @@ def kv_keys(db, like: str) -> list[str]:
 def kv_del(db, like: str) -> int:
     """Удалить ключи по шаблону. Возвращает, сколько удалено."""
     n = db.execute("DELETE FROM kv WHERE key LIKE ?", (like,)).rowcount
+    db.commit()
+    return n
+
+
+def kv_del_exact(db, key: str) -> int:
+    """Удалить ровно один ключ, без толкования % и _ как шаблона LIKE.
+
+    Нужен отдельно от kv_del: у него это спецсимволы, а полученный из
+    kv_keys() ключ (например, токен приглашения) может содержать «_»
+    случайно — тогда LIKE удалил бы заодно и чужие совпавшие записи.
+    """
+    n = db.execute("DELETE FROM kv WHERE key = ?", (key,)).rowcount
     db.commit()
     return n
 

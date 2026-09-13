@@ -317,13 +317,21 @@ def check_for_update(lock: socket.socket) -> None:
     _self_update_and_restart(lock, remote)
 
 
+# Сколько новый процесс готов ждать освобождения порта от старого (передаём
+# через AGENT_RESPAWN_WAIT), и сколько старый процесс минимум ждёт перед тем,
+# как отпустить лок сам — раньше было фиксированных 2 секунды без всякой
+# проверки, что новый процесс вообще поднялся; под IDLE-приоритетом и
+# нагруженной машиной интерпретатор с импортом MetaTrader5 может стартовать
+# дольше, и порт мог достаться кому-то ещё в этом окне
+RESPAWN_WAIT = float(os.getenv("AGENT_RESPAWN_WAIT_SECONDS", 15))
+
+
 def _self_update_and_restart(lock: socket.socket, target_commit: str) -> None:
     """git pull, запуск нового процесса, выход из текущего.
 
-    lock (only_one_copy) закрываем ПОСЛЕ старта нового процесса — иначе окно
-    между освобождением порта и его захватом новым agent.py может занять
-    что-то ещё (маловероятно, но локальный TCP-порт — не эксклюзивный lock,
-    просто самое дешёвое, что было под рукой).
+    lock (only_one_copy) закрываем только после проверки, что новый процесс
+    не умер сразу — иначе машина рискует остаться совсем без агента, если
+    порт в промежутке займёт что-то ещё (см. RESPAWN_WAIT).
     """
     try:
         dirty = _run_git("status", "--porcelain")
@@ -344,15 +352,23 @@ def _self_update_and_restart(lock: socket.socket, target_commit: str) -> None:
     try:
         import subprocess
         pythonw = sys.executable.replace("python.exe", "pythonw.exe")
-        _quiet_popen([pythonw, os.path.join(ROOT, "agent.py")], cwd=ROOT,
-                     creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
+        child_env = dict(os.environ, AGENT_RESPAWN_WAIT=str(RESPAWN_WAIT))
+        proc = _quiet_popen([pythonw, os.path.join(ROOT, "agent.py")], cwd=ROOT, env=child_env,
+                            creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
     except Exception as e:
         log.error("не запустил новый процесс, остаюсь на старом коде до ручного рестарта: %s", e)
         return
 
-    time.sleep(2)     # даём новому процессу шанс встать до того, как мы освободим порт
+    # держим порт занятым, пока сами не убедимся, что новый процесс жив —
+    # закрывать раньше и слепо ждать бессмысленно: если он уже упал, лучше
+    # остаться на старом коде, чем оставить машину вообще без агента
+    time.sleep(3)
+    if proc.poll() is not None:
+        log.error("новый процесс сразу завершился (код %s) — остаюсь на старом коде "
+                  "до ручного разбора", proc.poll())
+        return
     lock.close()
-    log.info("новый процесс запущен, этот завершается")
+    log.info("новый процесс запущен и жив, этот завершается")
     sys.exit(0)
 
 
@@ -430,15 +446,26 @@ def collect(acc: dict) -> dict:
     }
 
 
-def only_one_copy() -> socket.socket:
+def only_one_copy(retry_seconds: float = 0) -> socket.socket:
     """Терминал MT5 один на всех: два агента будут переключать его друг у друга
-    и читать чужие счета. Держим занятым локальный порт как признак запуска."""
-    guard = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        guard.bind(("127.0.0.1", LOCK_PORT))
-    except OSError:
-        raise SystemExit("агент уже запущен — второй не нужен, он будет мешать первому")
-    return guard
+    и читать чужие счета. Держим занятым локальный порт как признак запуска.
+
+    retry_seconds > 0 — для процесса, запущенного самообновлением: старый
+    процесс мог ещё не успеть освободить порт (сложный интерпретатор,
+    занятая машина под IDLE-приоритетом стартует не мгновенно), и вместо
+    немедленной смерти новый процесс недолго подождёт освобождения сам.
+    """
+    deadline = time.monotonic() + retry_seconds
+    while True:
+        guard = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            guard.bind(("127.0.0.1", LOCK_PORT))
+            return guard
+        except OSError:
+            guard.close()
+            if time.monotonic() >= deadline:
+                raise SystemExit("агент уже запущен — второй не нужен, он будет мешать первому")
+            time.sleep(0.5)
 
 
 def _run_quietly() -> None:
@@ -462,7 +489,10 @@ def main():
     if not TOKEN:
         raise SystemExit("не задан WEBHOOK_TOKEN — агент не сможет авторизоваться")
     _run_quietly()
-    lock = only_one_copy()      # держим до конца работы
+    # после самообновления старый процесс мог ещё держать порт — недолго
+    # подождём вместо мгновенной смерти (см. RESPAWN_WAIT в _self_update_and_restart)
+    retry = float(os.environ.pop("AGENT_RESPAWN_WAIT", 0) or 0)
+    lock = only_one_copy(retry_seconds=retry)      # держим до конца работы
     log.info("агент запущен (роль: %s), сервер %s, круг раз в %d с", ROLE, SERVER, INTERVAL)
 
     # None = роль ещё не определялась (первый круг); дальше True — в резерве,
