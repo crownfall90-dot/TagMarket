@@ -4,13 +4,34 @@
 # повторить на ноутбуке (или на любой другой машине) без набора PowerShell
 # по шагам.
 #
-# Запускать от администратора: без прав на изменение задачи Set-ScheduledTask
-# откажет с ошибкой доступа.
+# Set-ScheduledTask требует прав администратора. Если скрипт запущен без
+# них, он сам предложит перезапуститься с повышением (UAC-запрос), а не
+# просто откажет с ошибкой доступа.
 #
 # Использование:
 #   powershell -ExecutionPolicy Bypass -File tools\setup_console_free.ps1
 
 $ErrorActionPreference = "Stop"
+
+$isAdmin = ([Security.Principal.WindowsPrincipal] `
+    [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole( `
+    [Security.Principal.WindowsBuiltInRole]::Administrator)
+
+if (-not $isAdmin) {
+    Write-Host "Нужны права администратора для изменения задачи планировщика." -ForegroundColor Yellow
+    $answer = Read-Host "Перезапустить этот скрипт с повышением прав сейчас? (y/n)"
+    if ($answer -eq "y") {
+        $psPath = Join-Path $PSHOME "powershell.exe"
+        $scriptPath = $MyInvocation.MyCommand.Path
+        Start-Process -FilePath $psPath `
+            -ArgumentList @("-ExecutionPolicy", "Bypass", "-File", $scriptPath) `
+            -Verb RunAs
+        exit 0
+    } else {
+        Write-Host "Отменено. Запусти вручную из PowerShell от имени администратора, когда будешь готов." -ForegroundColor Yellow
+        exit 1
+    }
+}
 
 $taskName = "TagMarketsAgent"
 $projectDir = Split-Path -Parent $PSScriptRoot
@@ -42,7 +63,6 @@ try {
     Set-ScheduledTask -TaskName $taskName -Action $action -Settings $settings | Out-Null
 } catch {
     Write-Host ("Не удалось изменить задачу: " + $_.Exception.Message) -ForegroundColor Red
-    Write-Host "Скорее всего нужны права администратора - перезапусти PowerShell от имени администратора и повтори." -ForegroundColor Red
     exit 1
 }
 

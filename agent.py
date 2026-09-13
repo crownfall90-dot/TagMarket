@@ -348,6 +348,8 @@ def _self_update_and_restart(lock: socket.socket, target_commit: str) -> None:
         log.error("обновление не удалось, остаюсь на текущем коде: %s", e)
         return
 
+    _offer_console_free_setup()
+
     log.info("код обновлён до %s, перезапускаюсь", target_commit[:8])
     try:
         import subprocess
@@ -370,6 +372,65 @@ def _self_update_and_restart(lock: socket.socket, target_commit: str) -> None:
     lock.close()
     log.info("новый процесс запущен и жив, этот завершается")
     sys.exit(0)
+
+
+# Отметка, чтобы предлагать переключение задачи на бесконсольный запуск не
+# при каждом автообновлении, а один раз за всё время жизни этой машины —
+# после первого переключения (или отказа пользователя) файл остаётся как
+# памятка, что вопрос уже решён
+_CONSOLE_FREE_MARKER = os.path.join(ROOT, "data", ".console_free_offered")
+
+
+def _offer_console_free_setup() -> None:
+    """Разово, при первом автообновлении на новом коде, проверяет — не
+    запускает ли эта машина ещё старый run_agent.bat (тот на миг показывает
+    окно cmd.exe) — и если да, предлагает пользователю UAC-запрос на
+    переключение задачи планировщика на run_agent.vbs (без окна вообще).
+
+    Сам агент работает не от администратора, поэтому тихо и незаметно
+    поменять задачу планировщика нельзя — Set-ScheduledTask откажет.
+    Единственный способ не мешать пользователю молчаливым сбоем — честно
+    попросить один раз через системный UAC-диалог, который пользователь
+    либо примет, либо отклонит; в обоих случаях повторно не спрашиваем.
+    """
+    if os.name != "nt" or os.path.exists(_CONSOLE_FREE_MARKER):
+        return
+    setup_script = os.path.join(ROOT, "tools", "setup_console_free.ps1")
+    if not os.path.exists(setup_script):
+        return
+    try:
+        os.makedirs(os.path.dirname(_CONSOLE_FREE_MARKER), exist_ok=True)
+        with open(_CONSOLE_FREE_MARKER, "w", encoding="utf-8") as f:
+            f.write(utcnow().isoformat())
+    except Exception as e:
+        log.warning("не создал отметку про предложение бесконсольной настройки: %s", e)
+        return    # без отметки лучше не предлагать вовсе, чем спрашивать каждый раз
+
+    try:
+        out = _quiet_run(
+            ["powershell", "-NoProfile", "-Command",
+             "(Get-ScheduledTask -TaskName TagMarketsAgent -ErrorAction "
+             "SilentlyContinue).Actions.Execute"],
+            capture_output=True, text=True, timeout=15).stdout.strip().lower()
+        if not out or "wscript" in out:
+            return    # задачи нет или уже переключена — предлагать нечего
+    except Exception as e:
+        log.warning("не проверил конфигурацию задачи планировщика: %s", e)
+        return
+
+    log.info("задача планировщика ещё использует .bat (мелькает окно консоли) — "
+             "предлагаю пользователю переключить на бесконсольный запуск (UAC)")
+    try:
+        import subprocess
+        # тут окно консоли — не баг, а необходимость: сам setup-скрипт
+        # спрашивает пользователя (y/n) перед запросом UAC, и это единственный
+        # осмысленный случай во всём агенте, где окно должно быть видимым
+        subprocess.Popen(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+             "-File", setup_script],
+            cwd=ROOT, creationflags=subprocess.CREATE_NEW_CONSOLE)
+    except Exception as e:
+        log.warning("не запустил предложение бесконсольной настройки: %s", e)
 
 
 def notify_role_change(became: str) -> None:
