@@ -392,19 +392,37 @@ def _offer_console_free_setup() -> None:
     Единственный способ не мешать пользователю молчаливым сбоем — честно
     попросить один раз через системный UAC-диалог, который пользователь
     либо примет, либо отклонит; в обоих случаях повторно не спрашиваем.
+
+    Осознанный компромисс: механизм автообновления и так означает, что
+    любой, кто может запушить в GIT_REMOTE/GIT_BRANCH, получает выполнение
+    произвольного кода от имени пользователя агента — это не новая дыра.
+    Но именно этот UAC-запрос приучает пользователя воспринимать неожиданное
+    окно с запросом прав администратора как нормальное поведение агента —
+    при компрометации репозитория tools/setup_console_free.ps1 можно
+    подменить, и пользователь, уже привыкший жать «да», молча даст код
+    выполниться от администратора. Защиты от этого сценария на уровне кода
+    нет — только у того, кто имеет доступ на запись в git-репозиторий,
+    и так уже есть выполнение кода от пользователя; повышение до
+    администратора требует его же осознанного клика на реальном экране.
     """
     if os.name != "nt" or os.path.exists(_CONSOLE_FREE_MARKER):
         return
     setup_script = os.path.join(ROOT, "tools", "setup_console_free.ps1")
     if not os.path.exists(setup_script):
         return
-    try:
-        os.makedirs(os.path.dirname(_CONSOLE_FREE_MARKER), exist_ok=True)
-        with open(_CONSOLE_FREE_MARKER, "w", encoding="utf-8") as f:
-            f.write(utcnow().isoformat())
-    except Exception as e:
-        log.warning("не создал отметку про предложение бесконсольной настройки: %s", e)
-        return    # без отметки лучше не предлагать вовсе, чем спрашивать каждый раз
+
+    # отметку ставим только когда реально дошли до решения (задачи нет, уже
+    # переключена, или предложение реально показано) — если проверка ниже
+    # оборвётся временной ошибкой (PowerShell не успел стартовать, WMI
+    # запнулся и т.п.), пользователя ничего не спросили, и лучше повторить
+    # попытку при следующем автообновлении, чем молча похоронить её навсегда
+    def _mark_done() -> None:
+        try:
+            os.makedirs(os.path.dirname(_CONSOLE_FREE_MARKER), exist_ok=True)
+            with open(_CONSOLE_FREE_MARKER, "w", encoding="utf-8") as f:
+                f.write(utcnow().isoformat())
+        except Exception as e:
+            log.warning("не создал отметку про предложение бесконсольной настройки: %s", e)
 
     try:
         out = _quiet_run(
@@ -413,10 +431,12 @@ def _offer_console_free_setup() -> None:
              "SilentlyContinue).Actions.Execute"],
             capture_output=True, text=True, timeout=15).stdout.strip().lower()
         if not out or "wscript" in out:
-            return    # задачи нет или уже переключена — предлагать нечего
+            _mark_done()     # задачи нет или уже переключена — предлагать нечего
+            return
     except Exception as e:
-        log.warning("не проверил конфигурацию задачи планировщика: %s", e)
-        return
+        log.warning("не проверил конфигурацию задачи планировщика, попробую при "
+                   "следующем обновлении: %s", e)
+        return    # без _mark_done(): это не решение, а сбой проверки
 
     log.info("задача планировщика ещё использует .bat (мелькает окно консоли) — "
              "предлагаю пользователю переключить на бесконсольный запуск (UAC)")
@@ -429,8 +449,10 @@ def _offer_console_free_setup() -> None:
             ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
              "-File", setup_script],
             cwd=ROOT, creationflags=subprocess.CREATE_NEW_CONSOLE)
+        _mark_done()    # предложение показано — больше не спрашиваем, независимо от ответа
     except Exception as e:
-        log.warning("не запустил предложение бесконсольной настройки: %s", e)
+        log.warning("не запустил предложение бесконсольной настройки, попробую при "
+                   "следующем обновлении: %s", e)
 
 
 def notify_role_change(became: str) -> None:
