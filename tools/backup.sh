@@ -6,6 +6,9 @@
 set -eu
 
 SRC=/opt/tagmarkets
+DATA=$SRC/data                 # store.py/partner.py/accounts.py — все по умолчанию тут,
+                               # не в корне проекта (TRADES_DB/STATE_DB/ACCOUNTS_FILE
+                               # переопределяют, если сервер настроен иначе)
 DEST=$SRC/backup
 KEEP=14                      # дней хранения
 STAMP=$(date +%Y-%m-%d)
@@ -14,14 +17,21 @@ OUT=$DEST/$STAMP
 mkdir -p "$OUT"
 
 for db in trades.db state.db; do
-    [ -f "$SRC/$db" ] || continue
-    sqlite3 "$SRC/$db" ".backup '$OUT/$db'"
+    [ -f "$DATA/$db" ] || continue
+    sqlite3 "$DATA/$db" ".backup '$OUT/$db'"
 done
 
 # счета и настройки: в них пароли, поэтому копия только для root
-for f in accounts.json .env; do
-    [ -f "$SRC/$f" ] && cp -p "$SRC/$f" "$OUT/"
-done
+[ -f "$DATA/accounts.json" ] && cp -p "$DATA/accounts.json" "$OUT/"
+[ -f "$SRC/.env" ] && cp -p "$SRC/.env" "$OUT/"
+
+# пустой архив «готов» молча — раньше пути были неверными, и копия годами
+# состояла из одного .env; лучше упасть с понятной ошибкой, чем соврать об успехе
+if [ -z "$(ls -A "$OUT" 2>/dev/null)" ]; then
+    rmdir "$OUT"
+    echo "backup.sh: ничего не нашёл для копии в $DATA и $SRC — проверьте пути" >&2
+    exit 1
+fi
 
 chmod -R go-rwx "$OUT"
 tar -czf "$OUT.tar.gz" -C "$DEST" "$STAMP" && rm -rf "$OUT"

@@ -249,15 +249,22 @@ def rollup(db, keep_from: str, is_transfer, is_perf_fee=None, growth_of=None,
             "INSERT INTO months (login, month, trades, gross, platform, transfers, "
             "deposits, capital_transfers, wins, losses, best, worst, volume, growth) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            # COALESCE(...,0) на всех колонках, что могли остаться NULL у строк,
+            # заведённых до ALTER TABLE ADD COLUMN (без DEFAULT) — иначе
+            # NULL+x=NULL и MAX/MIN(NULL,x)=NULL в SQLite тихо стирают всю
+            # строку при первом же накоплении новой пачки сверху старой
             "ON CONFLICT(login, month) DO UPDATE SET "
-            "trades=months.trades+excluded.trades, gross=months.gross+excluded.gross, "
-            "platform=months.platform+excluded.platform, "
-            "transfers=months.transfers+excluded.transfers, "
-            "deposits=months.deposits+excluded.deposits, "
+            "trades=COALESCE(months.trades,0)+excluded.trades, "
+            "gross=COALESCE(months.gross,0)+excluded.gross, "
+            "platform=COALESCE(months.platform,0)+excluded.platform, "
+            "transfers=COALESCE(months.transfers,0)+excluded.transfers, "
+            "deposits=COALESCE(months.deposits,0)+excluded.deposits, "
             "capital_transfers=COALESCE(months.capital_transfers,0)+excluded.capital_transfers, "
-            "wins=months.wins+excluded.wins, losses=months.losses+excluded.losses, "
-            "best=MAX(months.best, excluded.best), worst=MIN(months.worst, excluded.worst), "
-            "volume=months.volume+excluded.volume, "
+            "wins=COALESCE(months.wins,0)+excluded.wins, "
+            "losses=COALESCE(months.losses,0)+excluded.losses, "
+            "best=MAX(COALESCE(months.best, excluded.best), excluded.best), "
+            "worst=MIN(COALESCE(months.worst, excluded.worst), excluded.worst), "
+            "volume=COALESCE(months.volume,0)+excluded.volume, "
             "growth=CASE WHEN excluded.growth IS NULL THEN months.growth "
             "ELSE COALESCE(months.growth, 0) + excluded.growth END",
             (login, month, a["trades"], a["gross"], a["platform"],

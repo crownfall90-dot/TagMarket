@@ -93,7 +93,7 @@ async def handle(request: web.Request, kind: str, fmt) -> web.Response:
         # Telegram с этого сервера отвечает медленно, а портал ждёт ответа
         # считанные секунды и по таймауту шлёт событие заново — поэтому
         # подтверждаем сразу, а сообщение отправляем следом
-        asyncio.create_task(notify(request.app, fmt(row)))
+        fire(notify(request.app, fmt(row)))
         _remember_wallet_income(db, kind, row)
     log.info("вебхук %s: %s", kind, row.get("customer_no", row.get("tx_id", "?")))
     return web.Response(text="ok")
@@ -177,6 +177,23 @@ async def notify(app, text: str) -> None:
             log.warning("не отправил в Telegram (попытка %d/%d): %s",
                        attempt, NOTIFY_RETRIES, e)
             await asyncio.sleep(NOTIFY_BACKOFF * attempt)
+
+
+_background: set[asyncio.Task] = set()   # держит задачи, пока notify() ретраит
+
+
+def fire(coro) -> None:
+    """asyncio.create_task, но без риска, что GC соберёт задачу на середине.
+
+    Event loop хранит на задачу только слабую ссылку — она документированный
+    источник потерянных fire-and-forget корутин. Пока notify() был мгновенным,
+    окно было незаметным; с ретраями (до ~45 секунд на попытки и сон между
+    ними) оно расширилось на два порядка, и уведомление могло пропасть без
+    единой строки в логе — ровно то, что ретраи должны были вылечить.
+    """
+    task = asyncio.create_task(coro)
+    _background.add(task)
+    task.add_done_callback(_background.discard)
 
 
 async def on_registration(request):
@@ -263,10 +280,12 @@ async def agent_accounts(request):
          "server": a["server"], "multiplier": a.get("multiplier", 1),
          "since": store.last_ticket(db, a["login"]),
          "command": store.get_command(db, a["login"])}   # напр. «restart_terminal»
-        # дедуп по логину+серверу у одного владельца: тот же счёт, заведённый
-        # дважды под разными именами (до защиты в accounts.add()), заставлял
-        # агента переключать терминал на него дважды за круг впустую
-        for a in accounts.dedup(accounts.load()) if a.get("enabled", True)
+        # дедуп по логину+серверу БЕЗ владельца: агенту он не важен — это
+        # один физический MT5-логин, даже если на него есть записи у разных
+        # владельцев (свой счёт + расшаренная гостевая копия через share()).
+        # by_owner=True тут не спас бы главный сценарий: гостевая копия
+        # именно у ДРУГОГО owner'а всё равно осталась бы отдельной строкой
+        for a in accounts.dedup(accounts.load(), by_owner=False) if a.get("enabled", True)
     ])
 
 
@@ -311,7 +330,7 @@ async def agent_update_notify(request):
         text = (f"🔄 <b>Агент обновился</b>\n{partner.THIN}\n"
                f"<b>{host}</b> подтянул новый код"
                + (f" ({commit})" if commit else "") + " и перезапустился.")
-        asyncio.create_task(notify(request.app, text))
+        fire(notify(request.app, text))
     log.info("агент обновился: %s -> %s", host, commit or "?")
     return web.json_response({"ok": True})
 

@@ -83,16 +83,50 @@ DB = os.getenv("STATE_DB", os.path.join("data", "state.db"))
 TG_LIMIT = 4000
 
 
-async def send(bot: Bot, chat_id, text: str, markup=None):
+# db для ротации истории (_prune_history) — тот же объект, что main() держит
+# в локальной db и передаёт замыканиям хендлеров. send() определена на уровне
+# модуля и замыканием не достаёт до него, а протаскивать db как параметр
+# через все 32 вызова send() ради этого не стоило — модульная переменная,
+# как _current в trades.py, дешевле и не меняет ни один вызывающий код
+_bot_db = None
+
+NOTIFY_HISTORY_LIMIT = int(os.getenv("NOTIFY_HISTORY_LIMIT", 30))
+
+
+async def send(bot: Bot, chat_id, text: str, markup=None, track: bool = True):
+    """Шлёт сообщение. track=False — не считать его частью ротации истории
+    (дашборд остаётся всегда: это экран, к которому возвращаются, а не
+    уведомление, которое становится неактуальным)."""
     if len(text) > TG_LIMIT:
         text = text[:TG_LIMIT] + "\n<i>…сообщение обрезано</i>"
     try:
-        await bot.send_message(chat_id, text, reply_markup=markup)
+        msg = await bot.send_message(chat_id, text, reply_markup=markup)
     except TelegramBadRequest as e:
         # чужой текст (ошибка библиотеки, имя счёта) мог принести ломаную разметку —
         # сообщение важнее оформления
         log.error("Telegram отверг разметку (%s), шлю как есть: %r", e, text[:200])
-        await bot.send_message(chat_id, html.escape(text), parse_mode=None, reply_markup=markup)
+        msg = await bot.send_message(chat_id, html.escape(text), parse_mode=None, reply_markup=markup)
+    if track and _bot_db is not None:
+        await _prune_history(bot, chat_id, msg.message_id)
+    return msg
+
+
+async def _prune_history(bot: Bot, chat_id, message_id: int) -> None:
+    """Держит в чате только последние NOTIFY_HISTORY_LIMIT уведомлений —
+    старые молча удаляются, чтобы история не копилась годами."""
+    key = f"msg_hist:{chat_id}"
+    try:
+        ids = json.loads(kv_get(_bot_db, key) or "[]")
+    except (ValueError, TypeError):
+        ids = []
+    ids.append(message_id)
+    overflow, ids = ids[:-NOTIFY_HISTORY_LIMIT], ids[-NOTIFY_HISTORY_LIMIT:]
+    kv_set(_bot_db, key, json.dumps(ids))
+    for old_id in overflow:
+        try:
+            await bot.delete_message(chat_id, old_id)
+        except Exception:
+            pass    # сообщение уже удалили руками или боту не хватает прав — не критично
 
 
 # ── периоды и клавиатуры ──────────────────────────────────────────────────
@@ -1358,6 +1392,8 @@ async def main():
               default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
     db = open_db()
+    global _bot_db
+    _bot_db = db
 
     # доступ открыт всем: у каждого свои счета, чужих он не видит.
     # ALLOWED_USERS в .env оставляет бота личным, если однажды понадобится.
@@ -1402,7 +1438,7 @@ async def main():
         if token:
             await accept_invite(msg, token)
         text, kb = dashboard(msg.from_user.id)
-        await send(bot, msg.chat.id, text, kb)
+        await send(bot, msg.chat.id, text, kb, track=False)
 
     async def accept_invite(msg: Message, token: str) -> None:
         """Принять приглашение: открыть доступ и скопировать счета из ссылки."""
