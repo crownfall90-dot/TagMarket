@@ -287,6 +287,107 @@ def _local_commit() -> str | None:
         return None
 
 
+# --- Автоматический откат плохого обновления -------------------------------
+#
+# _self_update_and_restart() уже ловит мгновенный краш нового процесса (первые
+# несколько секунд) и в этом случае просто не переключается на новый код —
+# но так же новый код может пережить эти секунды и упасть позже, уже во время
+# реальной работы с терминалом (например, ошибка в первом же цикле fetch_accounts
+# или collect). Эту ситуацию ловит уже следующий запуск: если PENDING_COMMIT_FILE
+# существует и указывает на коммит, совпадающий с текущим HEAD, значит прошлый
+# запуск на этом коммите не успел подтвердить себя (см. _confirm_update_ok) —
+# откатываемся на LAST_GOOD_COMMIT_FILE прежде чем начинать реальную работу.
+LAST_GOOD_COMMIT_FILE = os.path.join(ROOT, "data", "last_good_commit")
+PENDING_COMMIT_FILE = os.path.join(ROOT, "data", "pending_commit")
+
+
+def _read_marker(path: str) -> str | None:
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read().strip() or None
+    except OSError:
+        return None
+
+
+def _write_marker(path: str, value: str) -> None:
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(value)
+    except OSError as e:
+        log.warning("не записал %s: %s", os.path.basename(path), e)
+
+
+def _check_and_rollback_bad_update(lock: socket.socket) -> bool:
+    """При старте: если предыдущий запуск не подтвердил обновление — откатиться.
+
+    Возвращает True, если откат произошёл (и уже запущен новый процесс на
+    старом коде — этот процесс должен завершиться, ничего больше не начиная).
+    """
+    pending = _read_marker(PENDING_COMMIT_FILE)
+    current = _local_commit()
+    if not pending or not current or pending != current:
+        return False    # либо нет незавершённого обновления, либо это не тот коммит
+
+    good = _read_marker(LAST_GOOD_COMMIT_FILE)
+    if not good or good == current:
+        # не на что откатываться (первый запуск вообще, или пометка совпадает
+        # с текущим — деградировать в бесконечный цикл отката на себя же нельзя)
+        log.error("прошлый запуск на %s не подтвердил себя, но откатываться "
+                 "некуда (last_good_commit=%r) — остаюсь как есть", current[:8], good)
+        return False
+
+    log.error("прошлый запуск на %s не подтвердил себя (упал раньше первого "
+             "успешного круга) — откатываюсь на последний рабочий коммит %s",
+             current[:8], good[:8])
+    try:
+        _run_git("reset", "--hard", good, timeout=30)
+    except Exception as e:
+        log.error("откат не удался: %s — остаюсь на текущем (плохом) коде", e)
+        return False
+
+    try:
+        _write_marker(PENDING_COMMIT_FILE, "")   # больше не «в процессе обновления»
+        import subprocess
+        pythonw = sys.executable.replace("python.exe", "pythonw.exe")
+        _quiet_popen([pythonw, os.path.join(ROOT, "agent.py")], cwd=ROOT,
+                    creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
+    except Exception as e:
+        log.error("откатился, но не запустил процесс на старом коде — "
+                 "нужен ручной перезапуск: %s", e)
+        return True     # код уже откачен на диске — следующий ручной/сторожевой
+                        # запуск подхватит его сам, даже если этот Popen не удался
+
+    _report_rollback(current, good)
+    lock.close()
+    sys.exit(0)
+
+
+def _report_rollback(bad_commit: str, good_commit: str) -> None:
+    """Сообщить серверу об автоматическом откате — основателю стоит знать,
+    что сама машина заметила и исправила плохое обновление."""
+    try:
+        requests.post(f"{SERVER}/agent/update_notify",
+                      json={"host": socket.gethostname(), "commit": good_commit,
+                           "rollback_from": bad_commit[:8]},
+                      headers={"X-Token": TOKEN}, timeout=15)
+    except Exception as e:
+        log.warning("не сообщил серверу об откате: %s", e)
+
+
+def _confirm_update_ok() -> None:
+    """Первый успешный круг на новом коде — подтверждаем: этот коммит теперь
+    last_good_commit, а pending-отметка снимается. Вызывается один раз за
+    время жизни процесса, как только реальная работа с терминалом удалась
+    хотя бы на одном счёте."""
+    current = _local_commit()
+    if not current:
+        return
+    _write_marker(LAST_GOOD_COMMIT_FILE, current)
+    if _read_marker(PENDING_COMMIT_FILE):
+        _write_marker(PENDING_COMMIT_FILE, "")
+
+
 def _canary_age(commit: str) -> float | None:
     """Сколько секунд назад standby впервые отчитался об этом коммите (по данным сервера)."""
     try:
@@ -408,8 +509,16 @@ def _self_update_and_restart(lock: socket.socket, target_commit: str) -> None:
             log.warning("в рабочей копии есть незакоммиченные изменения — "
                        "автообновление пропущено, разберитесь вручную:\n%s", dirty)
             return
+        # текущий код уже дошёл сюда — значит он стабилен (иначе процесс не
+        # выжил бы, чтобы дойти до планового автообновления). Запоминаем его
+        # как последний рабочий ПЕРЕД переключением — это и есть то, куда
+        # _check_and_rollback_bad_update откатится, если новый код окажется плохим
+        current = _local_commit()
+        if current:
+            _write_marker(LAST_GOOD_COMMIT_FILE, current)
         _run_git("fetch", GIT_REMOTE, GIT_BRANCH, timeout=60)
         _run_git("reset", "--hard", f"{GIT_REMOTE}/{GIT_BRANCH}", timeout=30)
+        _write_marker(PENDING_COMMIT_FILE, target_commit)
     except Exception as e:
         log.error("обновление не удалось, остаюсь на текущем коде: %s", e)
         return
@@ -791,6 +900,10 @@ def main():
     # подождём вместо мгновенной смерти (см. RESPAWN_WAIT в _self_update_and_restart)
     retry = float(os.environ.pop("AGENT_RESPAWN_WAIT", 0) or 0)
     lock = only_one_copy(retry_seconds=retry)      # держим до конца работы
+
+    if AUTO_UPDATE and _check_and_rollback_bad_update(lock):
+        return      # откатились и запустили новый процесс на старом коде — этот выходит
+
     log.info("агент запущен (роль: %s), сервер %s, круг раз в %d с", ROLE, SERVER, INTERVAL)
 
     # None = роль ещё не определялась (первый круг); дальше True — в резерве,
@@ -800,6 +913,7 @@ def main():
     standing_by = None
     took_over = False   # резерв реально включался — обратно в ожидание больше не переходит
     gaming_paused = False
+    update_confirmed = False   # первый успешный круг на этом коде уже подтверждён
     last_env_sync = 0.0
     last_update_check = 0.0
     last_canary_report = 0.0
@@ -844,6 +958,11 @@ def main():
                 standing_by = True
             send_heartbeat()
             _touch_beat()       # цикл жив и осознанно молчит — не зависание
+            if AUTO_UPDATE and not update_confirmed:
+                # дошли досюда без падений — этот код рабочий, даже если он
+                # просто ждёт в резерве и терминал ещё не трогал
+                _confirm_update_ok()
+                update_confirmed = True
             time.sleep(INTERVAL)
             continue
         if standing_by is True:
@@ -894,6 +1013,9 @@ def main():
 
         if ok:      # хоть один счёт прочитан — терминал жив, отмечаемся для сторожа
             _touch_beat()
+            if AUTO_UPDATE and not update_confirmed:
+                _confirm_update_ok()
+                update_confirmed = True
 
         time.sleep(INTERVAL)
 

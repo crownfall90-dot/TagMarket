@@ -42,6 +42,8 @@ echo.
 echo      G запустить терминал   H закрыть терминал
 echo      L лог бота             K лог агента
 echo --------------------------------------------------
+echo      V версии кода (откат)
+echo --------------------------------------------------
 echo      0 обновить экран       Q выход
 echo.
 set /p C=Выбери пункт:
@@ -59,6 +61,7 @@ if /i "!C!"=="G" call :term on
 if /i "!C!"=="H" call :term off
 if /i "!C!"=="L" call :botlog
 if /i "!C!"=="K" call :agentlog
+if /i "!C!"=="V" call :rollback
 if /i "!C!"=="Q" exit /b
 goto menu
 
@@ -134,6 +137,13 @@ exit /b
 cls
 echo === лог агента ===
 if exist "%~dp0agent.log" (%PS% -Command "Get-Content '%~dp0agent.log' -Tail 25 -Encoding UTF8") else (echo Лог пока пуст.)
+echo.
+pause
+exit /b
+
+:rollback
+cls
+%PS% -File "%~dp0rollback.ps1"
 echo.
 pause
 exit /b
