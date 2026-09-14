@@ -181,6 +181,24 @@ def sync_env() -> None:
             f.write("\n".join(new_lines) + "\n")
         log.info("общие настройки обновлены с сервера (%d ключей)", len(changed))
         load_dotenv(ENV_FILE, override=True)
+        _reload_config()
+
+
+def _reload_config() -> None:
+    """Перечитывает уже связанные модульные константы после load_dotenv.
+
+    os.environ обновляется сам, но SERVER/TOKEN/INTERVAL/HISTORY_FROM здесь
+    и SHARE/BROKER_FEE/REPORT_FROM/TZ_HOURS в trades.py были прочитаны один
+    раз при импорте — без этого смена токена или доли брокера долетала бы
+    только до .env на диске, а реально агент продолжал бы работать по
+    старым числам до ручного перезапуска процесса.
+    """
+    global SERVER, TOKEN, INTERVAL, HISTORY_FROM
+    SERVER = os.getenv("AGENT_SERVER", "https://crownfail.shop/tagmarkets").rstrip("/")
+    TOKEN = os.getenv("WEBHOOK_TOKEN", "")
+    INTERVAL = int(os.getenv("AGENT_INTERVAL", 15))
+    HISTORY_FROM = datetime.fromisoformat(os.getenv("HISTORY_FROM", "2026-06-01"))
+    trades._load_config()
 
 
 # Автообновление кода: канареечный деплой между двумя агентскими машинами.
