@@ -297,8 +297,18 @@ def _local_commit() -> str | None:
 # существует и указывает на коммит, совпадающий с текущим HEAD, значит прошлый
 # запуск на этом коммите не успел подтвердить себя (см. _confirm_update_ok) —
 # откатываемся на LAST_GOOD_COMMIT_FILE прежде чем начинать реальную работу.
+#
+# ВАЖНО: pending пишется ДО того, как _self_update_and_restart() запускает
+# новый процесс — а значит именно ЭТОТ новый процесс при своём первом же
+# старте видит pending == HEAD, что нормально и ожидаемо (это его собственное,
+# только что начавшееся обновление, а не чей-то чужой сбой). Поэтому откат не
+# может срабатывать по самому факту совпадения — только если с момента
+# записи pending прошло МИНИМУМ MIN_CONFIRM_GRACE секунд: этого заведомо
+# достаточно на нормальный старт + первый цикл, и заведомо мало для
+# легитимного «просто ещё не успел» на живой машине.
 LAST_GOOD_COMMIT_FILE = os.path.join(ROOT, "data", "last_good_commit")
 PENDING_COMMIT_FILE = os.path.join(ROOT, "data", "pending_commit")
+MIN_CONFIRM_GRACE = float(os.getenv("MIN_CONFIRM_GRACE_SECONDS", 30))
 
 
 def _read_marker(path: str) -> str | None:
@@ -318,16 +328,47 @@ def _write_marker(path: str, value: str) -> None:
         log.warning("не записал %s: %s", os.path.basename(path), e)
 
 
+def _write_pending(commit: str) -> None:
+    _write_marker(PENDING_COMMIT_FILE, f"{commit}|{utcnow().isoformat()}")
+
+
+def _read_pending() -> tuple[str, float] | None:
+    """Возвращает (commit, seconds_since_written) или None, если маркера нет
+    или он в устаревшем формате без временной метки (тогда считаем его сразу
+    «старым» — 0 секунд грации не бывает, safer to treat as no-marker)."""
+    raw = _read_marker(PENDING_COMMIT_FILE)
+    if not raw:
+        return None
+    commit, sep, stamp = raw.partition("|")
+    if not sep:
+        return None     # старый формат без метки времени — не с чем сверяться
+    try:
+        age = (utcnow() - datetime.fromisoformat(stamp)).total_seconds()
+    except ValueError:
+        return None
+    return commit, age
+
+
 def _check_and_rollback_bad_update(lock: socket.socket) -> bool:
     """При старте: если предыдущий запуск не подтвердил обновление — откатиться.
 
     Возвращает True, если откат произошёл (и уже запущен новый процесс на
     старом коде — этот процесс должен завершиться, ничего больше не начиная).
     """
-    pending = _read_marker(PENDING_COMMIT_FILE)
+    pending_info = _read_pending()
     current = _local_commit()
-    if not pending or not current or pending != current:
-        return False    # либо нет незавершённого обновления, либо это не тот коммит
+    if not pending_info or not current:
+        return False
+    pending, age = pending_info
+    if pending != current:
+        return False    # это не тот коммит — маркер про другое обновление
+    if age < MIN_CONFIRM_GRACE:
+        # это, скорее всего, тот самый процесс, который только что запустил
+        # _self_update_and_restart() — дать ему шанс дойти до _confirm_update_ok()
+        log.info("на новом коде %s недавно (%.0fс из %.0fс) — рано считать "
+                "обновление неудавшимся, продолжаю обычный старт",
+                current[:8], age, MIN_CONFIRM_GRACE)
+        return False
 
     good = _read_marker(LAST_GOOD_COMMIT_FILE)
     if not good or good == current:
@@ -518,7 +559,7 @@ def _self_update_and_restart(lock: socket.socket, target_commit: str) -> None:
             _write_marker(LAST_GOOD_COMMIT_FILE, current)
         _run_git("fetch", GIT_REMOTE, GIT_BRANCH, timeout=60)
         _run_git("reset", "--hard", f"{GIT_REMOTE}/{GIT_BRANCH}", timeout=30)
-        _write_marker(PENDING_COMMIT_FILE, target_commit)
+        _write_pending(target_commit)
     except Exception as e:
         log.error("обновление не удалось, остаюсь на текущем коде: %s", e)
         return
