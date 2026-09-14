@@ -88,6 +88,13 @@ CREATE TABLE IF NOT EXISTS commands (
 def open_db(path: str = None) -> sqlite3.Connection:
     db = sqlite3.connect(path or DB)
     db.row_factory = sqlite3.Row
+    # bot.py и webhook_server.py — разные процессы на одном файле. Журнал
+    # по умолчанию (rollback) блокирует читателей на время записи целиком;
+    # WAL пускает чтение параллельно записи, а busy_timeout ждёт вместо
+    # мгновенного "database is locked" — свёртка месяцев (DELETE, держит
+    # блокировку дольше обычного) иначе роняла параллельный /agent/sync 500-й
+    db.execute("PRAGMA journal_mode=WAL")
+    db.execute("PRAGMA busy_timeout=10000")
     db.executescript(SCHEMA)
     # база могла остаться от прежней версии — дописываем недостающие колонки
     have = {r["name"] for r in db.execute("PRAGMA table_info(state)").fetchall()}
