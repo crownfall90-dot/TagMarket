@@ -1,0 +1,934 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>TagMarkets Terminal & Pulse</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Outfit:wght@500;600;700;800&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+<style>
+  /* ============ shared reset ============ */
+  * { box-sizing: border-box; }
+  html, body { height: auto; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: #05070a;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding-block: 28px;
+    padding-inline: 16px;
+    font-family: 'IBM Plex Sans', sans-serif;
+  }
+
+  /* ============ mode switcher (page chrome, not part of either mockup) ============ */
+  .switcher {
+    display: flex;
+    gap: 6px;
+    background: #11151c;
+    border: 1px solid #232a35;
+    border-radius: 999px;
+    padding: 4px;
+    margin-bottom: 22px;
+    position: sticky;
+    top: 12px;
+    z-index: 50;
+  }
+  .switcher button {
+    appearance: none;
+    border: none;
+    background: transparent;
+    color: #7d8794;
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 9px 18px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: color .2s ease, background .2s ease;
+    letter-spacing: .01em;
+  }
+  .switcher button:hover { color: #d7dce2; }
+  .switcher button.active.tn { background: #241a0d; color: #f0a848; }
+  .switcher button.active.pulse { background: linear-gradient(135deg, #7c3aed, #db2777); color: #fff; }
+  .switcher button:focus-visible { outline: 2px solid #f0a848; outline-offset: 2px; }
+
+  .stage { width: 100%; max-width: 900px; }
+  .screens {
+    display: flex;
+    gap: 20px;
+    overflow-x: auto;
+    padding-bottom: 8px;
+    scroll-snap-type: x proximity;
+  }
+  .screens::-webkit-scrollbar { height: 8px; }
+
+  .phone {
+    flex: 0 0 auto;
+    width: 380px;
+    scroll-snap-align: start;
+    border-radius: 34px;
+    overflow: hidden;
+    position: relative;
+    box-shadow: 0 30px 60px -20px rgba(0,0,0,.6);
+  }
+  .phone-inner {
+    height: 720px;
+    overflow-y: auto;
+    padding: 18px 16px 28px;
+  }
+  .phone-inner::-webkit-scrollbar { width: 0; }
+  .screen-label {
+    text-align: center;
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 11px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: #57616e;
+    margin: 14px 0 8px;
+  }
+
+  [hidden] { display: none !important; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+  }
+
+  /* =========================================================================
+     TERMINAL NOIR
+     ========================================================================= */
+  .tn-phone {
+    background: #0a0e14;
+    border: 1px solid #1c2430;
+    font-family: 'JetBrains Mono', monospace;
+    color: #c9d1d9;
+  }
+  .tn-status {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: #4b5563;
+    padding: 6px 4px 10px;
+    border-bottom: 1px solid #161c25;
+  }
+  .tn-ticker {
+    display: flex;
+    gap: 16px;
+    overflow: hidden;
+    white-space: nowrap;
+    padding: 8px 0;
+    margin: 8px -16px 14px;
+    border-top: 1px solid #161c25;
+    border-bottom: 1px solid #161c25;
+    background: #0d1219;
+  }
+  .tn-ticker-track {
+    display: flex;
+    gap: 22px;
+    animation: tn-scroll 22s linear infinite;
+    padding-left: 16px;
+  }
+  @keyframes tn-scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+  .tn-tick { font-size: 11.5px; color: #6b7684; display: flex; gap: 6px; }
+  .tn-tick b { color: #dbe1e8; font-weight: 500; }
+  .tn-tick .up { color: #3fb950; }
+  .tn-tick .down { color: #f85149; }
+
+  .tn-h1 { font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: #5b6573; margin: 0 0 4px; }
+  .tn-total { font-size: 34px; font-weight: 700; color: #f2f5f8; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+  .tn-total sup { font-size: 15px; color: #5b6573; font-weight: 500; margin-left: 6px; }
+  .tn-delta { font-size: 13px; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .tn-delta.up { color: #3fb950; } .tn-delta.down { color: #f85149; }
+
+  .tn-panel {
+    background: #0d1219;
+    border: 1px solid #1a212b;
+    border-radius: 4px;
+    padding: 14px;
+    margin-top: 14px;
+  }
+  .tn-panel-title {
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 10.5px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: #566072;
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .tn-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 9px 0;
+    border-top: 1px solid #161c25;
+    font-size: 13px;
+  }
+  .tn-row:first-of-type { border-top: none; }
+  .tn-acc-name { color: #dbe1e8; font-weight: 500; }
+  .tn-acc-server { font-family: 'IBM Plex Sans', sans-serif; font-size: 10.5px; color: #4b5563; margin-top: 2px; }
+  .tn-acc-val { text-align: right; font-variant-numeric: tabular-nums; }
+  .tn-acc-bal { color: #f2f5f8; font-weight: 600; }
+  .tn-acc-pct { font-size: 11.5px; margin-top: 2px; }
+  .tn-acc-pct.up { color: #3fb950; } .tn-acc-pct.down { color: #f85149; }
+
+  .tn-tag {
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 9.5px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+  .tn-tag.live { background: #133019; color: #3fb950; }
+  .tn-tag.watch { background: #241a0d; color: #f0a848; }
+
+  .tn-deal {
+    display: grid;
+    grid-template-columns: 20px 1fr auto;
+    gap: 10px;
+    align-items: center;
+    padding: 10px 0;
+    border-top: 1px solid #161c25;
+    font-size: 12.5px;
+  }
+  .tn-deal:first-of-type { border-top: none; }
+  .tn-deal-dir { font-weight: 700; font-size: 11px; width: 20px; height: 20px; border-radius: 4px; display: flex; align-items: center; justify-content: center; }
+  .tn-deal-dir.buy { background: #133019; color: #3fb950; }
+  .tn-deal-dir.sell { background: #2b1416; color: #f85149; }
+  .tn-deal-sym { color: #dbe1e8; font-weight: 500; }
+  .tn-deal-meta { font-family: 'IBM Plex Sans', sans-serif; font-size: 10.5px; color: #4b5563; margin-top: 2px; }
+  .tn-deal-pl { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .tn-deal-pl.up { color: #3fb950; } .tn-deal-pl.down { color: #f85149; }
+
+  .tn-guest-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid #161c25; }
+  .tn-guest-row:first-of-type { border-top: none; }
+  .tn-avatar {
+    width: 32px; height: 32px; border-radius: 4px;
+    background: #161c25; border: 1px solid #232b37;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700; color: #7d8794;
+    font-family: 'IBM Plex Sans', sans-serif;
+  }
+  .tn-guest-name { font-size: 12.5px; color: #dbe1e8; }
+  .tn-guest-since { font-family: 'IBM Plex Sans', sans-serif; font-size: 10.5px; color: #4b5563; margin-top: 2px; }
+  .tn-guest-earn { margin-left: auto; text-align: right; font-size: 12.5px; color: #f0a848; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .tn-guest-earn div:last-child { font-family: 'IBM Plex Sans', sans-serif; font-size: 10px; color: #4b5563; font-weight: 400; margin-top: 2px; }
+
+  .tn-btn {
+    font-family: 'IBM Plex Sans', sans-serif;
+    background: #f0a848;
+    color: #1a1206;
+    border: none;
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 13px;
+    padding: 12px;
+    width: 100%;
+    margin-top: 14px;
+    cursor: pointer;
+    letter-spacing: .01em;
+  }
+  .tn-btn:hover { background: #f5b869; }
+  .tn-btn.ghost {
+    background: transparent;
+    border: 1px solid #2a3341;
+    color: #9aa4b1;
+  }
+  .tn-btn.ghost:hover { border-color: #3a4556; color: #dbe1e8; }
+
+  .tn-navbar {
+    display: flex;
+    justify-content: space-around;
+    margin: 18px -16px -28px;
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+    border-top: 1px solid #161c25;
+    background: #0d1219;
+  }
+  .tn-navitem { display: flex; flex-direction: column; align-items: center; gap: 4px; font-family: 'IBM Plex Sans', sans-serif; font-size: 9.5px; color: #4b5563; }
+  .tn-navitem.active { color: #f0a848; }
+  .tn-navicon { width: 18px; height: 18px; }
+
+  .tn-code {
+    background: #0d1219;
+    border: 1px dashed #2a3341;
+    border-radius: 4px;
+    padding: 12px;
+    text-align: center;
+    font-size: 18px;
+    letter-spacing: .15em;
+    color: #f0a848;
+    font-weight: 600;
+    margin-top: 10px;
+  }
+  .tn-stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+  .tn-stat { background: #0d1219; border: 1px solid #1a212b; border-radius: 4px; padding: 12px; }
+  .tn-stat-label { font-family: 'IBM Plex Sans', sans-serif; font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: #566072; }
+  .tn-stat-val { font-size: 19px; font-weight: 700; color: #f2f5f8; margin-top: 4px; font-variant-numeric: tabular-nums; }
+
+  /* =========================================================================
+     PULSE
+     ========================================================================= */
+  .pulse-phone {
+    background: #0d0a1a;
+    border: 1px solid #241d3d;
+    font-family: 'Manrope', sans-serif;
+    color: #e8e5f5;
+    position: relative;
+  }
+  .pulse-phone::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(circle at 15% 0%, rgba(139,92,246,.18), transparent 45%),
+      radial-gradient(circle at 90% 15%, rgba(236,72,153,.14), transparent 40%);
+    pointer-events: none;
+  }
+  .pulse-phone .phone-inner { position: relative; z-index: 1; }
+
+  .pulse-hello { font-size: 13px; color: #a89fd4; font-weight: 600; }
+  .pulse-hello b { color: #fff; }
+  .pulse-streak {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: linear-gradient(135deg, rgba(139,92,246,.25), rgba(236,72,153,.2));
+    border: 1px solid rgba(167,139,250,.35);
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #f0abfc;
+    margin-top: 8px;
+  }
+
+  .pulse-hero {
+    margin-top: 16px;
+    background: linear-gradient(150deg, #7c3aed 0%, #a855f7 45%, #db2777 100%);
+    border-radius: 22px;
+    padding: 20px;
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 16px 40px -14px rgba(124,58,237,.55);
+  }
+  .pulse-hero::after {
+    content: '';
+    position: absolute;
+    width: 160px; height: 160px;
+    background: radial-gradient(circle, rgba(255,255,255,.25), transparent 70%);
+    top: -60px; right: -40px;
+    border-radius: 50%;
+  }
+  .pulse-hero-label { font-family: 'Outfit', sans-serif; font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: rgba(255,255,255,.75); font-weight: 600; }
+  .pulse-hero-total { font-family: 'Outfit', sans-serif; font-size: 36px; font-weight: 800; color: #fff; margin-top: 4px; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+  .pulse-hero-sub { font-size: 12.5px; color: rgba(255,255,255,.85); margin-top: 6px; font-weight: 600; }
+
+  .pulse-section-title {
+    font-family: 'Outfit', sans-serif;
+    font-size: 15px;
+    font-weight: 700;
+    color: #fff;
+    margin: 22px 0 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .pulse-section-title span.tag { font-family: 'Manrope', sans-serif; font-size: 11px; font-weight: 700; color: #a78bfa; }
+
+  .pulse-card {
+    background: rgba(255,255,255,.04);
+    border: 1px solid rgba(167,139,250,.16);
+    border-radius: 18px;
+    padding: 14px;
+    margin-bottom: 10px;
+    backdrop-filter: blur(6px);
+  }
+  .pulse-acc-top { display: flex; justify-content: space-between; align-items: flex-start; }
+  .pulse-acc-name { font-weight: 700; font-size: 14px; color: #fff; }
+  .pulse-acc-server { font-size: 11px; color: #8b83b0; margin-top: 2px; }
+  .pulse-pill { font-size: 10.5px; font-weight: 700; padding: 3px 9px; border-radius: 999px; }
+  .pulse-pill.up { background: rgba(34,211,238,.15); color: #22d3ee; }
+  .pulse-pill.down { background: rgba(251,113,133,.15); color: #fb7185; }
+  .pulse-acc-bal { font-family: 'Outfit', sans-serif; font-size: 22px; font-weight: 700; color: #fff; margin-top: 10px; font-variant-numeric: tabular-nums; }
+  .pulse-progress { height: 6px; border-radius: 999px; background: rgba(255,255,255,.08); margin-top: 10px; overflow: hidden; }
+  .pulse-progress i { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, #8b5cf6, #22d3ee); }
+  .pulse-progress-label { display: flex; justify-content: space-between; font-size: 10.5px; color: #8b83b0; margin-top: 6px; }
+
+  .pulse-deal {
+    display: grid;
+    grid-template-columns: 38px 1fr auto;
+    gap: 10px;
+    align-items: center;
+    padding: 11px 0;
+    border-top: 1px solid rgba(167,139,250,.12);
+  }
+  .pulse-deal:first-of-type { border-top: none; }
+  .pulse-deal-icon {
+    width: 38px; height: 38px; border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 800; font-family: 'Outfit', sans-serif;
+  }
+  .pulse-deal-icon.buy { background: linear-gradient(135deg, #22d3ee, #06b6d4); color: #04212a; }
+  .pulse-deal-icon.sell { background: linear-gradient(135deg, #fb7185, #f43f5e); color: #2d0a10; }
+  .pulse-deal-sym { font-weight: 700; font-size: 13.5px; color: #fff; }
+  .pulse-deal-meta { font-size: 11px; color: #8b83b0; margin-top: 2px; }
+  .pulse-deal-pl { text-align: right; font-weight: 800; font-family: 'Outfit', sans-serif; font-size: 14px; font-variant-numeric: tabular-nums; }
+  .pulse-deal-pl.up { color: #22d3ee; } .pulse-deal-pl.down { color: #fb7185; }
+
+  .pulse-guest {
+    display: flex; align-items: center; gap: 11px;
+    padding: 11px 0; border-top: 1px solid rgba(167,139,250,.12);
+  }
+  .pulse-guest:first-of-type { border-top: none; }
+  .pulse-avatar {
+    width: 38px; height: 38px; border-radius: 50%;
+    background: linear-gradient(135deg, #8b5cf6, #ec4899);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 800; font-size: 13px; color: #fff;
+    font-family: 'Outfit', sans-serif;
+    flex-shrink: 0;
+  }
+  .pulse-guest-name { font-weight: 700; font-size: 13px; color: #fff; }
+  .pulse-guest-since { font-size: 10.5px; color: #8b83b0; margin-top: 2px; }
+  .pulse-guest-earn { margin-left: auto; text-align: right; }
+  .pulse-guest-earn b { font-family: 'Outfit', sans-serif; color: #f0abfc; font-size: 13.5px; font-variant-numeric: tabular-nums; }
+  .pulse-guest-earn div:last-child { font-size: 9.5px; color: #6b6390; margin-top: 2px; }
+
+  .pulse-invite-box {
+    background: linear-gradient(135deg, rgba(139,92,246,.2), rgba(236,72,153,.15));
+    border: 1px solid rgba(167,139,250,.3);
+    border-radius: 16px;
+    padding: 16px;
+    text-align: center;
+    margin-top: 4px;
+  }
+  .pulse-invite-code { font-family: 'Outfit', sans-serif; font-size: 22px; font-weight: 800; color: #fff; letter-spacing: .1em; margin-top: 6px; }
+  .pulse-invite-hint { font-size: 11px; color: #c4b5f2; margin-top: 6px; }
+
+  .pulse-btn {
+    font-family: 'Outfit', sans-serif;
+    background: linear-gradient(135deg, #8b5cf6, #ec4899);
+    color: #fff;
+    border: none;
+    border-radius: 14px;
+    font-weight: 700;
+    font-size: 14px;
+    padding: 13px;
+    width: 100%;
+    margin-top: 16px;
+    cursor: pointer;
+    box-shadow: 0 10px 24px -10px rgba(139,92,246,.7);
+  }
+  .pulse-btn:hover { filter: brightness(1.08); }
+  .pulse-btn.ghost {
+    background: rgba(255,255,255,.06);
+    border: 1px solid rgba(167,139,250,.25);
+    box-shadow: none;
+    color: #d8d2f0;
+  }
+
+  .pulse-navbar {
+    display: flex;
+    justify-content: space-around;
+    margin: 18px -16px -28px;
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+    border-top: 1px solid rgba(167,139,250,.14);
+    background: rgba(13,10,26,.9);
+    position: relative;
+    z-index: 2;
+  }
+  .pulse-navitem { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 9.5px; font-weight: 700; color: #6b6390; }
+  .pulse-navitem.active { color: #f0abfc; }
+
+  .pulse-stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 4px; }
+  .pulse-stat { background: rgba(255,255,255,.04); border: 1px solid rgba(167,139,250,.16); border-radius: 16px; padding: 13px; }
+  .pulse-stat-label { font-size: 10.5px; color: #8b83b0; font-weight: 600; }
+  .pulse-stat-val { font-family: 'Outfit', sans-serif; font-size: 20px; font-weight: 800; color: #fff; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .pulse-stat-val.accent { color: #f0abfc; }
+
+  /* footer credit */
+  .credit { color: #3a4453; font-size: 11px; margin-top: 26px; text-align: center; font-family: 'IBM Plex Sans', sans-serif; }
+  .credit b { color: #6b7684; }
+</style>
+</head>
+<body>
+
+<div class="switcher" role="tablist" aria-label="Выбор стиля">
+  <button class="active tn" id="btn-tn" role="tab" aria-selected="true">Terminal Noir</button>
+  <button class="pulse" id="btn-pulse" role="tab" aria-selected="false">Pulse</button>
+</div>
+
+<div class="stage">
+
+  <!-- ============================= TERMINAL NOIR SET ============================= -->
+  <div id="set-tn">
+    <div class="screens">
+
+      <!-- Screen 1: Dashboard -->
+      <div>
+        <div class="phone tn-phone">
+          <div class="phone-inner">
+            <div class="tn-status"><span>tagmarkets · session</span><span>09:41</span></div>
+
+            <div class="tn-ticker">
+              <div class="tn-ticker-track">
+                <span class="tn-tick">SONIC <b>60 000.39</b> <span class="up">+2.14%</span></span>
+                <span class="tn-tick">NEO.FX <b>239.98</b> <span class="down">−0.42%</span></span>
+                <span class="tn-tick">KANSTANTSIN <b>239.90</b> <span class="up">+0.08%</span></span>
+                <span class="tn-tick">ALA SHAULIUKOVA <b>60 000.20</b> <span class="up">+1.97%</span></span>
+                <span class="tn-tick">Sonic <b>484.26</b> <span class="down">−1.10%</span></span>
+                <span class="tn-tick">SONIC <b>60 000.39</b> <span class="up">+2.14%</span></span>
+                <span class="tn-tick">NEO.FX <b>239.98</b> <span class="down">−0.42%</span></span>
+                <span class="tn-tick">KANSTANTSIN <b>239.90</b> <span class="up">+0.08%</span></span>
+                <span class="tn-tick">ALA SHAULIUKOVA <b>60 000.20</b> <span class="up">+1.97%</span></span>
+                <span class="tn-tick">Sonic <b>484.26</b> <span class="down">−1.10%</span></span>
+              </div>
+            </div>
+
+            <div class="tn-h1">Капитал под управлением</div>
+            <div class="tn-total">$121 964<sup>.72</sup></div>
+            <div class="tn-delta up">▲ +2 840.15 за сегодня · 6 счетов</div>
+
+            <div class="tn-stat-grid">
+              <div class="tn-stat"><div class="tn-stat-label">Сделок сегодня</div><div class="tn-stat-val">14</div></div>
+              <div class="tn-stat"><div class="tn-stat-label">Винрейт недели</div><div class="tn-stat-val">68%</div></div>
+            </div>
+
+            <div class="tn-panel">
+              <div class="tn-panel-title"><span>Счета</span><span>ВСЕГО 6</span></div>
+
+              <div class="tn-row">
+                <div>
+                  <div class="tn-acc-name">SONIC #1</div>
+                  <div class="tn-acc-server">Exness-MT5Real10 <span class="tn-tag live" style="margin-left:6px">LIVE</span></div>
+                </div>
+                <div class="tn-acc-val">
+                  <div class="tn-acc-bal">$60 000.39</div>
+                  <div class="tn-acc-pct up">+2.14%</div>
+                </div>
+              </div>
+
+              <div class="tn-row">
+                <div>
+                  <div class="tn-acc-name">DZMITRY · NEO.FX</div>
+                  <div class="tn-acc-server">Exness-MT5Real14</div>
+                </div>
+                <div class="tn-acc-val">
+                  <div class="tn-acc-bal">$239.98</div>
+                  <div class="tn-acc-pct down">−0.42%</div>
+                </div>
+              </div>
+
+              <div class="tn-row">
+                <div>
+                  <div class="tn-acc-name">KANSTANTSIN SHAULIUKOU</div>
+                  <div class="tn-acc-server">Exness-MT5Real10</div>
+                </div>
+                <div class="tn-acc-val">
+                  <div class="tn-acc-bal">$239.90</div>
+                  <div class="tn-acc-pct up">+0.08%</div>
+                </div>
+              </div>
+
+              <div class="tn-row">
+                <div>
+                  <div class="tn-acc-name">ALA SHAULIUKOVA</div>
+                  <div class="tn-acc-server">Exness-MT5Real10 <span class="tn-tag watch" style="margin-left:6px">СВОП</span></div>
+                </div>
+                <div class="tn-acc-val">
+                  <div class="tn-acc-bal">$60 000.20</div>
+                  <div class="tn-acc-pct up">+1.97%</div>
+                </div>
+              </div>
+            </div>
+
+            <button class="tn-btn">Открыть терминал</button>
+
+            <div class="tn-navbar">
+              <div class="tn-navitem active">▣ Счета</div>
+              <div class="tn-navitem">≡ Сделки</div>
+              <div class="tn-navitem">◈ Гости</div>
+              <div class="tn-navitem">⚙ Ещё</div>
+            </div>
+          </div>
+        </div>
+        <div class="screen-label">01 · Обзор капитала</div>
+      </div>
+
+      <!-- Screen 2: Deals -->
+      <div>
+        <div class="phone tn-phone">
+          <div class="phone-inner">
+            <div class="tn-status"><span>← SONIC #1</span><span>09:41</span></div>
+            <div class="tn-h1">История сделок</div>
+            <div class="tn-total" style="font-size:26px">+$1 284<sup>.60</sup></div>
+            <div class="tn-delta up">▲ за последние 7 дней · 22 сделки</div>
+
+            <div class="tn-stat-grid">
+              <div class="tn-stat"><div class="tn-stat-label">Лучшая</div><div class="tn-stat-val" style="color:#3fb950">+412.30</div></div>
+              <div class="tn-stat"><div class="tn-stat-label">Худшая</div><div class="tn-stat-val" style="color:#f85149">−96.10</div></div>
+            </div>
+
+            <div class="tn-panel">
+              <div class="tn-panel-title"><span>Сегодня, 13 сентября</span><span>4 сделки</span></div>
+
+              <div class="tn-deal">
+                <div class="tn-deal-dir buy">B</div>
+                <div>
+                  <div class="tn-deal-sym">EURUSD</div>
+                  <div class="tn-deal-meta">0.85 лот · 09:12:04</div>
+                </div>
+                <div class="tn-deal-pl up">+184.20</div>
+              </div>
+              <div class="tn-deal">
+                <div class="tn-deal-dir sell">S</div>
+                <div>
+                  <div class="tn-deal-sym">XAUUSD</div>
+                  <div class="tn-deal-meta">0.20 лот · 08:47:51</div>
+                </div>
+                <div class="tn-deal-pl down">−41.05</div>
+              </div>
+              <div class="tn-deal">
+                <div class="tn-deal-dir buy">B</div>
+                <div>
+                  <div class="tn-deal-sym">US30</div>
+                  <div class="tn-deal-meta">0.10 лот · 07:58:19</div>
+                </div>
+                <div class="tn-deal-pl up">+96.75</div>
+              </div>
+              <div class="tn-deal">
+                <div class="tn-deal-dir buy">B</div>
+                <div>
+                  <div class="tn-deal-sym">GBPUSD</div>
+                  <div class="tn-deal-meta">1.20 лот · 06:20:03</div>
+                </div>
+                <div class="tn-deal-pl up">+58.90</div>
+              </div>
+            </div>
+
+            <div class="tn-panel">
+              <div class="tn-panel-title"><span>Вчера, 12 сентября</span><span>18 сделок</span></div>
+              <div class="tn-deal">
+                <div class="tn-deal-dir sell">S</div>
+                <div>
+                  <div class="tn-deal-sym">XAUUSD</div>
+                  <div class="tn-deal-meta">0.30 лот · 22:14:40</div>
+                </div>
+                <div class="tn-deal-pl up">+212.40</div>
+              </div>
+              <div class="tn-deal">
+                <div class="tn-deal-dir sell">S</div>
+                <div>
+                  <div class="tn-deal-sym">EURUSD</div>
+                  <div class="tn-deal-meta">0.60 лот · 19:03:12</div>
+                </div>
+                <div class="tn-deal-pl down">−28.15</div>
+              </div>
+            </div>
+
+            <div class="tn-navbar">
+              <div class="tn-navitem">▣ Счета</div>
+              <div class="tn-navitem active">≡ Сделки</div>
+              <div class="tn-navitem">◈ Гости</div>
+              <div class="tn-navitem">⚙ Ещё</div>
+            </div>
+          </div>
+        </div>
+        <div class="screen-label">02 · Лента сделок</div>
+      </div>
+
+      <!-- Screen 3: Guests / referrals -->
+      <div>
+        <div class="phone tn-phone">
+          <div class="phone-inner">
+            <div class="tn-status"><span>← Гости</span><span>09:41</span></div>
+            <div class="tn-h1">Реферальный доход</div>
+            <div class="tn-total" style="font-size:28px">$486<sup>.20</sup></div>
+            <div class="tn-delta up">▲ +18.40 за неделю · 5 приглашённых</div>
+
+            <div class="tn-code">TAG-7F92LK</div>
+
+            <div class="tn-panel">
+              <div class="tn-panel-title"><span>Приглашённые</span><span>5 активных</span></div>
+
+              <div class="tn-guest-row">
+                <div class="tn-avatar">ЕК</div>
+                <div>
+                  <div class="tn-guest-name">Евгений К.</div>
+                  <div class="tn-guest-since">с 3 сент · 2 счёта</div>
+                </div>
+                <div class="tn-guest-earn">+124.00<div>15% комиссии</div></div>
+              </div>
+              <div class="tn-guest-row">
+                <div class="tn-avatar">МТ</div>
+                <div>
+                  <div class="tn-guest-name">Марина Т.</div>
+                  <div class="tn-guest-since">с 28 авг · 1 счёт</div>
+                </div>
+                <div class="tn-guest-earn">+98.60<div>15% комиссии</div></div>
+              </div>
+              <div class="tn-guest-row">
+                <div class="tn-avatar">ДВ</div>
+                <div>
+                  <div class="tn-guest-name">Дмитрий В.</div>
+                  <div class="tn-guest-since">с 11 авг · 3 счёта</div>
+                </div>
+                <div class="tn-guest-earn">+201.30<div>15% комиссии</div></div>
+              </div>
+              <div class="tn-guest-row">
+                <div class="tn-avatar" style="color:#3a4453">НП</div>
+                <div>
+                  <div class="tn-guest-name" style="color:#7d8794">Никита П.</div>
+                  <div class="tn-guest-since">приглашение отправлено</div>
+                </div>
+                <div class="tn-guest-earn" style="color:#4b5563">—</div>
+              </div>
+            </div>
+
+            <button class="tn-btn">Пригласить нового гостя</button>
+            <button class="tn-btn ghost">Вывести на баланс кабинета</button>
+
+            <div class="tn-navbar">
+              <div class="tn-navitem">▣ Счета</div>
+              <div class="tn-navitem">≡ Сделки</div>
+              <div class="tn-navitem active">◈ Гости</div>
+              <div class="tn-navitem">⚙ Ещё</div>
+            </div>
+          </div>
+        </div>
+        <div class="screen-label">03 · Гости и рефералы</div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ============================= PULSE SET ============================= -->
+  <div id="set-pulse" hidden>
+    <div class="screens">
+
+      <!-- Screen 1: Dashboard -->
+      <div>
+        <div class="phone pulse-phone">
+          <div class="phone-inner">
+            <div class="pulse-hello">С возвращением, <b>Дмитрий</b> 👋</div>
+            <div class="pulse-streak">🔥 7 дней подряд в плюсе</div>
+
+            <div class="pulse-hero">
+              <div class="pulse-hero-label">Капитал под управлением</div>
+              <div class="pulse-hero-total">$121 964</div>
+              <div class="pulse-hero-sub">↑ +2 840 за сегодня · 6 счетов</div>
+            </div>
+
+            <div class="pulse-stat-grid">
+              <div class="pulse-stat"><div class="pulse-stat-label">Сделок сегодня</div><div class="pulse-stat-val">14</div></div>
+              <div class="pulse-stat"><div class="pulse-stat-label">Винрейт недели</div><div class="pulse-stat-val accent">68%</div></div>
+            </div>
+
+            <div class="pulse-section-title">Счета <span class="tag">6 всего</span></div>
+
+            <div class="pulse-card">
+              <div class="pulse-acc-top">
+                <div><div class="pulse-acc-name">SONIC #1</div><div class="pulse-acc-server">Exness-MT5Real10</div></div>
+                <div class="pulse-pill up">+2.14%</div>
+              </div>
+              <div class="pulse-acc-bal">$60 000.39</div>
+              <div class="pulse-progress"><i style="width:82%"></i></div>
+              <div class="pulse-progress-label"><span>Цель месяца</span><span>82%</span></div>
+            </div>
+
+            <div class="pulse-card">
+              <div class="pulse-acc-top">
+                <div><div class="pulse-acc-name">ALA SHAULIUKOVA</div><div class="pulse-acc-server">Exness-MT5Real10</div></div>
+                <div class="pulse-pill up">+1.97%</div>
+              </div>
+              <div class="pulse-acc-bal">$60 000.20</div>
+              <div class="pulse-progress"><i style="width:74%"></i></div>
+              <div class="pulse-progress-label"><span>Цель месяца</span><span>74%</span></div>
+            </div>
+
+            <div class="pulse-card">
+              <div class="pulse-acc-top">
+                <div><div class="pulse-acc-name">DZMITRY · NEO.FX</div><div class="pulse-acc-server">Exness-MT5Real14</div></div>
+                <div class="pulse-pill down">−0.42%</div>
+              </div>
+              <div class="pulse-acc-bal">$239.98</div>
+              <div class="pulse-progress"><i style="width:31%"></i></div>
+              <div class="pulse-progress-label"><span>Цель месяца</span><span>31%</span></div>
+            </div>
+
+            <button class="pulse-btn">Открыть терминал</button>
+
+            <div class="pulse-navbar">
+              <div class="pulse-navitem active">◆ Счета</div>
+              <div class="pulse-navitem">↯ Сделки</div>
+              <div class="pulse-navitem">♥ Гости</div>
+              <div class="pulse-navitem">☰ Ещё</div>
+            </div>
+          </div>
+        </div>
+        <div class="screen-label">01 · Обзор капитала</div>
+      </div>
+
+      <!-- Screen 2: Deals -->
+      <div>
+        <div class="phone pulse-phone">
+          <div class="phone-inner">
+            <div class="pulse-hello">← <b>SONIC #1</b></div>
+
+            <div class="pulse-hero" style="background:linear-gradient(150deg,#0891b2,#22d3ee 60%,#a855f7)">
+              <div class="pulse-hero-label">Результат за 7 дней</div>
+              <div class="pulse-hero-total">+$1 284</div>
+              <div class="pulse-hero-sub">22 сделки · винрейт 73%</div>
+            </div>
+
+            <div class="pulse-stat-grid">
+              <div class="pulse-stat"><div class="pulse-stat-label">Лучшая сделка</div><div class="pulse-stat-val" style="color:#22d3ee">+412</div></div>
+              <div class="pulse-stat"><div class="pulse-stat-label">Худшая сделка</div><div class="pulse-stat-val" style="color:#fb7185">−96</div></div>
+            </div>
+
+            <div class="pulse-section-title">Сегодня <span class="tag">4 сделки</span></div>
+            <div class="pulse-card">
+              <div class="pulse-deal">
+                <div class="pulse-deal-icon buy">B</div>
+                <div><div class="pulse-deal-sym">EURUSD</div><div class="pulse-deal-meta">0.85 лот · 09:12</div></div>
+                <div class="pulse-deal-pl up">+184</div>
+              </div>
+              <div class="pulse-deal">
+                <div class="pulse-deal-icon sell">S</div>
+                <div><div class="pulse-deal-sym">XAUUSD</div><div class="pulse-deal-meta">0.20 лот · 08:47</div></div>
+                <div class="pulse-deal-pl down">−41</div>
+              </div>
+              <div class="pulse-deal">
+                <div class="pulse-deal-icon buy">B</div>
+                <div><div class="pulse-deal-sym">US30</div><div class="pulse-deal-meta">0.10 лот · 07:58</div></div>
+                <div class="pulse-deal-pl up">+97</div>
+              </div>
+              <div class="pulse-deal">
+                <div class="pulse-deal-icon buy">B</div>
+                <div><div class="pulse-deal-sym">GBPUSD</div><div class="pulse-deal-meta">1.20 лот · 06:20</div></div>
+                <div class="pulse-deal-pl up">+59</div>
+              </div>
+            </div>
+
+            <div class="pulse-section-title">Вчера <span class="tag">18 сделок</span></div>
+            <div class="pulse-card">
+              <div class="pulse-deal">
+                <div class="pulse-deal-icon sell">S</div>
+                <div><div class="pulse-deal-sym">XAUUSD</div><div class="pulse-deal-meta">0.30 лот · 22:14</div></div>
+                <div class="pulse-deal-pl up">+212</div>
+              </div>
+              <div class="pulse-deal">
+                <div class="pulse-deal-icon sell">S</div>
+                <div><div class="pulse-deal-sym">EURUSD</div><div class="pulse-deal-meta">0.60 лот · 19:03</div></div>
+                <div class="pulse-deal-pl down">−28</div>
+              </div>
+            </div>
+
+            <div class="pulse-navbar">
+              <div class="pulse-navitem">◆ Счета</div>
+              <div class="pulse-navitem active">↯ Сделки</div>
+              <div class="pulse-navitem">♥ Гости</div>
+              <div class="pulse-navitem">☰ Ещё</div>
+            </div>
+          </div>
+        </div>
+        <div class="screen-label">02 · Лента сделок</div>
+      </div>
+
+      <!-- Screen 3: Guests -->
+      <div>
+        <div class="phone pulse-phone">
+          <div class="phone-inner">
+            <div class="pulse-hello">← <b>Гости</b></div>
+
+            <div class="pulse-hero" style="background:linear-gradient(150deg,#db2777,#a855f7 60%,#7c3aed)">
+              <div class="pulse-hero-label">Реферальный доход</div>
+              <div class="pulse-hero-total">$486</div>
+              <div class="pulse-hero-sub">+18 за неделю · 5 приглашённых</div>
+            </div>
+
+            <div class="pulse-invite-box">
+              <div style="font-size:11px;color:#c4b5f2;font-weight:700;text-transform:uppercase;letter-spacing:.08em">Твой код</div>
+              <div class="pulse-invite-code">TAG-7F92LK</div>
+              <div class="pulse-invite-hint">15% с каждой комиссии приглашённых — навсегда</div>
+            </div>
+
+            <div class="pulse-section-title">Приглашённые <span class="tag">5 активных</span></div>
+
+            <div class="pulse-card" style="padding:4px 14px">
+              <div class="pulse-guest">
+                <div class="pulse-avatar">ЕК</div>
+                <div><div class="pulse-guest-name">Евгений К.</div><div class="pulse-guest-since">с 3 сент · 2 счёта</div></div>
+                <div class="pulse-guest-earn"><b>+124</b><div>всего заработано</div></div>
+              </div>
+              <div class="pulse-guest">
+                <div class="pulse-avatar">МТ</div>
+                <div><div class="pulse-guest-name">Марина Т.</div><div class="pulse-guest-since">с 28 авг · 1 счёт</div></div>
+                <div class="pulse-guest-earn"><b>+99</b><div>всего заработано</div></div>
+              </div>
+              <div class="pulse-guest">
+                <div class="pulse-avatar">ДВ</div>
+                <div><div class="pulse-guest-name">Дмитрий В.</div><div class="pulse-guest-since">с 11 авг · 3 счёта</div></div>
+                <div class="pulse-guest-earn"><b>+201</b><div>всего заработано</div></div>
+              </div>
+              <div class="pulse-guest">
+                <div class="pulse-avatar" style="background:rgba(255,255,255,.08);color:#6b6390">НП</div>
+                <div><div class="pulse-guest-name" style="color:#a89fd4">Никита П.</div><div class="pulse-guest-since">приглашение отправлено</div></div>
+                <div class="pulse-guest-earn" style="color:#6b6390"><b style="color:#6b6390">—</b></div>
+              </div>
+            </div>
+
+            <button class="pulse-btn">Пригласить нового гостя</button>
+            <button class="pulse-btn ghost">Вывести на баланс кабинета</button>
+
+            <div class="pulse-navbar">
+              <div class="pulse-navitem">◆ Счета</div>
+              <div class="pulse-navitem">↯ Сделки</div>
+              <div class="pulse-navitem active">♥ Гости</div>
+              <div class="pulse-navitem">☰ Ещё</div>
+            </div>
+          </div>
+        </div>
+        <div class="screen-label">03 · Гости и рефералы</div>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+<div class="credit">TagMarkets Mini App · <b>Terminal Noir</b> и <b>Pulse</b> · листайте экраны вбок</div>
+
+<script>
+  var btnTn = document.getElementById('btn-tn');
+  var btnPulse = document.getElementById('btn-pulse');
+  var setTn = document.getElementById('set-tn');
+  var setPulse = document.getElementById('set-pulse');
+
+  function showTn() {
+    setTn.hidden = false;
+    setPulse.hidden = true;
+    btnTn.classList.add('active');
+    btnPulse.classList.remove('active');
+    btnTn.setAttribute('aria-selected', 'true');
+    btnPulse.setAttribute('aria-selected', 'false');
+  }
+  function showPulse() {
+    setPulse.hidden = false;
+    setTn.hidden = true;
+    btnPulse.classList.add('active');
+    btnTn.classList.remove('active');
+    btnPulse.setAttribute('aria-selected', 'true');
+    btnTn.setAttribute('aria-selected', 'false');
+  }
+  btnTn.addEventListener('click', showTn);
+  btnPulse.addEventListener('click', showPulse);
+</script>
+</body>
+</html>
