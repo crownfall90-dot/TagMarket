@@ -63,8 +63,12 @@ CREATE TABLE IF NOT EXISTS months (
     trades    INTEGER,             -- сколько закрытых сделок
     gross     REAL,                -- их результат до комиссии брокера
     platform  REAL,                -- платы платформы за месяц
-    transfers REAL,                -- пополнения и выводы
+    transfers REAL,                -- пополнения и выводы (капитал и профит вместе,
+                                   -- только для отображения — см. capital_transfers
+                                   -- для реконструкции капитала)
     deposits  REAL,                -- только пополнения — база для процентов
+    capital_transfers REAL,        -- то же, но БЕЗ движений профита (Adjust/Upgrade):
+                                   -- их нельзя делить на плечо как капитал
     wins      INTEGER,             -- прибыльных сделок: доля плюсовых нужна
     losses    INTEGER,             -- и после свёртки, а самих сделок уже нет
     best      REAL,                -- лучшая и худшая сделки месяца
@@ -108,7 +112,7 @@ def open_db(path: str = None) -> sqlite3.Connection:
     have = {r["name"] for r in db.execute("PRAGMA table_info(months)").fetchall()}
     for col, kind in (("wins", "INTEGER"), ("losses", "INTEGER"),
                       ("best", "REAL"), ("worst", "REAL"), ("volume", "REAL"),
-                      ("growth", "REAL")):
+                      ("growth", "REAL"), ("capital_transfers", "REAL")):
         if col not in have:
             db.execute(f"ALTER TABLE months ADD COLUMN {col} {kind}")
     db.commit()
@@ -208,6 +212,7 @@ def rollup(db, keep_from: str, is_transfer, is_perf_fee=None, growth_of=None,
         key = (row["login"], row["time"][:7])
         acc = totals.setdefault(key, {"trades": 0, "gross": 0.0, "platform": 0.0,
                                       "transfers": 0.0, "deposits": 0.0,
+                                      "capital_transfers": 0.0,
                                       "wins": 0, "losses": 0, "best": 0.0,
                                       "worst": 0.0, "volume": 0.0})
         net = row["net"] or 0.0
@@ -232,26 +237,31 @@ def rollup(db, keep_from: str, is_transfer, is_perf_fee=None, growth_of=None,
                     acc["deposits"] += net
                 if is_profit_side and is_profit_side(row):
                     profit_delta[row["login"]] = profit_delta.get(row["login"], 0.0) + net
+                else:
+                    # только капитал — эту сумму (и только её) можно потом
+                    # делить на плечо при реконструкции капитала из архива
+                    acc["capital_transfers"] += net
             else:
                 acc["platform"] += net
 
     for (login, month), a in totals.items():
         db.execute(
             "INSERT INTO months (login, month, trades, gross, platform, transfers, "
-            "deposits, wins, losses, best, worst, volume, growth) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "deposits, capital_transfers, wins, losses, best, worst, volume, growth) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(login, month) DO UPDATE SET "
             "trades=months.trades+excluded.trades, gross=months.gross+excluded.gross, "
             "platform=months.platform+excluded.platform, "
             "transfers=months.transfers+excluded.transfers, "
             "deposits=months.deposits+excluded.deposits, "
+            "capital_transfers=COALESCE(months.capital_transfers,0)+excluded.capital_transfers, "
             "wins=months.wins+excluded.wins, losses=months.losses+excluded.losses, "
             "best=MAX(months.best, excluded.best), worst=MIN(months.worst, excluded.worst), "
             "volume=months.volume+excluded.volume, "
             "growth=CASE WHEN excluded.growth IS NULL THEN months.growth "
             "ELSE COALESCE(months.growth, 0) + excluded.growth END",
             (login, month, a["trades"], a["gross"], a["platform"],
-             a["transfers"], a["deposits"], a["wins"], a["losses"],
+             a["transfers"], a["deposits"], a["capital_transfers"], a["wins"], a["losses"],
              a["best"], a["worst"], a["volume"],
              growth_of(login, months_rows.get((login, month), [])) if growth_of else None))
 

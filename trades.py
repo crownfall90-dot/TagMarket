@@ -347,13 +347,19 @@ def _stored_capital() -> float:
     Агентский capital_hist остаётся запасным вариантом: он приходит с машины
     с терминалом, но может отстать (агент офлайн) или прийти неполным со
     старой версии агента, которая считала капитал с отсечки REPORT_FROM.
+
+    Архивные m["transfers"] держат капитал и профит вместе (для отображения),
+    делить их целиком на плечо нельзя — реинвест профита (Adjust/Upgrade)
+    считался бы капиталом в 24 раза меньше настоящего. capital_transfers —
+    та же сумма, но только движения капитала, добавлена рядом специально
+    для этой реконструкции.
     """
     if HAS_MT5:                     # у терминала история под рукой, считаем сами
         return _capital_moves(datetime(2000, 1, 1))
     if not _login:
         return 0.0
     live = _capital_moves(datetime(2000, 1, 1))
-    archived = sum(m["transfers"] or 0.0 for m in archive()) / (_multiplier or 1)
+    archived = sum(m.get("capital_transfers") or 0.0 for m in archive()) / (_multiplier or 1)
     from_deals = live + archived
     row = store.get_state(_store_db(), _login)
     from_agent = float(row["capital_hist"] or 0.0) if row else 0.0
