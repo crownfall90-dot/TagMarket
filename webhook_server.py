@@ -263,10 +263,12 @@ async def agent_accounts(request):
          "server": a["server"], "multiplier": a.get("multiplier", 1),
          "since": store.last_ticket(db, a["login"]),
          "command": store.get_command(db, a["login"])}   # напр. «restart_terminal»
-        # дедуп по логину+серверу у одного владельца: тот же счёт, заведённый
-        # дважды под разными именами (до защиты в accounts.add()), заставлял
-        # агента переключать терминал на него дважды за круг впустую
-        for a in accounts.dedup(accounts.load()) if a.get("enabled", True)
+        # дедуп по логину+серверу БЕЗ владельца: агенту он не важен — это
+        # один физический MT5-логин, даже если на него есть записи у разных
+        # владельцев (свой счёт + расшаренная гостевая копия через share()).
+        # by_owner=True тут не спас бы главный сценарий: гостевая копия
+        # именно у ДРУГОГО owner'а всё равно осталась бы отдельной строкой
+        for a in accounts.dedup(accounts.load(), by_owner=False) if a.get("enabled", True)
     ])
 
 
