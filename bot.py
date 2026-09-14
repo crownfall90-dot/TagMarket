@@ -408,8 +408,7 @@ def settings_menu(owner, db=None) -> tuple[str, InlineKeyboardMarkup]:
             text=f"{group_bell(info['accounts'])}  {accounts.label(cab, owner)[:26]}",
             callback_data=f"cfg:cab:{cab}")])
 
-    rows.append([InlineKeyboardButton(text="＋ Счёт", callback_data="add"),
-                 InlineKeyboardButton(text="📤 Поделиться", callback_data="cfg:share")])
+    rows.append([InlineKeyboardButton(text="＋ Счёт", callback_data="add")])
     rows.append([InlineKeyboardButton(text="🔗 Пригласить", callback_data="cfg:inv"),
                  InlineKeyboardButton(text="📋 Мои ссылки", callback_data="cfg:invites")])
     rows.append([InlineKeyboardButton(text="👥 Гости", callback_data="cfg:guests")])
@@ -713,44 +712,6 @@ def invites_view(db, owner, username: str = "", inline_ok: bool = False
             f"<i>Каждая ждёт своего человека и сгорает после его входа. "
             f"🚫 закрывает вход заранее; кто уже зашёл — доступ сохраняет.</i>",
             InlineKeyboardMarkup(inline_keyboard=rows))
-
-
-def my_guests(db, owner) -> list[tuple[str, str]]:
-    """Кого владелец уже пустил по своим ссылкам: (id, как зовут)."""
-    out = []
-    for key in kv_keys(db, "guest:%"):
-        uid = key.split(":", 1)[1]
-        if kv_get(db, key) == "1" and str(kv_get(db, f"guest_by:{uid}")) == str(owner):
-            out.append((uid, kv_get(db, f"guest_name:{uid}") or uid))
-    return sorted(out, key=lambda g: g[1].lower())
-
-
-def share_menu(owner, picked: list, db=None) -> tuple[str, InlineKeyboardMarkup]:
-    rows = [[InlineKeyboardButton(
-        text=f"{'☑️' if int(a['login']) in picked else '⬜'} {a['name']}",
-        callback_data=f"cfg:pick:{a['login']}")] for a in accounts.load(owner)]
-
-    # получателя выбираем из своих гостей: их Telegram ID уже известен, и
-    # переспрашивать его у человека незачем
-    guests = my_guests(db, owner) if db is not None else []
-    if picked and guests:
-        rows.append([InlineKeyboardButton(text="— кому отправить —",
-                                          callback_data="cfg:share")])
-        rows += [[InlineKeyboardButton(text=f"👤 {name[:26]}",
-                                       callback_data=f"cfg:shareto:{uid}")]
-                 for uid, name in guests]
-    rows.append([InlineKeyboardButton(text="◀️ Отмена", callback_data="cfg")])
-
-    text = ("<b>📤 Поделиться счетами</b>\n" + trades.THIN +
-            "\nОтметь счета — и выбери, кому отправить.\n\n"
-            "<i>Счета копируются: у тебя они остаются. Получатель сможет смотреть "
-            "по ним отчёты и получать уведомления.</i>")
-    if picked:
-        text += f"\n\nВыбрано:\n<b>{html.escape(describe(picked, owner))}</b>"
-        if not guests:
-            text += ("\n\n<i>Гостей пока нет — пришли Telegram ID сообщением "
-                     "или сперва пригласи человека по ссылке.</i>")
-    return text, InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def account_menu(name: str, owner) -> tuple[str, InlineKeyboardMarkup]:
@@ -1209,10 +1170,6 @@ class AddAcc(StatesGroup):
 
 class Rename(StatesGroup):
     name = State()
-
-
-class Share(StatesGroup):
-    target = State()
 
 
 class Invite(StatesGroup):
@@ -1894,86 +1851,6 @@ async def main():
                        f"<code>{link}</code>\n\n"
                        f"<i>Одноразовая — на одного человека. Как только по ней зайдут, "
                        f"я сообщу и сразу пришлю новую.</i>", kb)
-
-    @dp.callback_query(F.data == "cfg:share")
-    async def cfg_share_ask(cb: CallbackQuery, state: FSMContext):
-        await cb.answer()
-        accs = accounts.load(cb.from_user.id)
-        if not accs:
-            await cb.message.answer("Пока нечем делиться — счетов нет.")
-            return
-        await state.set_state(Share.target)
-        await state.update_data(picked=[])
-        text, kb = share_menu(cb.from_user.id, [], db)
-        await swap(cb, text, kb)
-
-    @dp.callback_query(F.data.startswith("cfg:pick:"), Share.target)
-    async def cfg_share_pick(cb: CallbackQuery, state: FSMContext):
-        await cb.answer()
-        login = int(cb.data.split(":", 2)[2])
-        picked = (await state.get_data()).get("picked", [])
-        picked = [p for p in picked if p != login] if login in picked else picked + [login]
-        await state.update_data(picked=picked)
-        text, kb = share_menu(cb.from_user.id, picked, db)
-        await swap(cb, text, kb)
-
-    @dp.callback_query(F.data.startswith("cfg:shareto:"), Share.target)
-    async def cfg_share_to_guest(cb: CallbackQuery, state: FSMContext):
-        uid = cb.data.split(":", 2)[2]
-        picked = (await state.get_data()).get("picked", [])
-        if not picked:
-            await cb.answer("Сначала отметь счета", show_alert=True)
-            return
-        if str(kv_get(db, f"guest_by:{uid}")) != str(cb.from_user.id):
-            await cb.answer("Это не твой гость", show_alert=True)
-            return
-        await state.clear()
-        who = kv_get(db, f"guest_name:{uid}") or uid
-        try:
-            added = accounts.share(picked, cb.from_user.id, int(uid))
-        except ValueError as e:
-            await cb.answer(str(e), show_alert=True)
-            return
-        await cb.answer(f"Отправлено: {len(added)}")
-        await swap(cb, f"✅ <b>Отправлено {html.escape(str(who))}</b>\n{trades.THIN}\n"
-                       f"{html.escape(describe(picked, cb.from_user.id))}\n\n"
-                       f"<i>Счета появятся у него при следующем открытии бота. "
-                       f"Твои остались у тебя.</i>", settings_menu(cb.from_user.id, db)[1])
-        try:    # человек должен понять, откуда у него новые счета
-            await send(bot, int(uid),
-                       f"🎁 <b>С тобой поделились счетами</b>\n{trades.THIN}\n"
-                       f"{html.escape(describe(picked, int(uid)))}\n\n"
-                       f"<i>Открой /start — они уже в списке.</i>")
-        except Exception as e:
-            log.warning("не уведомил получателя %s: %s", uid, e)
-
-    @dp.message(Share.target)
-    async def cfg_share_target(msg: Message, state: FSMContext):
-        picked = (await state.get_data()).get("picked", [])
-        raw = msg.text.strip()
-        if not raw.lstrip("-").isdigit():
-            await msg.answer("Нужен числовой Telegram ID получателя, например <code>851274731</code>.\n"
-                             "<i>Свой ID он увидит внизу приветствия по /start.</i>")
-            return
-        if not picked:
-            await msg.answer("Сначала отметь галочками, какие счета отправить.")
-            return
-        await state.clear()
-        try:
-            added = accounts.share(picked, msg.from_user.id, int(raw))
-        except ValueError as e:
-            await msg.answer(f"❌ {html.escape(str(e))}")
-            return
-        await send(bot, msg.chat.id,
-                   f"✅ Отправлено счетов: <b>{len(added)}</b> — {html.escape(', '.join(added))}\n"
-                   f"<i>Они появятся у получателя при следующем открытии бота. "
-                   f"Твои счета остались у тебя.</i>")
-        try:    # получателю — уведомление, если он уже писал боту
-            await send(bot, int(raw),
-                       f"📥 <b>С тобой поделились счетами</b>\n{trades.THIN}\n"
-                       f"{html.escape(', '.join(added))}\n\nОткрой /start — они уже в списке.")
-        except Exception as e:
-            log.info("получатель %s пока недоступен: %s", raw, e)
 
     @dp.callback_query(F.data == "add")
     async def add_start(cb: CallbackQuery, state: FSMContext):
