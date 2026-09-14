@@ -143,17 +143,40 @@ def _just_sent(db, kind: str, row: dict) -> bool:
         return False
 
 
+NOTIFY_RETRIES = 3       # событие уже помечено виденным (partner.unseen) — повтора
+NOTIFY_BACKOFF = 5       # со стороны портала не будет, единственный шанс доставить
+
+
 async def notify(app, text: str) -> None:
+    """Шлёт уведомление в Telegram с повторами.
+
+    Событие уже отмечено как увиденное в partner.unseen() до вызова notify()
+    (иначе портал, ретраящий по таймауту, продублировал бы сообщение) — то
+    есть это единственная попытка доставить его. Без ретраев минутный сбой
+    прокси/Telegram терял депозит или вывод клиента насовсем, без следа даже
+    в логах уровня ошибки.
+    """
     chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
     if not chat_id:
         return
-    try:
-        await app["tg"].post(
-            f"https://api.telegram.org/bot{os.environ['TELEGRAM_BOT_TOKEN']}/sendMessage",
-            data={"chat_id": chat_id, "parse_mode": "HTML", "text": text},
-            proxy=app.get("proxy"))
-    except Exception as e:
-        log.warning("не отправил в Telegram: %s", e)
+    url = f"https://api.telegram.org/bot{os.environ['TELEGRAM_BOT_TOKEN']}/sendMessage"
+    for attempt in range(1, NOTIFY_RETRIES + 1):
+        try:
+            async with app["tg"].post(
+                    url, data={"chat_id": chat_id, "parse_mode": "HTML", "text": text},
+                    proxy=app.get("proxy")) as resp:
+                if resp.status < 300:
+                    return
+                body = await resp.text()
+                raise RuntimeError(f"Telegram ответил {resp.status}: {body[:200]}")
+        except Exception as e:
+            if attempt == NOTIFY_RETRIES:
+                log.error("не доставил уведомление в Telegram за %d попыток, "
+                         "теряю: %s — %r", NOTIFY_RETRIES, e, text[:200])
+                return
+            log.warning("не отправил в Telegram (попытка %d/%d): %s",
+                       attempt, NOTIFY_RETRIES, e)
+            await asyncio.sleep(NOTIFY_BACKOFF * attempt)
 
 
 async def on_registration(request):
@@ -232,7 +255,10 @@ async def agent_accounts(request):
          "server": a["server"], "multiplier": a.get("multiplier", 1),
          "since": store.last_ticket(db, a["login"]),
          "command": store.get_command(db, a["login"])}   # напр. «restart_terminal»
-        for a in accounts.load() if a.get("enabled", True)
+        # дедуп по логину+серверу у одного владельца: тот же счёт, заведённый
+        # дважды под разными именами (до защиты в accounts.add()), заставлял
+        # агента переключать терминал на него дважды за круг впустую
+        for a in accounts.dedup(accounts.load()) if a.get("enabled", True)
     ])
 
 
