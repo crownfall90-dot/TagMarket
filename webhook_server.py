@@ -224,7 +224,10 @@ async def status(request):
 # домашней машине и присылает сюда. Бот на сервере берёт данные уже из базы.
 
 def check_token(request) -> None:
-    if request.query.get("token") != TOKEN and request.headers.get("X-Token") != TOKEN:
+    # constant-time сравнение: обычное != отдаёт результат тем быстрее, чем
+    # раньше расходятся строки — теоретическая утечка токена по времени ответа
+    got = request.query.get("token") or request.headers.get("X-Token") or ""
+    if not secrets.compare_digest(got, TOKEN):
         log.warning("агент: неверный токен от %s", request.remote)
         raise web.HTTPForbidden(text="bad token")
 

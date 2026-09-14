@@ -157,7 +157,7 @@ def sync_env() -> None:
     роль primary/standby) не трогаем — сервер их и не присылает.
     """
     try:
-        r = requests.get(f"{SERVER}/agent/env", params={"token": TOKEN}, timeout=15)
+        r = requests.get(f"{SERVER}/agent/env", headers={"X-Token": TOKEN}, timeout=15)
         r.raise_for_status()
         remote = r.json()
     except Exception as e:
@@ -267,8 +267,8 @@ def _local_commit() -> str | None:
 def _canary_age(commit: str) -> float | None:
     """Сколько секунд назад standby впервые отчитался об этом коммите (по данным сервера)."""
     try:
-        r = requests.get(f"{SERVER}/agent/update_status",
-                         params={"token": TOKEN, "commit": commit}, timeout=15)
+        r = requests.get(f"{SERVER}/agent/update_status", params={"commit": commit},
+                         headers={"X-Token": TOKEN}, timeout=15)
         r.raise_for_status()
         return r.json().get("canary_age_seconds")
     except Exception as e:
@@ -503,7 +503,7 @@ def notify_role_change(became: str) -> None:
 
 
 def fetch_accounts() -> list[dict]:
-    r = requests.get(f"{SERVER}/agent/accounts", params={"token": TOKEN}, timeout=30)
+    r = requests.get(f"{SERVER}/agent/accounts", headers={"X-Token": TOKEN}, timeout=30)
     r.raise_for_status()
     return r.json()
 
