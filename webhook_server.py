@@ -367,19 +367,47 @@ async def agent_machines_status(request):
                              "active_machine": partner.kv_get(db, "active_machine")})
 
 
+def _valid_deal(d: dict) -> bool:
+    """Сделка годна к записи: время реально парсится.
+
+    Без этой проверки битая строка (обрыв связи на середине, старая версия
+    агента) тихо ложится в deals, а датой давится не запись, а КАЖДОЕ чтение
+    истории потом — store.fetch() падает ValueError на datetime.fromisoformat,
+    а capital()/_profit_on_account() эту ошибку глотают и молча возвращают
+    0 вместо честного сбоя. Итог — капитал завышен, и никто не узнает.
+    """
+    t = d.get("time")
+    if isinstance(t, datetime):
+        return True
+    try:
+        datetime.fromisoformat(str(t))
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
 async def agent_sync(request):
     """Агент прислал состояние счёта и новые сделки."""
     check_token(request)
-    data = await request.json()
+    try:
+        data = await request.json()
+        login = int(data["login"])
+    except (ValueError, TypeError, KeyError) as e:
+        raise web.HTTPBadRequest(text=f"bad payload: {e}")
     db = request.app["trades"]
-    login = int(data["login"])
 
     store.save_state(db, login, data.get("balance", 0.0), data.get("equity", 0.0),
                      data.get("currency", ""), data.get("server", ""),
                      data.get("capital_hist"))
     if data.get("command_done"):        # агент выполнил команду — снимаем её
         store.clear_command(db, login)
-    new = store.save_deals(db, login, data.get("deals", []))
+
+    deals = data.get("deals", [])
+    good = [d for d in deals if _valid_deal(d)]
+    if len(good) != len(deals):
+        log.error("счёт %s: %d сделок с нечитаемым временем отброшено", login,
+                  len(deals) - len(good))
+    new = store.save_deals(db, login, good)
     if new:
         log.info("счёт %s: %d новых сделок", login, new)
 
