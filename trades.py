@@ -253,12 +253,19 @@ def _profit_on_account() -> float:
     уходит с того же баланса строкой PF Deduction, то есть в остатке её уже
     нет. Нужно это, чтобы отделить профит от капитала: делить на плечо весь
     баланс нельзя — капитал вышел бы завышенным на профит ÷ плечо.
+
+    На сервере сделки старше текущего месяца ежедневно сворачиваются
+    (store.rollup) и удаляются из deals — без затравки отсюда профит,
+    заработанный в закрытых месяцах и всё ещё не выведенный, становился
+    невидим сразу после первой же свёртки: капитал завышался на его
+    величину ÷ плечо, а «Накоплено профита» показывало 0. На терминале
+    (HAS_MT5) такой свёртки нет, история всегда полная — там она не нужна.
     """
+    left = 0.0 if HAS_MT5 else _stored_profit_carry()
     try:
         rows = fetch(REPORT_FROM, clock() + timedelta(days=1))
     except Exception:
-        return 0.0
-    left = 0.0
+        return max(left, 0.0)
     for r in rows:
         if r["is_closing"]:
             left += r["net"]                    # заработали — профит вырос
@@ -268,6 +275,14 @@ def _profit_on_account() -> float:
             elif is_transfer(r) and is_profit_side(r):
                 left += r["net"]                # вывели или реинвестировали
     return max(left, 0.0)
+
+
+def _stored_profit_carry() -> float:
+    """Профит из уже свёрнутых месяцев (их сделок в deals больше нет)."""
+    if not _login:
+        return 0.0
+    row = store.get_state(_store_db(), _login)
+    return float(row["profit_carry"] or 0.0) if row else 0.0
 
 
 def capital() -> float:

@@ -50,7 +50,9 @@ CREATE TABLE IF NOT EXISTS state (
     synced   TEXT,                 -- когда агент последний раз выходил на связь
     max_ticket INTEGER DEFAULT 0,  -- переживает чистку сделок: иначе агент
                                    -- решит, что счёт новый, и зальёт всё заново
-    capital_hist REAL              -- капитал, сложенный агентом из всей истории
+    capital_hist REAL,             -- капитал, сложенный агентом из всей истории
+    profit_carry REAL DEFAULT 0    -- накопленный профит из свёрнутых месяцев
+                                   -- (их сделок в deals уже нет — см. rollup)
 );
 
 -- Сделки храним за текущий месяц, прошлые сворачиваем сюда: детали за годы
@@ -93,6 +95,8 @@ def open_db(path: str = None) -> sqlite3.Connection:
         db.execute("ALTER TABLE state ADD COLUMN max_ticket INTEGER DEFAULT 0")
     if "capital_hist" not in have:
         db.execute("ALTER TABLE state ADD COLUMN capital_hist REAL")
+    if "profit_carry" not in have:
+        db.execute("ALTER TABLE state ADD COLUMN profit_carry REAL DEFAULT 0")
     # колонки статистики появились позже — базы прошлых версий дополняем
     have = {r["name"] for r in db.execute("PRAGMA table_info(months)").fetchall()}
     for col, kind in (("wins", "INTEGER"), ("losses", "INTEGER"),
@@ -168,15 +172,29 @@ def last_ticket(db, login: int) -> int:
     return max(from_deals, from_state)
 
 
-def rollup(db, keep_from: str, is_transfer, is_perf_fee=None, growth_of=None) -> int:
+def rollup(db, keep_from: str, is_transfer, is_perf_fee=None, growth_of=None,
+          is_profit_side=None) -> int:
     """Свернуть сделки старше keep_from ('YYYY-MM-01') в месячные итоги.
 
     Признак перевода живёт в комментарии сделки, поэтому считаем в Python той
     же функцией, что и везде — чтобы итоги сходились с отчётами.
     Возвращает, сколько сделок убрано: итоги остаются навсегда, детали — нет.
+
+    Свёртка накопительная (ON CONFLICT ... = months.x + excluded.x), а не
+    заменяющая: опоздавшая сделка (терминал был выключен, досылает её позже)
+    раньше СТИРАЛА весь месяц значением из одной этой строки — сами сделки
+    месяца уже удалены прошлой свёрткой, восстановить было нечем.
+
+    profit_carry в state — то же самое, что capital_hist: агент считает его
+    сам по полной истории терминала, и он остаётся приоритетом (см.
+    trades._profit_on_account). Здесь копится запасной вариант на случай,
+    если агент офлайн — без него нераспределённый профит закрытых месяцев
+    становился невидим сразу после первой же свёртки (не только «до первого
+    ответа агента», а навсегда, потому что деталей сделок уже нет).
     """
     totals: dict = {}
     months_rows: dict = {}      # сделки месяца — по ним считается доходность
+    profit_delta: dict = {}     # login -> сколько профита добавила эта свёртка
     for r in db.execute("SELECT * FROM deals WHERE time < ?", (keep_from,)).fetchall():
         row = dict(r)
         months_rows.setdefault((row["login"], row["time"][:7]), []).append(row)
@@ -185,8 +203,8 @@ def rollup(db, keep_from: str, is_transfer, is_perf_fee=None, growth_of=None) ->
                                       "transfers": 0.0, "deposits": 0.0,
                                       "wins": 0, "losses": 0, "best": 0.0,
                                       "worst": 0.0, "volume": 0.0})
+        net = row["net"] or 0.0
         if row["is_closing"]:
-            net = row["net"] or 0.0
             acc["trades"] += 1
             acc["gross"] += net
             acc["volume"] += row["volume"] or 0.0
@@ -196,29 +214,43 @@ def rollup(db, keep_from: str, is_transfer, is_perf_fee=None, growth_of=None) ->
                 acc["losses"] += 1
             acc["best"] = max(acc["best"], net)
             acc["worst"] = min(acc["worst"], net)
+            profit_delta[row["login"]] = profit_delta.get(row["login"], 0.0) + net
         elif row["is_balance"]:
-            if is_transfer(row):
-                acc["transfers"] += row["net"] or 0.0
-                if (row["net"] or 0.0) > 0:
-                    acc["deposits"] += row["net"]
-            elif not (is_perf_fee and is_perf_fee(row)):
+            if is_perf_fee and is_perf_fee(row):
                 # удержание доли брокера уже учтено в net_of_fee — иначе двойной счёт
-                acc["platform"] += row["net"] or 0.0
+                profit_delta[row["login"]] = profit_delta.get(row["login"], 0.0) + net
+            elif is_transfer(row):
+                acc["transfers"] += net
+                if net > 0:
+                    acc["deposits"] += net
+                if is_profit_side and is_profit_side(row):
+                    profit_delta[row["login"]] = profit_delta.get(row["login"], 0.0) + net
+            else:
+                acc["platform"] += net
 
     for (login, month), a in totals.items():
         db.execute(
             "INSERT INTO months (login, month, trades, gross, platform, transfers, "
             "deposits, wins, losses, best, worst, volume, growth) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(login, month) DO UPDATE SET trades=excluded.trades, "
-            "gross=excluded.gross, platform=excluded.platform, "
-            "transfers=excluded.transfers, deposits=excluded.deposits, "
-            "wins=excluded.wins, losses=excluded.losses, best=excluded.best, "
-            "worst=excluded.worst, volume=excluded.volume, growth=excluded.growth",
+            "ON CONFLICT(login, month) DO UPDATE SET "
+            "trades=months.trades+excluded.trades, gross=months.gross+excluded.gross, "
+            "platform=months.platform+excluded.platform, "
+            "transfers=months.transfers+excluded.transfers, "
+            "deposits=months.deposits+excluded.deposits, "
+            "wins=months.wins+excluded.wins, losses=months.losses+excluded.losses, "
+            "best=MAX(months.best, excluded.best), worst=MIN(months.worst, excluded.worst), "
+            "volume=months.volume+excluded.volume, "
+            "growth=CASE WHEN excluded.growth IS NULL THEN months.growth "
+            "ELSE COALESCE(months.growth, 0) + excluded.growth END",
             (login, month, a["trades"], a["gross"], a["platform"],
              a["transfers"], a["deposits"], a["wins"], a["losses"],
              a["best"], a["worst"], a["volume"],
              growth_of(login, months_rows.get((login, month), [])) if growth_of else None))
+
+    for login, delta in profit_delta.items():
+        db.execute("UPDATE state SET profit_carry = COALESCE(profit_carry, 0) + ? "
+                   "WHERE login = ?", (delta, login))
 
     # тикеты запоминаем до удаления, иначе агент зальёт историю заново
     db.execute("UPDATE state SET max_ticket = MAX(COALESCE(max_ticket, 0), "
