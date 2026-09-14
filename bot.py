@@ -453,10 +453,10 @@ def settings_menu(owner, db=None) -> tuple[str, InlineKeyboardMarkup]:
             text=f"{group_bell(info['accounts'])}  {accounts.label(cab, owner)[:26]}",
             callback_data=f"cfg:cab:{cab}")])
 
-    rows.append([InlineKeyboardButton(text="＋ Счёт", callback_data="add")])
+    rows.append([InlineKeyboardButton(text="＋ Счёт", callback_data="add"),
+                 InlineKeyboardButton(text="👥 Гости", callback_data="cfg:guests")])
     rows.append([InlineKeyboardButton(text="🔗 Пригласить", callback_data="cfg:inv"),
                  InlineKeyboardButton(text="📋 Мои ссылки", callback_data="cfg:invites")])
-    rows.append([InlineKeyboardButton(text="👥 Гости", callback_data="cfg:guests")])
     on = link_alerts_on(db, owner) if db is not None else False
     rows.append([InlineKeyboardButton(
         text=("📡 Связь с MT5: сообщать" if on else "📡 Связь с MT5: молчать"),
