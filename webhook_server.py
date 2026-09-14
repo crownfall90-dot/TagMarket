@@ -224,10 +224,15 @@ async def status(request):
 # домашней машине и присылает сюда. Бот на сервере берёт данные уже из базы.
 
 def check_token(request) -> None:
+    # любой из двух источников, раз совпал — этого достаточно (агент может
+    # прислать оба или только один); ошибочный query не должен перекрывать
+    # верный header — иначе неверная строка в одном месте отказывала бы
+    # запросу, у которого верный токен лежит в другом.
     # constant-time сравнение: обычное != отдаёт результат тем быстрее, чем
     # раньше расходятся строки — теоретическая утечка токена по времени ответа
-    got = request.query.get("token") or request.headers.get("X-Token") or ""
-    if not secrets.compare_digest(got, TOKEN):
+    q = request.query.get("token") or ""
+    h = request.headers.get("X-Token") or ""
+    if not (secrets.compare_digest(q, TOKEN) or secrets.compare_digest(h, TOKEN)):
         log.warning("агент: неверный токен от %s", request.remote)
         raise web.HTTPForbidden(text="bad token")
 
