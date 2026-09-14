@@ -143,17 +143,40 @@ def _just_sent(db, kind: str, row: dict) -> bool:
         return False
 
 
+NOTIFY_RETRIES = 3       # событие уже помечено виденным (partner.unseen) — повтора
+NOTIFY_BACKOFF = 5       # со стороны портала не будет, единственный шанс доставить
+
+
 async def notify(app, text: str) -> None:
+    """Шлёт уведомление в Telegram с повторами.
+
+    Событие уже отмечено как увиденное в partner.unseen() до вызова notify()
+    (иначе портал, ретраящий по таймауту, продублировал бы сообщение) — то
+    есть это единственная попытка доставить его. Без ретраев минутный сбой
+    прокси/Telegram терял депозит или вывод клиента насовсем, без следа даже
+    в логах уровня ошибки.
+    """
     chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
     if not chat_id:
         return
-    try:
-        await app["tg"].post(
-            f"https://api.telegram.org/bot{os.environ['TELEGRAM_BOT_TOKEN']}/sendMessage",
-            data={"chat_id": chat_id, "parse_mode": "HTML", "text": text},
-            proxy=app.get("proxy"))
-    except Exception as e:
-        log.warning("не отправил в Telegram: %s", e)
+    url = f"https://api.telegram.org/bot{os.environ['TELEGRAM_BOT_TOKEN']}/sendMessage"
+    for attempt in range(1, NOTIFY_RETRIES + 1):
+        try:
+            async with app["tg"].post(
+                    url, data={"chat_id": chat_id, "parse_mode": "HTML", "text": text},
+                    proxy=app.get("proxy")) as resp:
+                if resp.status < 300:
+                    return
+                body = await resp.text()
+                raise RuntimeError(f"Telegram ответил {resp.status}: {body[:200]}")
+        except Exception as e:
+            if attempt == NOTIFY_RETRIES:
+                log.error("не доставил уведомление в Telegram за %d попыток, "
+                         "теряю: %s — %r", NOTIFY_RETRIES, e, text[:200])
+                return
+            log.warning("не отправил в Telegram (попытка %d/%d): %s",
+                       attempt, NOTIFY_RETRIES, e)
+            await asyncio.sleep(NOTIFY_BACKOFF * attempt)
 
 
 async def on_registration(request):
@@ -201,7 +224,10 @@ async def status(request):
 # домашней машине и присылает сюда. Бот на сервере берёт данные уже из базы.
 
 def check_token(request) -> None:
-    if request.query.get("token") != TOKEN and request.headers.get("X-Token") != TOKEN:
+    # constant-time сравнение: обычное != отдаёт результат тем быстрее, чем
+    # раньше расходятся строки — теоретическая утечка токена по времени ответа
+    got = request.query.get("token") or request.headers.get("X-Token") or ""
+    if not secrets.compare_digest(got, TOKEN):
         log.warning("агент: неверный токен от %s", request.remote)
         raise web.HTTPForbidden(text="bad token")
 
@@ -232,7 +258,10 @@ async def agent_accounts(request):
          "server": a["server"], "multiplier": a.get("multiplier", 1),
          "since": store.last_ticket(db, a["login"]),
          "command": store.get_command(db, a["login"])}   # напр. «restart_terminal»
-        for a in accounts.load() if a.get("enabled", True)
+        # дедуп по логину+серверу у одного владельца: тот же счёт, заведённый
+        # дважды под разными именами (до защиты в accounts.add()), заставлял
+        # агента переключать терминал на него дважды за круг впустую
+        for a in accounts.dedup(accounts.load()) if a.get("enabled", True)
     ])
 
 
@@ -341,19 +370,47 @@ async def agent_machines_status(request):
                              "active_machine": partner.kv_get(db, "active_machine")})
 
 
+def _valid_deal(d: dict) -> bool:
+    """Сделка годна к записи: время реально парсится.
+
+    Без этой проверки битая строка (обрыв связи на середине, старая версия
+    агента) тихо ложится в deals, а датой давится не запись, а КАЖДОЕ чтение
+    истории потом — store.fetch() падает ValueError на datetime.fromisoformat,
+    а capital()/_profit_on_account() эту ошибку глотают и молча возвращают
+    0 вместо честного сбоя. Итог — капитал завышен, и никто не узнает.
+    """
+    t = d.get("time")
+    if isinstance(t, datetime):
+        return True
+    try:
+        datetime.fromisoformat(str(t))
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
 async def agent_sync(request):
     """Агент прислал состояние счёта и новые сделки."""
     check_token(request)
-    data = await request.json()
+    try:
+        data = await request.json()
+        login = int(data["login"])
+    except (ValueError, TypeError, KeyError) as e:
+        raise web.HTTPBadRequest(text=f"bad payload: {e}")
     db = request.app["trades"]
-    login = int(data["login"])
 
     store.save_state(db, login, data.get("balance", 0.0), data.get("equity", 0.0),
                      data.get("currency", ""), data.get("server", ""),
                      data.get("capital_hist"))
     if data.get("command_done"):        # агент выполнил команду — снимаем её
         store.clear_command(db, login)
-    new = store.save_deals(db, login, data.get("deals", []))
+
+    deals = data.get("deals", [])
+    good = [d for d in deals if _valid_deal(d)]
+    if len(good) != len(deals):
+        log.error("счёт %s: %d сделок с нечитаемым временем отброшено", login,
+                  len(deals) - len(good))
+    new = store.save_deals(db, login, good)
     if new:
         log.info("счёт %s: %d новых сделок", login, new)
 

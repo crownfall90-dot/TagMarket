@@ -245,6 +245,11 @@ def fmt_activity(row):
 
 def open_db(path: str = None):
     db = sqlite3.connect(path or DB)
+    # bot.py и webhook_server.py пишут сюда из разных процессов одновременно
+    # (seen/kv — общая дедупликация вебхука и поллинга); WAL + busy_timeout —
+    # см. тот же приём и объяснение в store.open_db()
+    db.execute("PRAGMA journal_mode=WAL")
+    db.execute("PRAGMA busy_timeout=10000")
     db.execute("CREATE TABLE IF NOT EXISTS seen (kind TEXT, id TEXT, PRIMARY KEY (kind, id))")
     db.execute("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT)")
     db.commit()

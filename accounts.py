@@ -58,10 +58,32 @@ def load(owner=None) -> list[dict]:
 NO_CABINET = "—"    # для счетов, у которых кабинет ещё не указан
 
 
+def dedup(accs: list[dict]) -> list[dict]:
+    """Один и тот же логин+сервер у ОДНОГО владельца — один раз, первое
+    вхождение побеждает. Ключ включает owner: гостевая копия счёта (тот же
+    логин, другой владелец — это share(), легитимный сценарий) не должна
+    схлопываться с оригиналом при дедупликации across всех пользователей.
+
+    add() теперь не даёт завести дубликат заново, но старые данные (счёт,
+    заведённый дважды до этой проверки) и суммирование в дашборде/сводке
+    кабинета всё ещё должны быть защищены — иначе капитал и профит по нему
+    задваиваются молча.
+    """
+    seen: set = set()
+    out = []
+    for a in accs:
+        key = (str(a["owner"]), int(a["login"]), a.get("server") or "")
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(a)
+    return out
+
+
 def cabinets(owner) -> dict[str, dict]:
     """Кабинеты пользователя: {customer_no: {holder, accounts:[...]}}."""
     out: dict[str, dict] = {}
-    for acc in load(owner):
+    for acc in dedup(load(owner)):
         key = acc.get("cabinet") or NO_CABINET
         group = out.setdefault(key, {"holder": acc.get("holder", ""), "accounts": []})
         if acc.get("holder") and not group["holder"]:
@@ -153,6 +175,15 @@ def save(data: list[dict]) -> None:
 def add(acc: dict) -> None:
     if by_name(acc["name"], acc["owner"]):
         raise ValueError(f"счёт с именем {acc['name']} у тебя уже есть")
+    # один и тот же логин+сервер дважды у одного владельца — задваивает
+    # капитал и профит в сводке кабинета и на дашборде (они суммируют счета
+    # без дедупликации по логину, в отличие от partner.cabinet_state).
+    # У гостя копия того же логина — это нормально, он другой owner, поэтому
+    # сравниваем только среди счетов ЭТОГО владельца
+    dup = next((a for a in load(acc["owner"]) if int(a["login"]) == int(acc["login"])
+               and (a.get("server") or "") == (acc.get("server") or "")), None)
+    if dup:
+        raise ValueError(f"этот счёт уже добавлен как «{dup['name']}»")
     if acc.get("strategy") and strategy_taken(acc["owner"], acc.get("holder"),
                                               acc["strategy"]):
         raise ValueError(f"у {acc.get('holder') or 'этого владельца'} уже есть "
