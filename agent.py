@@ -215,19 +215,24 @@ def _remote_commit() -> str | None:
 
 
 def _remote_commit_host(commit: str) -> str | None:
-    """Значение Origin-Host: из тела коммита, если он его содержит.
+    """Значение Origin-Host: из трейлера коммита, если он его содержит.
 
     Коммит с этой машины (и с той, что сейчас его сделала) несёт свой
     hostname в trailer'е — так агент отличает «это мой пуш, обновляюсь
     сразу» от «пуш пришёл откуда-то ещё, жду обычную канареечную задержку».
     Коммит без такой строки (например, сделанный не через это соглашение)
     просто не даёт немедленного пути — обычная задержка применится и тут.
+
+    Ищем только в последнем абзаце (трейлеры всегда там, без пустых строк
+    внутри) — иначе revert/cherry-pick/цитата чужого коммита в теле подставили
+    бы чужой hostname, и не та машина обновилась бы без всякой обкатки.
     """
     try:
         msg = _run_git("log", "-1", "--format=%B", commit)
     except Exception:
         return None
-    for line in msg.splitlines():
+    trailer = msg.strip().split("\n\n")[-1]
+    for line in trailer.splitlines():
         if line.startswith("Origin-Host:"):
             return line.split(":", 1)[1].strip()
     return None
@@ -280,13 +285,20 @@ def send_heartbeat() -> None:
 def check_for_update(lock: socket.socket) -> None:
     """Раз в UPDATE_CHECK_EVERY проверяет GitHub и обновляется, если можно.
 
-    Задержка привязана не к роли primary/standby (торговый failover — это
-    про то, кто сейчас опрашивает терминал), а к тому, ОТКУДА пришёл коммит:
-    машина, с которой его запушили (Origin-Host в теле коммита совпадает с
-    её hostname), обновляется сразу — её только что явно попросили это
-    сделать. Любая другая машина всегда ждёт CANARY_DELAY, независимо от
-    того, primary она или standby: обкатка нужна именно на «не той», что
-    только что стала источником изменения.
+    Три пути, по возрастанию осторожности:
+    1. Машина, с которой коммит запушили (Origin-Host в трейлере коммита
+       совпадает с её hostname), обновляется сразу — её только что явно
+       попросили это сделать.
+    2. standby не держит терминал (просто ждёт молча или шлёт heartbeat) —
+       обновляется сразу же следом, без задержки: рисковать нечем, а кто-то
+       ведь должен реально погонять новый код, прежде чем на него перейдёт
+       primary.
+    3. primary (не источник) ждёт CANARY_DELAY секунд, за которые standby
+       должен отчитаться о работе именно на этом коммите без сбоев — только
+       так у canary_age вообще появляется ненулевое значение. Раньше все
+       не-standby и не-источники ждали одинаково, и коммит с третьей машины
+       (не primary и не standby) не мог обновить никого: некому было стать
+       канарейкой первым — дедлок.
 
     Не поднимаем tools/keeper.ps1 самостоятельно: перезапуск через новый
     процесс + выход из этого — сторож (если настроен) просто увидит живой
@@ -303,6 +315,12 @@ def check_for_update(lock: socket.socket) -> None:
 
     if _remote_commit_host(remote) == socket.gethostname():
         log.info("это моя машина запушила %s -> %s — обновляюсь сразу, без задержки",
+                 local[:8], remote[:8])
+        _self_update_and_restart(lock, remote)
+        return
+
+    if ROLE == "standby":
+        log.info("резерв: коммит %s -> %s — обновляюсь сразу, терминал не держу",
                  local[:8], remote[:8])
         _self_update_and_restart(lock, remote)
         return
@@ -721,6 +739,7 @@ def main():
     # или None->True->False, а не на самом первом определении роли: обычный
     # старт standby — это не авария, тревожить незачем
     standing_by = None
+    took_over = False   # резерв реально включался — обратно в ожидание больше не переходит
     gaming_paused = False
     last_env_sync = 0.0
     last_update_check = 0.0
@@ -752,7 +771,13 @@ def main():
             report_canary(canary_commit)
             last_canary_report = time.monotonic()
 
-        if ROLE == "standby" and server_alive():
+        # took_over: как только резерв реально взял управление, обратно не
+        # оглядываемся. server_alive() смотрит на sync_seconds_ago по ВСЕМ
+        # машинам без разбора, чей это синк — а раз мы сами теперь синкуем
+        # каждый круг, он всегда видит «кто-то жив только что» и без этой
+        # защёлки резерв включался и выключался бы каждые ~STANDBY_TIMEOUT
+        # секунд, дублируя уведомления о смене роли и синкуя реже, чем надо.
+        if ROLE == "standby" and not took_over and server_alive():
             if standing_by is not True:
                 log.info("резерв: синк идёт с другой машины, жду молча")
                 if standing_by is False:      # реальный переход, не первый запуск
@@ -762,8 +787,10 @@ def main():
             time.sleep(INTERVAL)
             continue
         if standing_by is True:
-            log.warning("резерв: синк отовсюду пропал (>%d с) — включаюсь", STANDBY_TIMEOUT)
+            log.warning("резерв: синк отовсюду пропал (>%d с) — включаюсь насовсем "
+                       "(до перезапуска)", STANDBY_TIMEOUT)
             notify_role_change("active")
+            took_over = True
         standing_by = False
 
         # игра в полноэкранном фокусе (или другая тяжёлая нагрузка) — терминал
