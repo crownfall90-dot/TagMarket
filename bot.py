@@ -658,14 +658,21 @@ def link_buttons(link: str, inline_ok: bool = False) -> list[InlineKeyboardButto
            InlineKeyboardButton(text="↗️ Переслать", url=share)]
 
 
-def guests_view(db, owner) -> tuple[str, InlineKeyboardMarkup]:
-    """Кого пустил владелец ссылок: когда зашли и кнопка убрать доступ."""
-    rows, lines = [], []
+def guests_of(db, owner) -> list[tuple[str, str]]:
+    """Кого владелец пустил по своим ссылкам: [(uid, имя)], активных сейчас."""
+    out = []
     for key in kv_keys(db, "guest:%"):
         uid = key.split(":", 1)[1]
         if kv_get(db, key) != "1" or str(kv_get(db, f"guest_by:{uid}")) != str(owner):
             continue
-        who = kv_get(db, f"guest_name:{uid}") or uid
+        out.append((uid, kv_get(db, f"guest_name:{uid}") or uid))
+    return out
+
+
+def guests_view(db, owner) -> tuple[str, InlineKeyboardMarkup]:
+    """Кого пустил владелец ссылок: когда зашли и кнопка убрать доступ."""
+    rows, lines = [], []
+    for uid, who in guests_of(db, owner):
         since = when_joined(db, uid)
         mine = len(accounts.load(uid))
         lines.append(f"<b>{html.escape(who)}</b> · счетов {mine}"
@@ -688,6 +695,34 @@ def when_joined(db, uid) -> str:
     except ValueError:
         return raw[:10]
     return f"{d:%d.%m.%Y} в {d:%H:%M}"
+
+
+def _guest_money_lines(db, uid, indent: str = "", seen: set = None,
+                       exclude_logins: frozenset = frozenset()) -> list[str]:
+    """Свои счета этого гостя (капитал+накопленный профит, как на дашборде) и
+    рекурсивно — то же самое для его собственных гостей, если он тоже кого-то
+    пригласил. seen защищает от цикла, если данные когда-нибудь испортятся.
+    """
+    seen = seen if seen is not None else set()
+    if uid in seen:
+        return []
+    seen.add(uid)
+    lines = []
+    for a in accounts.load(uid):
+        if int(a["login"]) in exclude_logins:
+            continue
+        label = html.escape(a.get("strategy") or a["name"])
+        if connect(a):
+            total = trades.capital() + trades.retained()
+            lines.append(f"{indent}• {label} — <b>{trades.amount(total, trades.currency())}</b>")
+        else:
+            lines.append(f"{indent}• {label} — <i>нет данных</i>")
+    for sub_uid, sub_name in guests_of(db, uid):
+        sub_lines = _guest_money_lines(db, sub_uid, indent + "    ", seen)
+        if sub_lines:
+            lines.append(f"{indent}👤 <i>{html.escape(sub_name)}</i>")
+            lines.extend(sub_lines)
+    return lines
 
 
 def guest_view(db, owner, uid) -> tuple[str, InlineKeyboardMarkup]:
@@ -723,14 +758,12 @@ def guest_view(db, owner, uid) -> tuple[str, InlineKeyboardMarkup]:
                 callback_data=f"cfg:takeall:{uid}:{accs[0]['cabinet'] or accounts.NO_CABINET}")])
     body = "\n\n".join(lines) if lines else "<i>Моих счетов у него нет.</i>"
 
-    # его собственные счета — только названия, для понимания картины. Ни цифр,
-    # ни кнопок: это чужие деньги, мы к ним отношения не имеем
-    his_own = [a for a in accounts.load(uid) if int(a["login"]) not in mine]
-    if his_own:
-        own = ", ".join(html.escape(a.get("strategy") or a["name"]) for a in his_own)
-        body += (f"\n\n<b>Свои счета гостя</b> <i>({len(his_own)})</i>\n"
-                 f"<blockquote>{own}\n"
-                 f"<i>только названия — доступа к ним нет</i></blockquote>")
+    # его собственные счета — капитал + накопленный профит, и рекурсивно то же
+    # самое у его гостей (если он тоже кого-то пригласил). Кнопок нет: это
+    # чужие деньги, забрать их нельзя, только смотреть картину целиком
+    money_lines = _guest_money_lines(db, uid, exclude_logins=frozenset(mine))
+    if money_lines:
+        body += f"\n\n<b>Свои счета гостя</b>\n{trades.quote(money_lines)}"
 
     rows.append([InlineKeyboardButton(text="🚪 Убрать доступ совсем",
                                       callback_data=f"cfg:guestkill:{uid}")])
