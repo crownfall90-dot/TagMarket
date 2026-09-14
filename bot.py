@@ -879,7 +879,8 @@ def build_all(name: str, owner=None, cabinet: str = None) -> str:
     # профит — величина «на сейчас». Рядом с прошлой неделей или месяцем он
     # читался бы как профит того периода, чем он не является
     now_view = name == "today"
-    scope = accounts.in_cabinet(owner, cabinet) if cabinet else accounts.load(owner)
+    scope = accounts.dedup(accounts.in_cabinet(owner, cabinet) if cabinet
+                          else accounts.load(owner))
     for acc in scope:
         label = short_name(acc, cabinet)
         if not connect(acc):
@@ -1041,7 +1042,7 @@ async def poll_portal(session, bot: Bot, db, chat_id: str) -> int:
 async def poll_mt5(bot: Bot, db) -> int:
     """Обходит счета всех пользователей: каждому уходят только его сделки."""
     sent = 0
-    for acc in accounts.load():
+    for acc in accounts.dedup(accounts.load()):
         owner = acc["owner"]
         if not acc.get("enabled", True):
             continue
@@ -2106,7 +2107,7 @@ async def main():
                     # рвётся связь сразу по всем — предупреждаем один раз, а не
                     # отдельным сообщением на каждый счёт
                     watched = defaultdict(list)
-                    for acc in accounts.load():
+                    for acc in accounts.dedup(accounts.load()):
                         if not acc.get("enabled", True):
                             continue
                         st = store.get_state(sdb, acc["login"])
