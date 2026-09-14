@@ -2322,8 +2322,10 @@ async def main():
         asyncio.create_task(terminal_watchdog())
         asyncio.create_task(machines_watchdog())
         asyncio.create_task(mt5_loop())
-        asyncio.create_task(loop(lambda: poll_portal(session, bot, db, chat_id),
-                                 POLL_SECONDS, "кабинет"))
+        # кабинет IB Portal временно не опрашиваем — токен просрочен, а новый
+        # брать пока не нужно: без этого только пропадает лента уведомлений
+        # о лидах/депозитах партнёрской сети, счета и баланс кошелька не
+        # затронуты — это отдельный механизм (вебхуки депозитов)
         await dp.start_polling(bot)
 
 
