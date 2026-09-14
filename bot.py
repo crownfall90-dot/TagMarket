@@ -1165,7 +1165,6 @@ class AddAcc(StatesGroup):
     name = State()
     login = State()
     password = State()
-    server = State()
 
 
 class Rename(StatesGroup):
@@ -1178,11 +1177,6 @@ class Invite(StatesGroup):
 
 CANCEL = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="Отмена", callback_data="cancel")]])
-
-SERVER_KB = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text=DEFAULT_SERVER, callback_data="server:default")],
-    [InlineKeyboardButton(text="Отмена", callback_data="cancel")]])
-
 
 async def finish_add(bot: Bot, chat_id, owner, data: dict) -> str:
     """Сохраняет счёт и проверяет, что в него удаётся войти."""
@@ -1940,29 +1934,16 @@ async def main():
 
     @dp.message(AddAcc.password)
     async def add_password(msg: Message, state: FSMContext):
-        await state.update_data(password=msg.text.strip(), pwd_msg=msg.message_id)
-        await state.set_state(AddAcc.server)
-        await msg.answer("Торговый сервер? Нажми кнопку или впиши другой.",
-                         reply_markup=SERVER_KB)
-
-    async def do_add(msg_chat_id, owner, state: FSMContext, server: str):
-        data = await state.get_data()
+        # сервер у нас один — не переспрашиваем, сразу подключаем к нему
+        data = {**(await state.get_data()), "password": msg.text.strip(),
+                "server": DEFAULT_SERVER}
         await state.clear()
         try:    # пароль убираем из истории чата
-            await bot.delete_message(msg_chat_id, data["pwd_msg"])
+            await bot.delete_message(msg.chat.id, msg.message_id)
         except Exception:
             pass
-        text = await finish_add(bot, msg_chat_id, owner, {**data, "server": server})
-        await send(bot, msg_chat_id, text, menu("today", owner=owner))
-
-    @dp.callback_query(F.data == "server:default", AddAcc.server)
-    async def add_server_default(cb: CallbackQuery, state: FSMContext):
-        await cb.answer()
-        await do_add(cb.message.chat.id, cb.from_user.id, state, DEFAULT_SERVER)
-
-    @dp.message(AddAcc.server)
-    async def add_server(msg: Message, state: FSMContext):
-        await do_add(msg.chat.id, msg.from_user.id, state, msg.text.strip())
+        text = await finish_add(bot, msg.chat.id, msg.from_user.id, data)
+        await send(bot, msg.chat.id, text, menu("today", owner=msg.from_user.id))
 
     @dp.message(Command("accounts"))
     async def accounts_cmd(msg: Message):
