@@ -2073,7 +2073,8 @@ async def main():
                         keep = trades.clock().replace(day=1).strftime("%Y-%m-01")
                         removed = store.rollup(store.open_db(), keep, trades.is_transfer,
                                                trades.is_perf_fee, month_growth,
-                                               trades.is_profit_side)
+                                               trades.is_profit_side,
+                                               trades.REPORT_FROM.isoformat())
                         if removed:
                             log.info("свернул прошлые месяцы, убрано сделок: %d", removed)
                 except Exception:

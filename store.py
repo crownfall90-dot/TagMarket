@@ -184,7 +184,7 @@ def last_ticket(db, login: int) -> int:
 
 
 def rollup(db, keep_from: str, is_transfer, is_perf_fee=None, growth_of=None,
-          is_profit_side=None) -> int:
+          is_profit_side=None, report_from: str = None) -> int:
     """Свернуть сделки старше keep_from ('YYYY-MM-01') в месячные итоги.
 
     Признак перевода живёт в комментарии сделки, поэтому считаем в Python той
@@ -202,6 +202,13 @@ def rollup(db, keep_from: str, is_transfer, is_perf_fee=None, growth_of=None,
     если агент офлайн — без него нераспределённый профит закрытых месяцев
     становился невидим сразу после первой же свёртки (не только «до первого
     ответа агента», а навсегда, потому что деталей сделок уже нет).
+
+    report_from — та же отсечка, что и в trades.REPORT_FROM: живой
+    _profit_on_account() считает профит только с неё, а keep_from (граница
+    свёртки) может быть заметно раньше (HISTORY_FROM у агента). Без этого
+    параметра profit_carry заранее включал бы профит месяцев ДО отсечки, и
+    в день, когда такой месяц наконец сворачивается, _profit_on_account()
+    скачком менялся бы на его PnL без единой сделки на счёте.
     """
     totals: dict = {}
     months_rows: dict = {}      # сделки месяца — по ним считается доходность
@@ -216,6 +223,7 @@ def rollup(db, keep_from: str, is_transfer, is_perf_fee=None, growth_of=None,
                                       "wins": 0, "losses": 0, "best": 0.0,
                                       "worst": 0.0, "volume": 0.0})
         net = row["net"] or 0.0
+        counts_as_profit = report_from is None or row["time"] >= report_from
         if row["is_closing"]:
             acc["trades"] += 1
             acc["gross"] += net
@@ -226,17 +234,20 @@ def rollup(db, keep_from: str, is_transfer, is_perf_fee=None, growth_of=None,
                 acc["losses"] += 1
             acc["best"] = max(acc["best"], net)
             acc["worst"] = min(acc["worst"], net)
-            profit_delta[row["login"]] = profit_delta.get(row["login"], 0.0) + net
+            if counts_as_profit:
+                profit_delta[row["login"]] = profit_delta.get(row["login"], 0.0) + net
         elif row["is_balance"]:
             if is_perf_fee and is_perf_fee(row):
                 # удержание доли брокера уже учтено в net_of_fee — иначе двойной счёт
-                profit_delta[row["login"]] = profit_delta.get(row["login"], 0.0) + net
+                if counts_as_profit:
+                    profit_delta[row["login"]] = profit_delta.get(row["login"], 0.0) + net
             elif is_transfer(row):
                 acc["transfers"] += net
                 if net > 0:
                     acc["deposits"] += net
                 if is_profit_side and is_profit_side(row):
-                    profit_delta[row["login"]] = profit_delta.get(row["login"], 0.0) + net
+                    if counts_as_profit:
+                        profit_delta[row["login"]] = profit_delta.get(row["login"], 0.0) + net
                 else:
                     # только капитал — эту сумму (и только её) можно потом
                     # делить на плечо при реконструкции капитала из архива
