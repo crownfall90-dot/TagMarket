@@ -314,10 +314,12 @@ def send_heartbeat() -> None:
 
     Без этого сервер не знал бы hostname машины, которая просто молча
     стоит наготове — machines_watchdog в bot.py не увидел бы её вовсе.
+    Роль (ROLE) шлём тоже — так сервер знает, какой hostname «ноутбук»,
+    а какой «компьютер», не храня список машин в своих настройках.
     """
     try:
         requests.post(f"{SERVER}/agent/heartbeat",
-                      json={"host": socket.gethostname()},
+                      json={"host": socket.gethostname(), "role": ROLE},
                       headers={"X-Token": TOKEN}, timeout=15)
     except Exception as e:
         log.warning("не отправил heartbeat: %s", e)
@@ -433,6 +435,7 @@ def _self_update_and_restart(lock: socket.socket, target_commit: str) -> None:
         log.error("новый процесс сразу завершился (код %s) — остаюсь на старом коде "
                   "до ручного разбора", proc.poll())
         return
+    notify_update(target_commit)
     lock.close()
     log.info("новый процесс запущен и жив, этот завершается")
     sys.exit(0)
@@ -530,6 +533,19 @@ def notify_role_change(became: str) -> None:
         log.warning("не сообщил серверу о смене роли: %s", e)
 
 
+def notify_update(commit: str) -> None:
+    """Сообщить серверу, что эта машина подтянула новый код и перезапустилась.
+
+    Сервер сам решает, слать ли это основателю в Telegram (настройка
+    update_alerts в боте) — агенту про неё знать не нужно."""
+    try:
+        requests.post(f"{SERVER}/agent/update_notify",
+                      json={"host": socket.gethostname(), "commit": commit},
+                      headers={"X-Token": TOKEN}, timeout=15)
+    except Exception as e:
+        log.warning("не сообщил серверу об обновлении: %s", e)
+
+
 def fetch_accounts() -> list[dict]:
     r = requests.get(f"{SERVER}/agent/accounts", headers={"X-Token": TOKEN}, timeout=30)
     r.raise_for_status()
@@ -589,11 +605,8 @@ def collect(acc: dict) -> dict:
         "server": info.server,
         "deals": [{**d, "time": d["time"].isoformat()} for d in deals],
         "command_done": done,       # сервер снимет команду после выполнения
-        # "host" пока не шлём: на сервере ещё старый webhook_server.py, который
-        # не ждёт это поле и падает 500-й на каждый /agent/sync (проверено
-        # напрямую: тот же payload без host отвечает 200). У сервера нет
-        # автодеплоя (в отличие от агентов), поэтому рассинхрон код/сервер тут
-        # не самообновится сам — вернуть после ручного деплоя на VPS.
+        "host": socket.gethostname(),
+        "role": ROLE,
     }
 
 

@@ -396,6 +396,17 @@ def link_alerts_on(db, owner) -> bool:
     return kv_get(db, f"link_alerts:{owner}") == "1"
 
 
+def update_alerts_on(db) -> bool:
+    """Слать ли основателю сообщение, когда агентская машина подтянула новый
+    код и перезапустилась. Только для основателя — остальным это неважно,
+    поэтому настройка не привязана к owner, как link_alerts.
+
+    По умолчанию включено: в отличие от разрывов связи (шумных и ночных),
+    обновление кода — редкое и всегда достойное внимания событие.
+    """
+    return kv_get(db, "update_alerts") != "0"
+
+
 def settings_menu(owner, db=None) -> tuple[str, InlineKeyboardMarkup]:
     accs = accounts.load(owner)
     if not accs:
@@ -416,6 +427,11 @@ def settings_menu(owner, db=None) -> tuple[str, InlineKeyboardMarkup]:
     rows.append([InlineKeyboardButton(
         text=("📡 Связь с MT5: сообщать" if on else "📡 Связь с MT5: молчать"),
         callback_data="cfg:link")])
+    if is_founder(owner) and db is not None:
+        upd_on = update_alerts_on(db)
+        rows.append([InlineKeyboardButton(
+            text=("🔄 Обновления агента: сообщать" if upd_on else "🔄 Обновления агента: молчать"),
+            callback_data="cfg:update_alerts")])
     rows.append([InlineKeyboardButton(text="↩︎ Назад", callback_data="dash")])
     text = ("⚙︎ <b>Настройки</b>\n" + trades.THIN +
             "\nВыбери аккаунт — внутри его счета.\n"
@@ -1712,6 +1728,16 @@ async def main():
         await cb.answer("Буду сообщать о связи" if now_on else "Про связь молчу")
         await swap(cb, *settings_menu(cb.from_user.id, db))
 
+    @dp.callback_query(F.data == "cfg:update_alerts")
+    async def cfg_update_alerts(cb: CallbackQuery):
+        if not is_founder(cb.from_user.id):
+            await cb.answer()
+            return
+        now_on = not update_alerts_on(db)
+        kv_set(db, "update_alerts", "1" if now_on else "0")
+        await cb.answer("Буду сообщать об обновлениях" if now_on else "Про обновления молчу")
+        await swap(cb, *settings_menu(cb.from_user.id, db))
+
     @dp.callback_query(F.data == "cfg:guests")
     async def cfg_guests(cb: CallbackQuery):
         await cb.answer()
@@ -2208,18 +2234,31 @@ async def main():
                         log.error("перезапускаюсь ради выбора рабочего прокси")
                         os._exit(1)     # именно так: обычный выход задачу не убьёт
 
+        def _machine_label(host: str, role: str | None) -> str:
+            """Человеку — «основная машина (ноутбук)», а не голый hostname."""
+            if role == "primary":
+                return f"основная машина ({host})"
+            if role == "standby":
+                return f"резервная машина ({host})"
+            return host
+
         async def machines_watchdog():
-            """Сколько агентских машин сейчас на связи — уведомляем при смене.
+            """Какая машина реально опрашивает терминал — уведомляем при смене.
 
             Обе (или единственная) машины держат свой ключ machine_seen:<host>
-            свежим: активная — через agent/sync (каждый круг синка), резервная
-            через agent/heartbeat. Само переключение primary<->standby уже
-            освещает agent_role_change; здесь — более общая картина «сколько
-            машин вообще откликается», включая обе разом пропавшие или обе
-            разом появившиеся, которые role_change в принципе не видит: он
-            срабатывает только на переходе резерва между ожиданием и работой.
+            свежим: активная — через agent/sync (каждый круг синка, вместе с
+            active_machine и своей ролью), резервная — через agent/heartbeat
+            (тоже с ролью). Отслеживаем именно то, что важно человеку:
+              • primary ожила одна (обычный рабочий старт) — сообщить один раз
+              • primary и standby живы одновременно — штатно, молчим
+              • та машина, что реально опрашивала терминал, пропала, и опрос
+                перехватила другая — «переключение: A → B», в обе стороны
+              • обе пропали — тревога, терминал никто не опрашивает
+            Молчим на первом круге после старта бота: это не смена состояния,
+            а просто первое наблюдение.
             """
-            last_alive_count = None
+            last_active = "unset"      # "unset" — ещё не видели ни одного круга
+            last_alive: set[str] = set()
             while True:
                 await asyncio.sleep(MACHINES_CHECK_SECONDS)
                 try:
@@ -2239,25 +2278,47 @@ async def main():
                             log.warning("machines_watchdog: не разобрал метку времени %s=%r", key, seen)
                             continue
                         hosts[host] = age < MACHINE_STALE
-                    alive = sorted(h for h, ok in hosts.items() if ok)
-                    count = len(alive)
-                    if last_alive_count is None:
-                        last_alive_count = count      # первый круг — не тревога, просто запомнили
+                    alive = {h for h, ok in hosts.items() if ok}
+
+                    active_raw = kv_get(db, "active_machine")
+                    # active_machine пишется agent_sync и переживает саму машину:
+                    # если хост из этого поля сейчас не в alive, опрос реально
+                    # прервался, даже если запись ещё не протухла
+                    active = active_raw if active_raw in alive else None
+
+                    if last_active == "unset":
+                        # первый круг — не тревога, просто запоминаем стартовую картину
+                        last_active, last_alive = active, alive
                         continue
-                    if count == last_alive_count:
-                        continue
-                    total = len(hosts) or 1
-                    if count == 0:
-                        text = (f"🔴 <b>Все агентские машины офлайн</b>\n{trades.THIN}\n"
-                               f"Терминал никто не опрашивает — данные перестали обновляться.")
-                    elif count < last_alive_count:
-                        text = (f"🟡 <b>{alive[0] if alive else '?'} — единственная на связи</b>\n"
-                               f"{trades.THIN}\nОсталось {count} из {total} машин.")
-                    else:
-                        text = (f"🟢 <b>Связь восстановлена: {count} из {total} машин</b>\n"
-                               f"{trades.THIN}\n{', '.join(alive)}")
-                    await send(bot, chat_id, text)
-                    last_alive_count = count
+
+                    if not alive:
+                        if last_alive:      # сообщаем один раз, не на каждом круге
+                            text = (f"🔴 <b>Все агентские машины офлайн</b>\n{trades.THIN}\n"
+                                   f"Терминал никто не опрашивает — данные перестали обновляться.")
+                            await send(bot, chat_id, text)
+                    elif active != last_active:
+                        # роль конкретного хоста читаем из KV напрямую, а не из
+                        # словаря по alive — last_active мог только что пропасть
+                        # из живых и всё равно должен подписаться правильно
+                        if active and last_active:
+                            # опрос реально перешёл с одной машины на другую
+                            frm = _machine_label(last_active, kv_get(db, f"machine_role:{last_active}"))
+                            to = _machine_label(active, kv_get(db, f"machine_role:{active}"))
+                            text = (f"🔀 <b>Переключение машин</b>\n{trades.THIN}\n"
+                                   f"Опрос терминала перешёл: <b>{frm}</b> → <b>{to}</b>.")
+                            await send(bot, chat_id, text)
+                        elif active and not last_alive:
+                            # раньше не было ни одной машины на связи — теперь
+                            # опрос пошёл, это отдельно от «переключения»
+                            label = _machine_label(active, kv_get(db, f"machine_role:{active}"))
+                            text = (f"🟢 <b>{label.capitalize()} включена</b>\n{trades.THIN}\n"
+                                   f"Опрос терминала возобновлён.")
+                            await send(bot, chat_id, text)
+                    # primary и standby одновременно живы, opros не менялся —
+                    # штатная картина, молчим; так же молчим, если появилась/
+                    # пропала только резервная машина, пока опрос не менялся
+
+                    last_active, last_alive = active, alive
                 except Exception:
                     log.exception("сбой наблюдения за агентскими машинами")
 

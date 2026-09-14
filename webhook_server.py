@@ -273,9 +273,12 @@ async def agent_accounts(request):
 async def agent_role_change(request):
     """Агентская машина сообщила о смене роли (резерв включился/выключился).
 
-    Сама рассылка через notify() живёт здесь, а не на агенте: у него нет и
-    не должно быть токена Telegram-бота на клиентской машине, а сервер его
-    уже держит для всех остальных уведомлений.
+    Уведомление в Telegram сюда не входит — machines_watchdog в bot.py уже
+    следит за active_machine и шлёт более точный текст (с учётом роли обеих
+    машин, а не только «резерв»/«не резерв»); дублировать его тут значило бы
+    слать два сообщения об одном и том же событии. Этот эндпоинт только
+    держит active_machine актуальным на случай, если standby включился без
+    очередного agent_sync (тот тоже пишет active_machine, но не сразу).
     """
     check_token(request)
     data = await request.json()
@@ -284,17 +287,32 @@ async def agent_role_change(request):
     db = request.app["db"]
     if became == "active":
         partner.kv_set(db, "active_machine", host)
-        text = (f"🔀 <b>Резерв подключился</b>\n{partner.THIN}\n"
-               f"<b>{host}</b> взял на себя опрос терминала — "
-               f"основная машина не отвечала.")
-    elif became == "standby":
-        text = (f"🔀 <b>Резерв отключился</b>\n{partner.THIN}\n"
-               f"<b>{host}</b> увидел, что основная машина снова на связи, "
-               f"и вернулся в ожидание.")
-    else:
+    elif became != "standby":
         return web.json_response({"ok": False, "error": "bad became"}, status=400)
-    asyncio.create_task(notify(request.app, text))
     log.info("смена роли: %s -> %s", host, became)
+    return web.json_response({"ok": True})
+
+
+async def agent_update_notify(request):
+    """Агентская машина только что подтянула новый код и перезапустилась.
+
+    Уведомление идёт только основателю (notify() шлёт на TELEGRAM_CHAT_ID —
+    личный чат оператора, не общий канал) и только если он не отключил его
+    в настройках бота (update_alerts, по умолчанию включено). Настройка
+    хранится в KV без привязки к владельцу счёта — она про машины, а не
+    про чьи-то счета, и видна в боте только основателю.
+    """
+    check_token(request)
+    data = await request.json()
+    host = str(data.get("host") or "неизвестная машина")
+    commit = str(data.get("commit") or "")[:8]
+    db = request.app["db"]
+    if partner.kv_get(db, "update_alerts") != "0":
+        text = (f"🔄 <b>Агент обновился</b>\n{partner.THIN}\n"
+               f"<b>{host}</b> подтянул новый код"
+               + (f" ({commit})" if commit else "") + " и перезапустился.")
+        asyncio.create_task(notify(request.app, text))
+    log.info("агент обновился: %s -> %s", host, commit or "?")
     return web.json_response({"ok": True})
 
 
@@ -349,6 +367,9 @@ async def agent_heartbeat(request):
         return web.json_response({"ok": False}, status=400)
     db = request.app["db"]
     partner.kv_set(db, f"machine_seen:{host}", utcnow().isoformat())
+    role = str(data.get("role") or "").strip().lower()
+    if role in ("primary", "standby"):
+        partner.kv_set(db, f"machine_role:{host}", role)
     return web.json_response({"ok": True})
 
 
@@ -422,9 +443,17 @@ async def agent_sync(request):
     host = data.get("host")
     if host:
         # какая машина реально опрашивает терминал прямо сейчас — для
-        # /agent/machines_status и для текста в agent_role_change
-        partner.kv_set(db, "active_machine", host)
-        partner.kv_set(db, f"machine_seen:{host}", utcnow().isoformat())
+        # /agent/machines_status и machines_watchdog в bot.py. ВАЖНО: kv-таблица
+        # живёт в app["db"] (partner.open_db), а не в app["trades"] (store.open_db,
+        # только сделки/состояние счетов, без таблицы kv вообще) — локальная
+        # `db` выше в этой функции указывает на trades, использовать её здесь
+        # означало бы падать с "no such table: kv" на каждый вызов с host
+        kvdb = request.app["db"]
+        partner.kv_set(kvdb, "active_machine", host)
+        partner.kv_set(kvdb, f"machine_seen:{host}", utcnow().isoformat())
+        role = str(data.get("role") or "").strip().lower()
+        if role in ("primary", "standby"):
+            partner.kv_set(kvdb, f"machine_role:{host}", role)
     return web.json_response({"ok": True, "new": new})
 
 
@@ -446,6 +475,7 @@ async def main():
     app.router.add_get("/agent/env", agent_env)
     app.router.add_post("/agent/sync", agent_sync)
     app.router.add_post("/agent/role_change", agent_role_change)
+    app.router.add_post("/agent/update_notify", agent_update_notify)
     app.router.add_post("/agent/update_report", agent_update_report)
     app.router.add_get("/agent/update_status", agent_update_status)
     app.router.add_post("/agent/heartbeat", agent_heartbeat)
