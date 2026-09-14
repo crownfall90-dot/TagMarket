@@ -33,6 +33,7 @@ primary ждёт, пока тот же коммит не проходит CANARY
 import logging
 import logging.handlers
 import os
+import re
 import socket
 import sys
 import time
@@ -96,10 +97,21 @@ INTERVAL = int(os.getenv("AGENT_INTERVAL", 15))
 # храним историю с этой даты — старое на сервере не нужно и только занимает место
 HISTORY_FROM = datetime.fromisoformat(os.getenv("HISTORY_FROM", "2026-06-01"))
 LOCK_PORT = int(os.getenv("AGENT_LOCK_PORT", 47653))    # признак «агент уже работает»
-# отметка «последняя успешная связь с терминалом» — её читает сторож keeper.ps1
-# на ПК: если отметке ≥3 минут или процесса нет, сторож перезапускает агента
-# (раньше, чем на 5-й минуте сработает уведомление сервера)
+# отметка «главный цикл жив» — её читает сторож keeper.ps1 на ПК: если
+# отметке ≥3 минут или процесса нет, сторож перезапускает агента (раньше,
+# чем на 5-й минуте сработает уведомление сервера). Обновляется и когда
+# терминал реально опрошен, и когда цикл осознанно его не трогает (резерв
+# ждёт, полноэкранная игра в фокусе) — иначе сторож принимал бы штатную
+# паузу за зависший процесс и убивал агента прямо посреди неё
 BEAT = os.path.join(ROOT, "data", "agent.beat")
+
+
+def _touch_beat() -> None:
+    try:
+        with open(BEAT, "w", encoding="utf-8") as f:
+            f.write(utcnow().isoformat())
+    except Exception as e:
+        log.warning("не записал отметку: %s", e)
 
 ROLE = os.getenv("AGENT_ROLE", "primary").strip().lower()
 # ощутимо больше цикла синка (по умолчанию 15с) — короткая сетевая заминка
@@ -241,16 +253,27 @@ def _remote_commit_host(commit: str) -> str | None:
     Коммит без такой строки (например, сделанный не через это соглашение)
     просто не даёт немедленного пути — обычная задержка применится и тут.
 
-    Ищем только в последнем абзаце (трейлеры всегда там, без пустых строк
-    внутри) — иначе revert/cherry-pick/цитата чужого коммита в теле подставили
-    бы чужой hostname, и не та машина обновилась бы без всякой обкатки.
+    Ищем только в трейлере — иначе revert/cherry-pick/цитата чужого коммита
+    в теле подставили бы чужой hostname, и не та машина обновилась бы без
+    всякой обкатки. Трейлер — это последние строки, которые выглядят как
+    "Key: value"; идём с конца сообщения и останавливаемся на первой строке,
+    что не похожа на трейлер. Пустая строка сама по себе не обрывает поиск —
+    Co-Authored-By пишется отдельным абзацем от Origin-Host, и разбивка по
+    "\n\n" на последний абзац теряла Origin-Host целиком.
     """
     try:
         msg = _run_git("log", "-1", "--format=%B", commit)
     except Exception:
         return None
-    trailer = msg.strip().split("\n\n")[-1]
-    for line in trailer.splitlines():
+    trailer_re = re.compile(r"^[A-Za-z][A-Za-z0-9-]*:\s")
+    trailer_lines = []
+    for line in reversed(msg.rstrip().splitlines()):
+        if not line.strip():
+            continue                # пустая строка внутри трейлера — не обрыв
+        if not trailer_re.match(line):
+            break                   # первая не-трейлерная строка — конец области
+        trailer_lines.append(line)
+    for line in trailer_lines:
         if line.startswith("Origin-Host:"):
             return line.split(":", 1)[1].strip()
     return None
@@ -300,23 +323,28 @@ def send_heartbeat() -> None:
         log.warning("не отправил heartbeat: %s", e)
 
 
-def check_for_update(lock: socket.socket) -> None:
+def check_for_update(lock: socket.socket, holding_terminal: bool = False) -> None:
     """Раз в UPDATE_CHECK_EVERY проверяет GitHub и обновляется, если можно.
 
     Три пути, по возрастанию осторожности:
     1. Машина, с которой коммит запушили (Origin-Host в трейлере коммита
        совпадает с её hostname), обновляется сразу — её только что явно
        попросили это сделать.
-    2. standby не держит терминал (просто ждёт молча или шлёт heartbeat) —
-       обновляется сразу же следом, без задержки: рисковать нечем, а кто-то
-       ведь должен реально погонять новый код, прежде чем на него перейдёт
-       primary.
-    3. primary (не источник) ждёт CANARY_DELAY секунд, за которые standby
-       должен отчитаться о работе именно на этом коммите без сбоев — только
-       так у canary_age вообще появляется ненулевое значение. Раньше все
-       не-standby и не-источники ждали одинаково, и коммит с третьей машины
-       (не primary и не standby) не мог обновить никого: некому было стать
-       канарейкой первым — дедлок.
+    2. standby, который СЕЙЧАС реально не держит терминал (просто ждёт молча
+       или шлёт heartbeat) — обновляется сразу же следом, без задержки:
+       рисковать нечем, а кто-то ведь должен реально погонять новый код,
+       прежде чем на него перейдёт primary. holding_terminal=True — резерв
+       взял управление после отказа primary (см. took_over в main()) — тогда
+       это ровно тот случай, для которого канарейка и нужна, роль в .env
+       всё ещё "standby", но по факту сейчас единственная живая машина
+       активно опрашивает терминал, и обновлять её без обкатки нельзя.
+    3. Все остальные (primary, и holding_terminal-резерв) ждут CANARY_DELAY
+       секунд, за которые НЕ держащая терминал машина должна отчитаться о
+       работе именно на этом коммите без сбоев — только так у canary_age
+       вообще появляется ненулевое значение. Раньше все не-standby и
+       не-источники ждали одинаково, и коммит с третьей машины (не primary
+       и не standby) не мог обновить никого: некому было стать канарейкой
+       первым — дедлок.
 
     Не поднимаем tools/keeper.ps1 самостоятельно: перезапуск через новый
     процесс + выход из этого — сторож (если настроен) просто увидит живой
@@ -337,7 +365,7 @@ def check_for_update(lock: socket.socket) -> None:
         _self_update_and_restart(lock, remote)
         return
 
-    if ROLE == "standby":
+    if ROLE == "standby" and not holding_terminal:
         log.info("резерв: коммит %s -> %s — обновляюсь сразу, терминал не держу",
                  local[:8], remote[:8])
         _self_update_and_restart(lock, remote)
@@ -776,7 +804,7 @@ def main():
             last_env_sync = time.monotonic()
 
         if AUTO_UPDATE and time.monotonic() - last_update_check > UPDATE_CHECK_EVERY:
-            check_for_update(lock)     # обновится и выйдет сама, если можно
+            check_for_update(lock, holding_terminal=took_over)     # обновится и выйдет сама
             last_update_check = time.monotonic()
 
         # Канарейка: любая машина, которая НЕ источник текущего коммита,
@@ -802,6 +830,7 @@ def main():
                     notify_role_change("standby")
                 standing_by = True
             send_heartbeat()
+            _touch_beat()       # цикл жив и осознанно молчит — не зависание
             time.sleep(INTERVAL)
             continue
         if standing_by is True:
@@ -824,6 +853,7 @@ def main():
             log.info("тяжёлый процесс закрыт/свёрнут — опрос терминала возобновлён")
             gaming_paused = False
         if is_heavy:
+            _touch_beat()       # цикл жив и осознанно молчит — не зависание
             time.sleep(INTERVAL)
             continue
 
@@ -850,11 +880,7 @@ def main():
                 log.warning("%s: %s", acc.get("name", "?"), e)
 
         if ok:      # хоть один счёт прочитан — терминал жив, отмечаемся для сторожа
-            try:
-                with open(BEAT, "w", encoding="utf-8") as f:
-                    f.write(utcnow().isoformat())
-            except Exception as e:
-                log.warning("не записал отметку: %s", e)
+            _touch_beat()
 
         time.sleep(INTERVAL)
 
