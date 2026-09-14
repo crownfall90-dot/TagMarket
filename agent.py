@@ -1034,6 +1034,15 @@ def main():
             accs = fetch_accounts()
         except Exception as e:
             log.warning("не получил список счетов: %s", e)
+            # дожили до сюда без необработанного исключения — сам код рабочий,
+            # даже если сервер/сеть сейчас недоступны. Подтверждаем именно
+            # это, а не «удалось поговорить с MT5»: иначе брокер, лежащий
+            # дольше MIN_CONFIRM_GRACE, откатил бы совершенно исправный код
+            # на следующем случайном перезапуске (реальный сценарий, не
+            # теоретический — из красной команды)
+            if AUTO_UPDATE and not update_confirmed:
+                _confirm_update_ok()
+                update_confirmed = True
             time.sleep(INTERVAL)
             continue
 
@@ -1054,9 +1063,12 @@ def main():
 
         if ok:      # хоть один счёт прочитан — терминал жив, отмечаемся для сторожа
             _touch_beat()
-            if AUTO_UPDATE and not update_confirmed:
-                _confirm_update_ok()
-                update_confirmed = True
+
+        # подтверждаем по факту «дожили до конца цикла без краха», не по
+        # успеху MT5/сети конкретно в этом круге — см. комментарий выше
+        if AUTO_UPDATE and not update_confirmed:
+            _confirm_update_ok()
+            update_confirmed = True
 
         time.sleep(INTERVAL)
 

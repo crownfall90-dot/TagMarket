@@ -68,10 +68,20 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# следующий автообновление не должно тут же откатить обратно на GitHub —
-# ручной откат это осознанный выбор пользователя, а не баг агента. Метки
-# автоматического отката ему не мешают: pending/last_good просто устареют,
-# следующее реальное обновление их перезапишет как обычно
+# Ручной откат — осознанный выбор человека, и агент должен считать эту
+# версию заведомо рабочей, а не «неподтверждённым обновлением». Без этого
+# автоматический откат мог бы позже сам утащить машину ОБРАТНО на тот самый
+# плохой коммит, от которого человек только что вручную сбежал: last_good_commit
+# на диске всё ещё указывал бы на него, и следующее неудачное автообновление
+# откатилось бы именно туда. Полный путь до новой версии узнаём через тот же
+# git rev-parse, что использует сам agent.py — избегаем хранить укороченный хэш
+$fullHash = git rev-parse $picked.Hash
+$goodFile = Join-Path $projectDir "data\last_good_commit"
+$pendingFile = Join-Path $projectDir "data\pending_commit"
+New-Item -ItemType Directory -Force -Path (Split-Path $goodFile) | Out-Null
+Set-Content -Path $goodFile -Value $fullHash -NoNewline -Encoding ascii
+if (Test-Path $pendingFile) { Remove-Item $pendingFile -Force }
+
 Write-Host ""
 Write-Host "Готово. Код теперь на версии $($picked.Hash)." -ForegroundColor Green
 
