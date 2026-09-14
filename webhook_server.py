@@ -93,7 +93,7 @@ async def handle(request: web.Request, kind: str, fmt) -> web.Response:
         # Telegram с этого сервера отвечает медленно, а портал ждёт ответа
         # считанные секунды и по таймауту шлёт событие заново — поэтому
         # подтверждаем сразу, а сообщение отправляем следом
-        asyncio.create_task(notify(request.app, fmt(row)))
+        fire(notify(request.app, fmt(row)))
         _remember_wallet_income(db, kind, row)
     log.info("вебхук %s: %s", kind, row.get("customer_no", row.get("tx_id", "?")))
     return web.Response(text="ok")
@@ -177,6 +177,23 @@ async def notify(app, text: str) -> None:
             log.warning("не отправил в Telegram (попытка %d/%d): %s",
                        attempt, NOTIFY_RETRIES, e)
             await asyncio.sleep(NOTIFY_BACKOFF * attempt)
+
+
+_background: set[asyncio.Task] = set()   # держит задачи, пока notify() ретраит
+
+
+def fire(coro) -> None:
+    """asyncio.create_task, но без риска, что GC соберёт задачу на середине.
+
+    Event loop хранит на задачу только слабую ссылку — она документированный
+    источник потерянных fire-and-forget корутин. Пока notify() был мгновенным,
+    окно было незаметным; с ретраями (до ~45 секунд на попытки и сон между
+    ними) оно расширилось на два порядка, и уведомление могло пропасть без
+    единой строки в логе — ровно то, что ретраи должны были вылечить.
+    """
+    task = asyncio.create_task(coro)
+    _background.add(task)
+    task.add_done_callback(_background.discard)
 
 
 async def on_registration(request):
@@ -295,7 +312,7 @@ async def agent_role_change(request):
                f"и вернулся в ожидание.")
     else:
         return web.json_response({"ok": False, "error": "bad became"}, status=400)
-    asyncio.create_task(notify(request.app, text))
+    fire(notify(request.app, text))
     log.info("смена роли: %s -> %s", host, became)
     return web.json_response({"ok": True})
 
