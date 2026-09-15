@@ -767,11 +767,14 @@ def _guest_period_summary(uid) -> str:
     if not any_data:
         return ""
 
-    parts = []
+    icons = {"Сегодня": "☀️", "Неделя": "📅", "Месяц": "🗓"}
+    lines = []
     for label, _ in periods:
-        parts.append(f"{label} {trades.amount(sums[label], signed=True)} "
-                    f"<i>({trades.pct(pcts[label])})</i>")
-    return " · ".join(parts)
+        mark = "▲" if sums[label] >= 0 else "▼"
+        lines.append(f"{icons[label]} {label} {mark} "
+                    f"<b>{trades.amount(sums[label], signed=True)}</b> "
+                    f"<i>{trades.pct(pcts[label])}</i>")
+    return "\n".join(lines)
 
 
 def guest_view(db, owner, uid) -> tuple[str, InlineKeyboardMarkup]:
@@ -790,10 +793,10 @@ def guest_view(db, owner, uid) -> tuple[str, InlineKeyboardMarkup]:
         src = mine[int(a["login"])]
         by_holder.setdefault(src.get("holder") or src["name"], []).append(src)
 
-    rows, lines = [], []
+    rows, mine_lines = [], []
     for holder, accs in by_holder.items():
         names = ", ".join(s.get("strategy") or s["name"] for s in accs)
-        lines.append(f"👤 <b>{html.escape(holder)}</b>\n<i>{html.escape(names)}</i>")
+        mine_lines.append(f"👤 <b>{html.escape(holder)}</b>\n<i>{html.escape(names)}</i>")
         for src in accs:
             label = src.get("strategy") or src["name"]
             # владельца в подпись обязательно: стратегии у разных людей
@@ -805,27 +808,33 @@ def guest_view(db, owner, uid) -> tuple[str, InlineKeyboardMarkup]:
             rows.append([InlineKeyboardButton(
                 text=f"↩︎↩︎ Весь {holder[:18]} ({len(accs)})",
                 callback_data=f"cfg:takeall:{uid}:{accs[0]['cabinet'] or accounts.NO_CABINET}")])
-    body = "\n\n".join(lines) if lines else "<i>Моих счетов у него нет.</i>"
 
     # его собственные счета — капитал + накопленный профит, и рекурсивно то же
     # самое у его гостей (если он тоже кого-то пригласил). Кнопок нет: это
     # чужие деньги, забрать их нельзя, только смотреть картину целиком
     money_lines = _guest_money_lines(db, uid, exclude_logins=frozenset(mine))
+    period = _guest_period_summary(uid) if money_lines else ""
+
+    out = [f"👤 <b>{html.escape(str(who))}</b>", trades.THIN]
+    if since:
+        out.append(f"🕒 <i>зашёл {since}</i>")
+
+    out.append("\n<b>💼 Твои счета у него</b>")
+    out.append("\n\n".join(mine_lines) if mine_lines else "<i>Твоих счетов у него нет.</i>")
+
     if money_lines:
-        body += f"\n\n<b>Свои счета гостя</b>\n{trades.quote(money_lines)}"
-        period = _guest_period_summary(uid)
-        if period:
-            body += f"\n<i>{period}</i>"
+        out.append("\n<b>💎 Счета гостя</b>")
+        out.append(trades.quote(money_lines))
+    if period:
+        out.append("\n<b>📊 Заработок</b>")
+        out.append(period)
 
     rows.append([InlineKeyboardButton(text="🚪 Убрать доступ совсем",
                                       callback_data=f"cfg:guestkill:{uid}")])
     rows.append([InlineKeyboardButton(text="↩︎ Назад", callback_data="cfg:guests")])
-    return (f"👤 <b>{html.escape(str(who))}</b>\n{trades.THIN}\n"
-            f"{body}\n"
-            + (f"<i>зашёл {since}</i>\n" if since else "")
-            + "\n<i>«Забрать» удалит счёт у него, у тебя он останется. "
-              "«Убрать доступ» закроет вход и сотрёт все копии.</i>",
-            InlineKeyboardMarkup(inline_keyboard=rows))
+    out.append("\n<i>«Забрать» удалит счёт у него, у тебя он останется. "
+               "«Убрать доступ» закроет вход и сотрёт все копии.</i>")
+    return ("\n".join(out), InlineKeyboardMarkup(inline_keyboard=rows))
 
 
 def invites_view(db, owner, username: str = "", inline_ok: bool = False
