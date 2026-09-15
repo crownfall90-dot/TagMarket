@@ -217,6 +217,10 @@ def menu(active: str = "today", who: str = None, owner=None) -> InlineKeyboardMa
     if active != "today":
         rows.append([InlineKeyboardButton(text="↩︎ Сегодня", callback_data=f"rep:today{suffix}")])
 
+    if current:
+        wb = wallet_reset_button(current)
+        if wb:
+            rows.append([wb])
     rows.append([InlineKeyboardButton(text="↩︎ Назад", callback_data="dash"),
                  InlineKeyboardButton(text="⚙︎ Настройки", callback_data="cfg")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -428,23 +432,15 @@ def group_bell(accs: list[dict]) -> str:
     return "🔕" if quiet == len(accs) else "🔔🔕"
 
 
-def link_alerts_on(db, owner) -> bool:
-    """Слать ли сообщения о пропаже и возврате связи с терминалом.
-
-    По умолчанию выключено: связь рвётся и ночью (перезагрузка ПК, интернет),
-    а сделки после возврата всё равно подтянутся — большинству эти сообщения
-    только мешают.
-    """
-    return kv_get(db, f"link_alerts:{owner}") == "1"
-
-
 def update_alerts_on(db) -> bool:
-    """Слать ли основателю сообщение, когда агентская машина подтянула новый
-    код и перезапустилась. Только для основателя — остальным это неважно,
-    поэтому настройка не привязана к owner, как link_alerts.
-
-    По умолчанию включено: в отличие от разрывов связи (шумных и ночных),
-    обновление кода — редкое и всегда достойное внимания событие.
+    """Слать ли основателю сообщения о статусе агентских машин: обновление
+    кода, включение/выключение/переключение опроса терминала. Одна
+    настройка на всё — раньше это были две разные ручки (одна для
+    machines_watchdog, всегда включённая без возможности выключить, и
+    отдельная update_alerts только для факта обновления кода); слились в
+    одну, потому что это об одном и том же — «что происходит с агентом» —
+    и только основателю. Остальным пользователям бота это не показывается
+    и не касается: они не управляют агентскими машинами.
     """
     return kv_get(db, "update_alerts") != "0"
 
@@ -465,14 +461,10 @@ def settings_menu(owner, db=None) -> tuple[str, InlineKeyboardMarkup]:
                  InlineKeyboardButton(text="👥 Гости", callback_data="cfg:guests")])
     rows.append([InlineKeyboardButton(text="🔗 Пригласить", callback_data="cfg:inv"),
                  InlineKeyboardButton(text="📋 Мои ссылки", callback_data="cfg:invites")])
-    on = link_alerts_on(db, owner) if db is not None else False
-    rows.append([InlineKeyboardButton(
-        text=("📡 Связь с MT5: сообщать" if on else "📡 Связь с MT5: молчать"),
-        callback_data="cfg:link")])
     if is_founder(owner) and db is not None:
         upd_on = update_alerts_on(db)
         rows.append([InlineKeyboardButton(
-            text=("🔄 Обновления агента: сообщать" if upd_on else "🔄 Обновления агента: молчать"),
+            text=("🔄 Статус агента: сообщать" if upd_on else "🔄 Статус агента: молчать"),
             callback_data="cfg:update_alerts")])
     rows.append([InlineKeyboardButton(text="↩︎ Назад", callback_data="dash")])
     text = ("⚙︎ <b>Настройки</b>\n" + trades.THIN +
@@ -924,6 +916,23 @@ def account_head(acc: dict, cur: str) -> str:
     out = f"🏷 <b>{html.escape(title)}</b>\n<i>{sub}</i>\n{trades.fmt_head(cur)}"
     wallet = _wallet_line(acc, cur)
     return f"{out}\n{wallet}" if wallet else out
+
+
+def wallet_reset_button(acc: dict) -> InlineKeyboardButton | None:
+    """Кнопка «отметить вывод с кошелька» — только если на нём реально
+    накоплен ненулевой баланс, иначе сбрасывать нечего и кнопка бы
+    просто мусорила интерфейс без пользы."""
+    cabinet = str(acc.get("cabinet") or "").strip()
+    if not cabinet:
+        return None
+    try:
+        amount, since = partner.wallet_balance(open_db(), cabinet)
+    except Exception:
+        return None
+    if not since or amount < 0.01:
+        return None
+    return InlineKeyboardButton(text="👛 Отметить вывод с кошелька",
+                                callback_data=f"wallet_reset:{cabinet}")
 
 
 def _wallet_line(acc: dict, cur: str) -> str:
@@ -1798,13 +1807,6 @@ async def main():
             except Exception as e:
                 log.warning("не уведомил основателя об уходе: %s", e)
 
-    @dp.callback_query(F.data == "cfg:link")
-    async def cfg_link_alerts(cb: CallbackQuery):
-        now_on = not link_alerts_on(db, cb.from_user.id)
-        kv_set(db, f"link_alerts:{cb.from_user.id}", "1" if now_on else "0")
-        await cb.answer("Буду сообщать о связи" if now_on else "Про связь молчу")
-        await swap(cb, *settings_menu(cb.from_user.id, db))
-
     @dp.callback_query(F.data == "cfg:update_alerts")
     async def cfg_update_alerts(cb: CallbackQuery):
         if not is_founder(cb.from_user.id):
@@ -1814,6 +1816,22 @@ async def main():
         kv_set(db, "update_alerts", "1" if now_on else "0")
         await cb.answer("Буду сообщать об обновлениях" if now_on else "Про обновления молчу")
         await swap(cb, *settings_menu(cb.from_user.id, db))
+
+    @dp.callback_query(F.data.startswith("wallet_reset:"))
+    async def wallet_reset_confirm(cb: CallbackQuery):
+        cabinet = cb.data.split(":", 1)[1]
+        # тот же кабинет мог быть у нескольких счетов (гостевые копии) —
+        # проверяем, что этот кабинет вообще принадлежит нажавшему, а не
+        # просто угадан подменой callback_data
+        owns = any(str(a.get("cabinet") or "") == cabinet
+                  for a in accounts.load(cb.from_user.id))
+        if not owns:
+            await cb.answer("Это не твой кабинет", show_alert=True)
+            return
+        partner.wallet_reset(db, cabinet)
+        await cb.answer("Баланс кошелька обнулён — копим заново с этого момента")
+        text, kb = dashboard(cb.from_user.id)
+        await swap(cb, text, kb)
 
     @dp.callback_query(F.data == "cfg:guests")
     async def cfg_guests(cb: CallbackQuery):
@@ -2198,64 +2216,6 @@ async def main():
                     log.exception("не записал отметку живости")
                 await asyncio.sleep(30)
 
-        async def terminal_watchdog():
-            """Терминал читает агент на ПК. Если агент давно не выходил на связь —
-            терминал/ПК недоступен, новые сделки не придут. Предупреждаем владельца
-            один раз при пропаже и один раз при восстановлении."""
-            import store
-            sdb = store.open_db()
-            while True:
-                try:
-                    now = utcnow()
-                    # все счета владельца читает один агент на одном ПК, поэтому
-                    # рвётся связь сразу по всем — предупреждаем один раз, а не
-                    # отдельным сообщением на каждый счёт
-                    watched = defaultdict(list)
-                    for acc in accounts.dedup(accounts.load()):
-                        if not acc.get("enabled", True):
-                            continue
-                        st = store.get_state(sdb, acc["login"])
-                        if not st or not st.get("synced"):
-                            continue
-                        gap = (now - datetime.fromisoformat(st["synced"])).total_seconds()
-                        watched[acc["owner"]].append((acc, gap))
-
-                    for owner, items in watched.items():
-                        # по умолчанию выключено: обрывы связи случаются и
-                        # ночью, а большинству эти сообщения не нужны
-                        if kv_get(db, f"link_alerts:{owner}") != "1":
-                            continue
-                        stale = [(a, g) for a, g in items if g > TERMINAL_STALE]
-                        key = f"term_down:{owner}"
-                        down = kv_get(db, key) == "1"
-                        if stale and not down:
-                            kv_set(db, key, "1")
-                            names = "\n".join(f"🏷 {html.escape(a['name'])}" for a, _ in stale)
-                            worst = max(g for _, g in stale)
-                            kb = InlineKeyboardMarkup(inline_keyboard=[[
-                                InlineKeyboardButton(text="🔄 Попробовать запустить",
-                                                     callback_data=f"restart:{stale[0][0]['login']}")]])
-                            await send(bot, owner,
-                                       f"⚠️ <b>Нет связи с MT5</b>\n{trades.THIN}\n"
-                                       f"{names}\n"
-                                       f"Сделки сейчас <b>не отслеживаются</b>, уведомления о новых "
-                                       f"не придут.\nПричина — оборвалась цепочка "
-                                       f"<i>терминал → агент → сервер</i>: закрыт терминал, "
-                                       f"остановлен агент, выключен ПК или пропал интернет.\n"
-                                       f"<i>последние данные {worst / 60:.0f} мин назад</i>", kb)
-                        elif not stale and down:
-                            kv_set(db, key, "0")
-                            asked = kv_get(db, f"restart_asked:{owner}") == "1"
-                            kv_set(db, f"restart_asked:{owner}", "0")
-                            lead = ("✅ <b>Готово! Терминал запущен из бота</b>" if asked
-                                    else "✅ <b>Связь с MT5 восстановлена</b>")
-                            await send(bot, owner,
-                                       f"{lead}\n{trades.THIN}\n"
-                                       f"Сделки снова отслеживаются, уведомления будут приходить.")
-                except Exception:
-                    log.exception("вотчдог терминала")
-                await asyncio.sleep(60)
-
         async def loop(fn, seconds, name):
             """Опрос с отступлением: пока источник молчит, паузу удваиваем.
 
@@ -2369,8 +2329,13 @@ async def main():
                         last_active, last_alive = active, alive
                         continue
 
+                    # трекинг last_active/last_alive идёт независимо от настройки —
+                    # выключенные уведомления не должны ломать саму картину
+                    # состояния, только отправку сообщений о ней
+                    notify_ok = update_alerts_on(db)
+
                     if not alive:
-                        if last_alive:      # сообщаем один раз, не на каждом круге
+                        if last_alive and notify_ok:      # сообщаем один раз, не на каждом круге
                             text = (f"🔴 <b>Все агентские машины офлайн</b>\n{trades.THIN}\n"
                                    f"Терминал никто не опрашивает — данные перестали обновляться.")
                             await send(bot, chat_id, text)
@@ -2378,14 +2343,14 @@ async def main():
                         # роль конкретного хоста читаем из KV напрямую, а не из
                         # словаря по alive — last_active мог только что пропасть
                         # из живых и всё равно должен подписаться правильно
-                        if active and last_active:
+                        if active and last_active and notify_ok:
                             # опрос реально перешёл с одной машины на другую
                             frm = _machine_label(last_active, kv_get(db, f"machine_role:{last_active}"))
                             to = _machine_label(active, kv_get(db, f"machine_role:{active}"))
                             text = (f"🔀 <b>Переключение машин</b>\n{trades.THIN}\n"
                                    f"Опрос терминала перешёл: <b>{frm}</b> → <b>{to}</b>.")
                             await send(bot, chat_id, text)
-                        elif active and not last_alive:
+                        elif active and not last_alive and notify_ok:
                             # раньше не было ни одной машины на связи — теперь
                             # опрос пошёл, это отдельно от «переключения»
                             label = _machine_label(active, kv_get(db, f"machine_role:{active}"))
@@ -2458,7 +2423,6 @@ async def main():
         asyncio.create_task(monthly_rollup())
         asyncio.create_task(stale_invites_cleanup())
         asyncio.create_task(telegram_watchdog())
-        asyncio.create_task(terminal_watchdog())
         asyncio.create_task(machines_watchdog())
         asyncio.create_task(mt5_loop())
         # кабинет IB Portal временно не опрашиваем — токен просрочен, а новый

@@ -149,6 +149,22 @@ def wallet_add(db, cabinet: str, amount: float) -> None:
         kv_set(db, f"wallet_since:{cabinet}", trades.clock().isoformat())
 
 
+def wallet_reset(db, cabinet: str) -> None:
+    """Обнулить накопленный баланс кошелька вручную.
+
+    Портал не сообщает о внешних выводах с кошелька Tag Markets (на карту,
+    крипту — куда угодно мимо стратегии), поэтому wallet_balance() может
+    показывать больше, чем реально лежит там сейчас. Когда человек забрал
+    деньги внешне, это единственный способ привести цифру в порядок —
+    считаем «с этого момента копим заново», а не пытаемся угадать остаток.
+    """
+    if not cabinet:
+        return
+    kv_set(db, f"wallet_in:{cabinet}", "0")
+    import trades
+    kv_set(db, f"wallet_since:{cabinet}", trades.clock().isoformat())
+
+
 def wallet_balance(db, cabinet: str) -> tuple[float, str]:
     """Сколько на балансе кабинета и с какой даты считаем. (сумма, дата ISO).
 
@@ -189,17 +205,22 @@ def wallet_balance(db, cabinet: str) -> tuple[float, str]:
 
 
 def _event(head: str, row, note: str = "", sign: str = "") -> str:
+    """Тот же визуальный порядок, что и в trades.fmt_notification() —
+    время сверху жирным, заголовок, разделитель, крупная сумма, пояснение
+    «от кого» строкой ниже. Разные типы уведомлений (сделка, реинвест,
+    депозит в кабинет) должны читаться как одна система, а не вразнобой."""
     stamp = str(when(row) or "").strip()
     name, _ = whose(row)
-    out = [head, THIN, f"<b>{pretty_money(row, bool(sign))}</b>",
+    out = []
+    if stamp:            # пустые часы только засоряли бы сообщение
+        out.append(f"🕒 <b>{stamp}</b>")
+    out += [head, THIN, f"<b>{pretty_money(row, bool(sign))}</b>",
            f"👤 {html.escape(name)}"]
+    if note:
+        out.append(f"<i>{note}</i>")
     state = cabinet_state(row)
     if state:
         out.append(state)
-    if note:
-        out.append(f"<i>{note}</i>")
-    if stamp:           # пустые часы только засоряли сообщение
-        out.append(f"🕒 {stamp}")
     return "\n".join(out)
 
 

@@ -696,31 +696,33 @@ def notify_update(commit: str) -> None:
         log.warning("не сообщил серверу об обновлении: %s", e)
 
 
-def _retry_request(fn, *, retries: int = 1, backoff: float = 2.0):
-    """Один быстрый повтор на разовую сетевую заминку.
+def _retry_request(fn, *, retries: int = 3, backoff: float = 3.0):
+    """До нескольких коротких попыток вместо одной длинной.
 
-    Игра или другая программа, активно жующая канал в фоне (даже свёрнутая —
-    heavy_process_running() смотрит на CPU/окно переднего плана, не на
-    сеть), может случайно занять полосу ровно в момент одного конкретного
-    запроса. Раньше единственный такой таймаут (60с на push, 30с на
-    fetch_accounts) съедал круг целиком — сервер при этом отвечал мгновенно
-    что до, что после (проверено вручную во время реального инцидента).
-    Один быстрый повтор почти всегда чинит именно эту разовую заминку, не
-    маскируя при этом настоящую недоступность сервера — если он действительно
-    не отвечает, второй запрос упадёт так же, и исключение уйдёт наверх как обычно.
+    Живой инцидент показал: игра (даже свёрнутая, не в фокусе — по нашим же
+    правилам это не должно её трогать вообще) может забивать канал не одним
+    коротким всплеском, а затяжными периодами в десятки секунд. Один быстрый
+    повтор после длинного (60с) таймаута почти ничего не давал — вторая
+    попытка стартовала уже внутри того же перегруженного окна и падала так
+    же. Короткий таймаут (10с на попытку) с несколькими повторами и
+    растущей паузой между ними эффективнее: не ждём впустую там, где сеть
+    явно не отвечает, и даём каналу больше шансов освободиться к следующей
+    попытке, вместо одной ставки на удачу.
     """
-    try:
-        return fn()
-    except requests.exceptions.RequestException:
-        if retries <= 0:
-            raise
-        time.sleep(backoff)
-        return _retry_request(fn, retries=retries - 1, backoff=backoff)
+    last_exc = None
+    for attempt in range(retries + 1):
+        try:
+            return fn()
+        except requests.exceptions.RequestException as e:
+            last_exc = e
+            if attempt < retries:
+                time.sleep(backoff * (attempt + 1))
+    raise last_exc
 
 
 def fetch_accounts() -> list[dict]:
     def _do():
-        r = requests.get(f"{SERVER}/agent/accounts", headers={"X-Token": TOKEN}, timeout=30)
+        r = requests.get(f"{SERVER}/agent/accounts", headers={"X-Token": TOKEN}, timeout=10)
         r.raise_for_status()
         return r.json()
     return _retry_request(_do)
@@ -729,7 +731,7 @@ def fetch_accounts() -> list[dict]:
 def push(payload: dict) -> int:
     def _do():
         r = requests.post(f"{SERVER}/agent/sync", json=payload,
-                          headers={"X-Token": TOKEN}, timeout=60)
+                          headers={"X-Token": TOKEN}, timeout=10)
         r.raise_for_status()
         return r.json().get("new", 0)
     return _retry_request(_do)
