@@ -802,8 +802,13 @@ def _guest_period_summary(db, uid) -> str:
     return "\n".join(lines)
 
 
-def guest_view(db, owner, uid) -> tuple[str, InlineKeyboardMarkup]:
-    """Карточка гостя: какие мои счета у него и что с ними можно сделать."""
+def guest_view(db, owner, uid, expand_take: bool = False) -> tuple[str, InlineKeyboardMarkup]:
+    """Карточка гостя: какие мои счета у него и что с ними можно сделать.
+
+    Кнопки «забрать» по умолчанию свёрнуты в одну — их может быть много
+    (несколько холдеров, несколько стратегий у каждого), и раньше карточка
+    была ими завалена. expand_take разворачивает их поштучно.
+    """
     who = kv_get(db, f"guest_name:{uid}") or str(uid)
     since = when_joined(db, uid)
 
@@ -822,17 +827,25 @@ def guest_view(db, owner, uid) -> tuple[str, InlineKeyboardMarkup]:
     for holder, accs in by_holder.items():
         names = ", ".join(s.get("strategy") or s["name"] for s in accs)
         mine_lines.append(f"👤 <b>{html.escape(holder)}</b>\n<i>{html.escape(names)}</i>")
-        first = holder.split()[0][:10]
-        # по два в ряд — компактнее, чем одна широкая кнопка на всю ширину
-        take_btns = [InlineKeyboardButton(
-            text=f"↩︎ {(src.get('strategy') or src['name'])[:12]} · {first}",
-            callback_data=f"cfg:take:{uid}:{src['login']}") for src in accs]
-        for i in range(0, len(take_btns), 2):
-            rows.append(take_btns[i:i + 2])
-        if len(accs) > 1:       # весь аккаунт разом — когда стратегий несколько
-            rows.append([InlineKeyboardButton(
-                text=f"↩︎↩︎ Весь {holder[:16]} ({len(accs)})",
-                callback_data=f"cfg:takeall:{uid}:{accs[0]['cabinet'] or accounts.NO_CABINET}")])
+
+    if expand_take:
+        for holder, accs in by_holder.items():
+            first = holder.split()[0][:10]
+            # по два в ряд — компактнее, чем одна широкая кнопка на всю ширину
+            take_btns = [InlineKeyboardButton(
+                text=f"↩︎ {(src.get('strategy') or src['name'])[:12]} · {first}",
+                callback_data=f"cfg:take:{uid}:{src['login']}") for src in accs]
+            for i in range(0, len(take_btns), 2):
+                rows.append(take_btns[i:i + 2])
+            if len(accs) > 1:    # весь аккаунт разом — когда стратегий несколько
+                rows.append([InlineKeyboardButton(
+                    text=f"↩︎↩︎ Весь {holder[:16]} ({len(accs)})",
+                    callback_data=f"cfg:takeall:{uid}:{accs[0]['cabinet'] or accounts.NO_CABINET}")])
+        if by_holder:
+            rows.append([InlineKeyboardButton(text="▲ Свернуть", callback_data=f"cfg:guest:{uid}")])
+    elif by_holder:
+        rows.append([InlineKeyboardButton(text="🗑 Забрать счета",
+                                          callback_data=f"cfg:guesttake:{uid}")])
 
     # его собственные счета — капитал + накопленный профит, и рекурсивно то же
     # самое у его гостей (если он тоже кого-то пригласил). Кнопок нет: это
@@ -1948,6 +1961,15 @@ async def main():
         await cb.answer()
         await swap(cb, *guest_view(db, cb.from_user.id, uid))
 
+    @dp.callback_query(F.data.startswith("cfg:guesttake:"))
+    async def cfg_guest_take_expand(cb: CallbackQuery):
+        uid = cb.data.split(":", 2)[2]
+        if str(kv_get(db, f"guest_by:{uid}")) != str(cb.from_user.id):
+            await cb.answer("Это не твой гость", show_alert=True)
+            return
+        await cb.answer()
+        await swap(cb, *guest_view(db, cb.from_user.id, uid, expand_take=True))
+
     @dp.callback_query(F.data.startswith("cfg:take:"))
     async def cfg_take_back(cb: CallbackQuery):
         _, _, uid, login = cb.data.split(":", 3)
@@ -1969,7 +1991,7 @@ async def main():
                            f"<i>Владелец забрал его обратно.</i>")
             except Exception as e:
                 log.warning("не уведомил гостя %s: %s", uid, e)
-        await swap(cb, *guest_view(db, cb.from_user.id, uid))
+        await swap(cb, *guest_view(db, cb.from_user.id, uid, expand_take=True))
 
     @dp.callback_query(F.data.startswith("cfg:takeall:"))
     async def cfg_take_cabinet(cb: CallbackQuery):
@@ -1991,7 +2013,7 @@ async def main():
                            f"<i>Владелец забрал их обратно.</i>")
             except Exception as e:
                 log.warning("не уведомил гостя %s: %s", uid, e)
-        await swap(cb, *guest_view(db, cb.from_user.id, uid))
+        await swap(cb, *guest_view(db, cb.from_user.id, uid, expand_take=True))
 
     @dp.callback_query(F.data.startswith("cfg:guestkill:"))
     async def cfg_guest_kill(cb: CallbackQuery):
