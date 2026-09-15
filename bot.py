@@ -341,7 +341,7 @@ def dashboard(owner) -> tuple[str, InlineKeyboardMarkup]:
             f"👤 <b>{html.escape(who)}</b>\n"
             # рядом с капиталом — профит, который лежит нетронутым: без него
             # непонятно, сколько денег на стратегии на самом деле
-            f"<blockquote>💎 <b>{trades.amount(now, cur)}</b>"
+            f"<blockquote>💎 <b>{trades.amount(now, cur, whole=True)}</b>"
             f" + <b>{trades.amount(kept)}</b> <i>профит</i>\n"
             f"{mark} {MONTHS[trades.clock().month].lower()} <b>{trades.amount(month, signed=True)}</b>"
             f" · <i>{trades.pct(month_pct)}</i>\n"
@@ -357,7 +357,7 @@ def dashboard(owner) -> tuple[str, InlineKeyboardMarkup]:
         total_roi = grand_weighted_roi / grand_now if grand_now else 0.0
         month_pct = grand_weighted / grand_now if grand_now else 0.0
         mark = "▲" if grand_month >= 0 else "▼"
-        head += (f"\n<blockquote>💎 <b>{trades.amount(grand_now, cur)}</b>"
+        head += (f"\n<blockquote>💎 <b>{trades.amount(grand_now, cur, whole=True)}</b>"
                  f" + <b>{trades.amount(grand_kept)}</b> <i>профит</i>\n"
                  f"{mark} {now_month.lower()} <b>{trades.amount(grand_month, signed=True)}</b>"
                  f" · <i>{trades.pct(month_pct)}</i>\n"
@@ -1004,7 +1004,7 @@ def build_all(name: str, owner=None, cabinet: str = None) -> str:
         mark = "▲" if per > 0 else ("▼" if per < 0 else "•")
         on_top = (f" + {trades.amount(abs(kept))} профит"
                   if now_view and abs(kept) >= 0.01 else "")
-        lines.append(f"{mark} <b>{html.escape(label)}</b> · {trades.amount(my)}{on_top}\n"
+        lines.append(f"{mark} <b>{html.escape(label)}</b> · {trades.amount(my, whole=True)}{on_top}\n"
                      f"<i>период {trades.amount(per, signed=True)} · "
                      f"всего {trades.amount(ever, signed=True)}</i>")
 
@@ -1045,7 +1045,7 @@ def build_all(name: str, owner=None, cabinet: str = None) -> str:
              if abs(total_kept) >= 0.01 else "")
     on_strategy = total_my + total_kept
     head = (f"👤 <b>{html.escape(where)}</b>\n"
-            f"💎 <b>{trades.amount(on_strategy, cur)}</b> на стратегии{split}\n"
+            f"💎 <b>{trades.amount(on_strategy, cur, whole=True)}</b> на стратегии{split}\n"
             f"◆ <i>всего заработано {trades.amount(total_ever, signed=True)}</i>")
     table = trades.quote(lines)
     # пустая суббота — не поломка: рынок закрыт, и «+0.00» без пояснения пугает

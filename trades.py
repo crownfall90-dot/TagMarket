@@ -688,9 +688,19 @@ NBSP = " "     # узкий неразрывный пробел: не даёт
 SPARK = "▁▂▃▄▅▆▇█"
 
 
-def amount(v: float, cur: str = "", signed: bool = False) -> str:
-    """Сумма с разделителями тысяч: «2 500.00 $» читается быстрее, чем «2500.00$»."""
-    s = f"{v:+,.2f}" if signed else f"{v:,.2f}"
+def amount(v: float, cur: str = "", signed: bool = False, whole: bool = False) -> str:
+    """Сумма с разделителями тысяч: «2 500.00 $» читается быстрее, чем «2500.00$».
+
+    whole=True — без копеек («2 500 $»): для капитала («на стратегии»,
+    «всего»), который и так сам по себе крупная округлая величина, а центы
+    на нём — это просто шум курса/округления брокера, не то, что человек
+    вообще намерен отслеживать до копейки (в отличие от профита и
+    результата сделок, которые остаются с копейками везде).
+    """
+    if whole:
+        s = f"{v:+,.0f}" if signed else f"{v:,.0f}"
+    else:
+        s = f"{v:+,.2f}" if signed else f"{v:,.2f}"
     s = s.replace(",", NBSP)
     return s + (NBSP + sign(cur).strip() if cur else "")
 
@@ -1182,7 +1192,7 @@ def fmt_head(cur: str) -> str:
     # сделки). От заведённых денег считать нельзя: пополнение усилено плечом,
     # и месяц с одним взносом давал сотни процентов
     roi = f" ({pct(grew)})" if cap else ""
-    return (f"💎 <b>{amount(cap, cur)}</b>\n"
+    return (f"💎 <b>{amount(cap, cur, whole=True)}</b>\n"
             f"◆ всего <b>{amount(earned, signed=True)}</b>{roi}")
 
 
@@ -1395,10 +1405,10 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
     if cap:
         kept = retained()           # чистыми, за вычетом доли брокера
         total = cap + kept
-        out.append(f"💰 Капитал: <b>{amount(cap, cur)}</b>")
+        out.append(f"💰 Капитал: <b>{amount(cap, cur, whole=True)}</b>")
         if abs(kept) >= 0.01:
             out.append(f"📈 Накоплено профита: <b>{amount(kept, cur, signed=True)}</b> "
                        f"<i>(не выведен)</i>")
-        out.append(f"📊 Всего на стратегии: <b>{amount(total, cur)}</b>")
+        out.append(f"📊 Всего на стратегии: <b>{amount(total, cur, whole=True)}</b>")
     out.append(late_note(row))
     return "\n".join(out)

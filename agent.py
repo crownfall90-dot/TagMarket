@@ -235,9 +235,14 @@ def _run_git(*args, timeout=30) -> str:
 
 def _remote_commit() -> str | None:
     """Хэш HEAD в GitHub — git fetch (не reset), чтобы дальше можно было
-    прочитать сообщение этого коммита локально (_remote_commit_host)."""
+    прочитать сообщение этого коммита локально (_remote_commit_host).
+
+    Таймаут короче, чем раньше (20с вместо 60с): при сетевой перегрузке эта
+    проверка и так повторится сама через UPDATE_CHECK_EVERY — незачем
+    держать процесс минуту в ожидании одной попытки, которая уже видна как
+    маловероятная (тот же принцип, что и в _retry_request для agent/sync)."""
     try:
-        _run_git("fetch", GIT_REMOTE, GIT_BRANCH, timeout=60)
+        _run_git("fetch", GIT_REMOTE, GIT_BRANCH, timeout=20)
         return _run_git("rev-parse", f"{GIT_REMOTE}/{GIT_BRANCH}") or None
     except Exception as e:
         log.warning("не проверил обновления в git: %s", e)
@@ -550,6 +555,21 @@ def _self_update_and_restart(lock: socket.socket, target_commit: str) -> None:
             log.warning("в рабочей копии есть незакоммиченные изменения — "
                        "автообновление пропущено, разберитесь вручную:\n%s", dirty)
             return
+
+        # живой инцидент: локальный коммит, ещё не успевший на GitHub (push
+        # завис из-за сетевого сбоя — git push сам не ретраит и может висеть
+        # минутами), тихо стирался следующим автообновлением. git status
+        # --porcelain его не ловит — файлы уже закоммичены, «грязных»
+        # изменений в рабочей копии нет, только сам коммит не на origin.
+        # Проверяем именно это отдельно: если origin/<branch> не является
+        # предком HEAD, здесь есть история, которой нет на GitHub —
+        # reset --hard её стёр бы так же молча
+        _run_git("fetch", GIT_REMOTE, GIT_BRANCH, timeout=20)
+        ahead = _run_git("rev-list", f"{GIT_REMOTE}/{GIT_BRANCH}..HEAD")
+        if ahead:
+            log.warning("локальный коммит ещё не на GitHub (git push не прошёл?) — "
+                       "автообновление пропущено, чтобы не стереть его:\n%s", ahead)
+            return
         # текущий код уже дошёл сюда — значит он стабилен (иначе процесс не
         # выжил бы, чтобы дойти до планового автообновления). Запоминаем его
         # как последний рабочий ПЕРЕД переключением — это и есть то, куда
@@ -557,7 +577,8 @@ def _self_update_and_restart(lock: socket.socket, target_commit: str) -> None:
         current = _local_commit()
         if current:
             _write_marker(LAST_GOOD_COMMIT_FILE, current)
-        _run_git("fetch", GIT_REMOTE, GIT_BRANCH, timeout=60)
+        # fetch уже свежий (см. проверку ahead выше) — второй раз дёргать
+        # сеть незачем, это просто лишний риск нового таймаута
         _run_git("reset", "--hard", f"{GIT_REMOTE}/{GIT_BRANCH}", timeout=30)
         _write_pending(target_commit)
     except Exception as e:
