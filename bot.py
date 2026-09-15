@@ -66,8 +66,16 @@ MT5_ALERT_AFTER = int(os.getenv("MT5_ALERT_AFTER", 40))
 TERMINAL_STALE = int(os.getenv("TERMINAL_STALE", 300))
 # то же самое, но для отслеживания «сколько агентских машин живо» — короче,
 # чем TERMINAL_STALE: это не тревога о простое торговли (тем занят failover
-# внутри agent.py), а просто информационная сводка на смену состояния
-MACHINE_STALE = int(os.getenv("MACHINE_STALE", 60))
+# внутри agent.py), а просто информационная сводка на смену состояния.
+#
+# С запасом поверх requests-таймаута в самом агенте (60с на HTTP-запрос,
+# см. push()/fetch_accounts() в agent.py) — иначе одна медленная, но
+# завершившаяся успехом попытка связи (короткая заминка в сети клиента)
+# целиком съедает весь порог, и вотчдог видит «офлайн», хотя агент всё это
+# время просто ждал ответа. Живой пример: read timeout=60 в логе агента,
+# следующий круг прошёл нормально — а бот успел отправить и «все офлайн»,
+# и «включена» в течение той же минуты
+MACHINE_STALE = int(os.getenv("MACHINE_STALE", 150))
 MACHINES_CHECK_SECONDS = int(os.getenv("MACHINES_CHECK_SECONDS", 30))
 INVITE_STALE_DAYS = int(os.getenv("INVITE_STALE_DAYS", 2))
 LOOKBACK_DAYS = int(os.getenv("LOOKBACK_DAYS", 3))

@@ -696,17 +696,43 @@ def notify_update(commit: str) -> None:
         log.warning("не сообщил серверу об обновлении: %s", e)
 
 
+def _retry_request(fn, *, retries: int = 1, backoff: float = 2.0):
+    """Один быстрый повтор на разовую сетевую заминку.
+
+    Игра или другая программа, активно жующая канал в фоне (даже свёрнутая —
+    heavy_process_running() смотрит на CPU/окно переднего плана, не на
+    сеть), может случайно занять полосу ровно в момент одного конкретного
+    запроса. Раньше единственный такой таймаут (60с на push, 30с на
+    fetch_accounts) съедал круг целиком — сервер при этом отвечал мгновенно
+    что до, что после (проверено вручную во время реального инцидента).
+    Один быстрый повтор почти всегда чинит именно эту разовую заминку, не
+    маскируя при этом настоящую недоступность сервера — если он действительно
+    не отвечает, второй запрос упадёт так же, и исключение уйдёт наверх как обычно.
+    """
+    try:
+        return fn()
+    except requests.exceptions.RequestException:
+        if retries <= 0:
+            raise
+        time.sleep(backoff)
+        return _retry_request(fn, retries=retries - 1, backoff=backoff)
+
+
 def fetch_accounts() -> list[dict]:
-    r = requests.get(f"{SERVER}/agent/accounts", headers={"X-Token": TOKEN}, timeout=30)
-    r.raise_for_status()
-    return r.json()
+    def _do():
+        r = requests.get(f"{SERVER}/agent/accounts", headers={"X-Token": TOKEN}, timeout=30)
+        r.raise_for_status()
+        return r.json()
+    return _retry_request(_do)
 
 
 def push(payload: dict) -> int:
-    r = requests.post(f"{SERVER}/agent/sync", json=payload,
-                      headers={"X-Token": TOKEN}, timeout=60)
-    r.raise_for_status()
-    return r.json().get("new", 0)
+    def _do():
+        r = requests.post(f"{SERVER}/agent/sync", json=payload,
+                          headers={"X-Token": TOKEN}, timeout=60)
+        r.raise_for_status()
+        return r.json().get("new", 0)
+    return _retry_request(_do)
 
 
 def collect(acc: dict) -> dict:
