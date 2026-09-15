@@ -822,16 +822,16 @@ def guest_view(db, owner, uid) -> tuple[str, InlineKeyboardMarkup]:
     for holder, accs in by_holder.items():
         names = ", ".join(s.get("strategy") or s["name"] for s in accs)
         mine_lines.append(f"👤 <b>{html.escape(holder)}</b>\n<i>{html.escape(names)}</i>")
-        for src in accs:
-            label = src.get("strategy") or src["name"]
-            # владельца в подпись обязательно: стратегии у разных людей
-            # называются одинаково, и кнопки «SONIC» были бы неразличимы
-            rows.append([InlineKeyboardButton(
-                text=f"↩︎ {label[:16]} · {holder.split()[0][:12]}",
-                callback_data=f"cfg:take:{uid}:{src['login']}")])
+        first = holder.split()[0][:10]
+        # по два в ряд — компактнее, чем одна широкая кнопка на всю ширину
+        take_btns = [InlineKeyboardButton(
+            text=f"↩︎ {(src.get('strategy') or src['name'])[:12]} · {first}",
+            callback_data=f"cfg:take:{uid}:{src['login']}") for src in accs]
+        for i in range(0, len(take_btns), 2):
+            rows.append(take_btns[i:i + 2])
         if len(accs) > 1:       # весь аккаунт разом — когда стратегий несколько
             rows.append([InlineKeyboardButton(
-                text=f"↩︎↩︎ Весь {holder[:18]} ({len(accs)})",
+                text=f"↩︎↩︎ Весь {holder[:16]} ({len(accs)})",
                 callback_data=f"cfg:takeall:{uid}:{accs[0]['cabinet'] or accounts.NO_CABINET}")])
 
     # его собственные счета — капитал + накопленный профит, и рекурсивно то же
@@ -855,9 +855,8 @@ def guest_view(db, owner, uid) -> tuple[str, InlineKeyboardMarkup]:
         out.append("\n<b>📊 Заработок</b>")
         out.append(trades.quote(period.split("\n")))
 
-    rows.append([InlineKeyboardButton(text="🚪 Убрать доступ совсем",
-                                      callback_data=f"cfg:guestkill:{uid}")])
-    rows.append([InlineKeyboardButton(text="↩︎ Назад", callback_data="cfg:guests")])
+    rows.append([InlineKeyboardButton(text="🚪 Убрать доступ", callback_data=f"cfg:guestkill:{uid}"),
+                InlineKeyboardButton(text="↩︎ Назад", callback_data="cfg:guests")])
     out.append("\n<i>«Забрать» удалит счёт у него, у тебя он останется. "
                "«Убрать доступ» закроет вход и сотрёт все копии.</i>")
     return ("\n".join(out), InlineKeyboardMarkup(inline_keyboard=rows))
