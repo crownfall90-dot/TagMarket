@@ -845,14 +845,15 @@ def guest_view(db, owner, uid) -> tuple[str, InlineKeyboardMarkup]:
         out.append(f"🕒 <i>зашёл {since}</i>")
 
     out.append("\n<b>💼 Твои счета у него</b>")
-    out.append("\n\n".join(mine_lines) if mine_lines else "<i>Твоих счетов у него нет.</i>")
+    out.append(trades.quote(mine_lines) if mine_lines
+               else "<i>Твоих счетов у него нет.</i>")
 
     if money_lines:
         out.append("\n<b>💎 Счета гостя</b>")
         out.append(trades.quote(money_lines))
     if period:
         out.append("\n<b>📊 Заработок</b>")
-        out.append(period)
+        out.append(trades.quote(period.split("\n")))
 
     rows.append([InlineKeyboardButton(text="🚪 Убрать доступ совсем",
                                       callback_data=f"cfg:guestkill:{uid}")])
