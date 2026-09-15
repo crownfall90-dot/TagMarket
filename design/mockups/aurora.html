@@ -62,20 +62,17 @@
   body.dark .theme-switch i::before { content: '🌙'; }
   .theme-switch:focus-visible { outline: 2px solid #34d399; outline-offset: 2px; }
 
-  .stage { width: 100%; max-width: 900px; }
+  .stage { width: 100%; max-width: 1320px; }
   .screens {
     display: flex;
-    gap: 20px;
-    overflow-x: auto;
-    padding-bottom: 8px;
-    scroll-snap-type: x proximity;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 24px;
   }
-  .screens::-webkit-scrollbar { height: 8px; }
 
   .phone {
     flex: 0 0 auto;
     width: 380px;
-    scroll-snap-align: start;
     border-radius: 34px;
     overflow: hidden;
     position: relative;
