@@ -748,9 +748,11 @@ def _guest_money_lines(db, uid, indent: str = "", seen: set = None,
     return lines
 
 
-def _guest_period_summary(uid) -> str:
-    """Компактная строка: заработок гостя за сегодня/неделю/месяц — сумма и
-    процент к капиталу на момент каждой сделки (та же мера, что в отчётах).
+def _guest_period_summary(db, uid) -> str:
+    """Компактная строка: заработок гостя за сегодня/неделю/месяц/всё время —
+    сумма и процент к капиталу на момент каждой сделки (та же мера, что в
+    отчётах). «Всё время» считается с момента входа гостя в бот, а не с
+    начала истории счёта — до этого он ещё не был гостем.
 
     Только собственные счета гостя (без рекурсии в его под-гостей — там уже
     может быть много счетов у разных людей, и сложение всех процентов в один
@@ -760,11 +762,18 @@ def _guest_period_summary(uid) -> str:
     if not accs:
         return ""
 
+    since_raw = kv_get(db, f"guest_since:{uid}") or ""
+    try:
+        since_dt = datetime.fromisoformat(since_raw)
+    except ValueError:
+        since_dt = datetime(2000, 1, 1)
+
     now = trades.clock()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     week_start = today_start - timedelta(days=now.weekday())
     month_start = today_start.replace(day=1)
-    periods = [("Сегодня", today_start), ("Неделя", week_start), ("Месяц", month_start)]
+    periods = [("Сегодня", today_start), ("Неделя", week_start),
+               ("Месяц", month_start), ("Всё время", since_dt)]
 
     sums = {label: 0.0 for label, _ in periods}
     pcts = {label: 0.0 for label, _ in periods}
@@ -773,7 +782,7 @@ def _guest_period_summary(uid) -> str:
         if not connect(a):
             continue
         any_data = True
-        all_rows = trades.fetch(datetime(2000, 1, 1), now + timedelta(days=1))
+        all_rows = trades.fetch(datetime(2000, 1, 1), now + timedelta(days=1), all_history=True)
         for label, start in periods:
             period_rows = [r for r in all_rows if r["time"] >= start]
             net = trades.net_of_fee(trades.mine(trades.summary(period_rows)["total"]))
@@ -783,7 +792,7 @@ def _guest_period_summary(uid) -> str:
     if not any_data:
         return ""
 
-    icons = {"Сегодня": "☀️", "Неделя": "📅", "Месяц": "🗓"}
+    icons = {"Сегодня": "☀️", "Неделя": "📅", "Месяц": "🗓", "Всё время": "⭐"}
     lines = []
     for label, _ in periods:
         mark = "▲" if sums[label] >= 0 else "▼"
@@ -829,7 +838,7 @@ def guest_view(db, owner, uid) -> tuple[str, InlineKeyboardMarkup]:
     # самое у его гостей (если он тоже кого-то пригласил). Кнопок нет: это
     # чужие деньги, забрать их нельзя, только смотреть картину целиком
     money_lines = _guest_money_lines(db, uid, exclude_logins=frozenset(mine))
-    period = _guest_period_summary(uid) if money_lines else ""
+    period = _guest_period_summary(db, uid) if money_lines else ""
 
     out = [f"👤 <b>{html.escape(str(who))}</b>", trades.THIN]
     if since:
