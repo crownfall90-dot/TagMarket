@@ -706,14 +706,22 @@ def when_joined(db, uid) -> str:
 
 def _guest_money_lines(db, uid, indent: str = "", seen: set = None,
                        exclude_logins: frozenset = frozenset()) -> list[str]:
-    """Свои счета этого гостя (капитал+накопленный профит, как на дашборде) и
-    рекурсивно — то же самое для его собственных гостей, если он тоже кого-то
-    пригласил. seen защищает от цикла, если данные когда-нибудь испортятся.
+    """Свои счета этого гостя (было при входе → капитал+накопленный профит
+    сейчас, как на дашборде) и рекурсивно — то же самое для его собственных
+    гостей, если он тоже кого-то пригласил. seen защищает от цикла, если
+    данные когда-нибудь испортятся.
     """
     seen = seen if seen is not None else set()
     if uid in seen:
         return []
     seen.add(uid)
+
+    since_raw = kv_get(db, f"guest_since:{uid}") or ""
+    try:
+        since_dt = datetime.fromisoformat(since_raw)
+    except ValueError:
+        since_dt = None
+
     lines = []
     for a in accounts.load(uid):
         if int(a["login"]) in exclude_logins:
@@ -721,7 +729,15 @@ def _guest_money_lines(db, uid, indent: str = "", seen: set = None,
         label = html.escape(a.get("strategy") or a["name"])
         if connect(a):
             total = trades.capital() + trades.retained()
-            lines.append(f"{indent}• {label} — <b>{trades.amount(total, trades.currency())}</b>")
+            now_s = trades.amount(total, trades.currency())
+            if since_dt is not None:
+                rows = trades.fetch(datetime(2000, 1, 1), trades.clock() + timedelta(days=1),
+                                     all_history=True)
+                was = trades.capital_at(since_dt, rows)
+                was_s = trades.amount(was, trades.currency())
+                lines.append(f"{indent}• {label} — {was_s} → <b>{now_s}</b>")
+            else:
+                lines.append(f"{indent}• {label} — <b>{now_s}</b>")
         else:
             lines.append(f"{indent}• {label} — <i>нет данных</i>")
     for sub_uid, sub_name in guests_of(db, uid):
