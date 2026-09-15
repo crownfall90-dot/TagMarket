@@ -1,0 +1,650 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>TagMarkets Aurora</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
+
+<style>
+  * { box-sizing: border-box; }
+  html, body { height: auto; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: #eef1f8;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding-block: 28px;
+    padding-inline: 16px;
+    font-family: 'Inter', sans-serif;
+    transition: background .3s ease;
+  }
+  body.dark { background: #05070c; }
+
+  /* ============ theme toggle ============ */
+  .toggle-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: #fff;
+    border: 1px solid #e4e9f5;
+    border-radius: 999px;
+    padding: 5px;
+    margin-bottom: 22px;
+    position: sticky;
+    top: 12px;
+    z-index: 50;
+    box-shadow: 0 10px 24px -14px rgba(41,48,74,.25);
+    transition: background .3s ease, border-color .3s ease;
+  }
+  body.dark .toggle-bar { background: #0d1119; border-color: #1b2233; }
+  .toggle-bar span { font-size: 12px; font-weight: 700; color: #8891ab; padding: 0 6px; }
+  body.dark .toggle-bar span { color: #7d87a3; }
+  .theme-switch {
+    width: 52px; height: 30px; border-radius: 999px;
+    background: #e4e9f5; position: relative; cursor: pointer; border: none;
+    transition: background .3s ease;
+    flex-shrink: 0;
+  }
+  body.dark .theme-switch { background: #232c40; }
+  .theme-switch i {
+    position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 50%;
+    background: linear-gradient(135deg,#fbbf24,#f59e0b);
+    display: flex; align-items: center; justify-content: center; font-size: 13px;
+    transition: transform .3s cubic-bezier(.2,.8,.2,1), background .3s ease;
+  }
+  body.dark .theme-switch i { transform: translateX(22px); background: linear-gradient(135deg,#818cf8,#6366f1); }
+  .theme-switch i::before { content: '☀️'; }
+  body.dark .theme-switch i::before { content: '🌙'; }
+  .theme-switch:focus-visible { outline: 2px solid #34d399; outline-offset: 2px; }
+
+  .stage { width: 100%; max-width: 900px; }
+  .screens {
+    display: flex;
+    gap: 20px;
+    overflow-x: auto;
+    padding-bottom: 8px;
+    scroll-snap-type: x proximity;
+  }
+  .screens::-webkit-scrollbar { height: 8px; }
+
+  .phone {
+    flex: 0 0 auto;
+    width: 380px;
+    scroll-snap-align: start;
+    border-radius: 34px;
+    overflow: hidden;
+    position: relative;
+    box-shadow: 0 30px 60px -20px rgba(0,0,0,.35);
+  }
+  body.dark .phone { box-shadow: 0 30px 60px -20px rgba(0,0,0,.7); }
+  .phone-inner {
+    height: 760px;
+    overflow-y: auto;
+    padding: 18px 16px 28px;
+  }
+  .phone-inner::-webkit-scrollbar { width: 0; }
+  .screen-label {
+    text-align: center;
+    font-family: 'Inter', sans-serif;
+    font-size: 11px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: #97a0b8;
+    margin: 14px 0 8px;
+    transition: color .3s ease;
+  }
+  body.dark .screen-label { color: #4b5568; }
+
+  [hidden] { display: none !important; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+  }
+
+  /* =========================================================================
+     AURORA — светлый/тёмный режим через CSS-переменные
+     ========================================================================= */
+  .aur-phone {
+    --bg: #f4f6fb;
+    --phone-border: #e4e9f5;
+    --card-bg: rgba(255,255,255,.82);
+    --card-border: rgba(255,255,255,.9);
+    --text-strong: #12172b;
+    --text-mid: #3a4363;
+    --text-dim: #8891ab;
+    --text-faint: #a2a9c0;
+    --divider: #e7ebf5;
+    --navbar-bg: rgba(255,255,255,.92);
+    --quote-bg: rgba(255,255,255,.7);
+    --hero-bg: linear-gradient(135deg,#ffffff,#eef6ff);
+    --switch-off: #e4e9f5;
+    --ghost-bg: rgba(255,255,255,.7);
+    --ghost-border: #e4e9f5;
+    --icon-bg: #fff;
+    --up: #059669;
+    --down: #e11d48;
+    --accent1: #34d399;
+    --accent2: #38bdf8;
+    --blob1: rgba(52,211,153,.28);
+    --blob2: rgba(56,189,248,.24);
+    --blob3: rgba(167,139,250,.18);
+    --code-bg: #eef1f8;
+
+    background: var(--bg);
+    border: 1px solid var(--phone-border);
+    font-family: 'Inter', sans-serif;
+    color: var(--text-strong);
+    position: relative;
+    transition: background .3s ease, border-color .3s ease;
+  }
+  body.dark .aur-phone {
+    --bg: #080b12;
+    --phone-border: #1b2233;
+    --card-bg: rgba(255,255,255,.045);
+    --card-border: rgba(255,255,255,.09);
+    --text-strong: #f3f5fb;
+    --text-mid: #b7bfd6;
+    --text-dim: #7d87a3;
+    --text-faint: #57607a;
+    --divider: rgba(255,255,255,.08);
+    --navbar-bg: rgba(9,12,19,.92);
+    --quote-bg: rgba(255,255,255,.04);
+    --hero-bg: linear-gradient(135deg,#101625,#0c1c22);
+    --switch-off: #232c40;
+    --ghost-bg: rgba(255,255,255,.05);
+    --ghost-border: rgba(255,255,255,.12);
+    --icon-bg: rgba(255,255,255,.06);
+    --up: #34e39a;
+    --down: #fb7185;
+    --blob1: rgba(52,211,153,.16);
+    --blob2: rgba(56,189,248,.14);
+    --blob3: rgba(167,139,250,.12);
+    --code-bg: #0d1119;
+  }
+  .aur-phone::before {
+    content: '';
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(circle at 10% -10%, var(--blob1), transparent 42%),
+      radial-gradient(circle at 100% 10%, var(--blob2), transparent 40%),
+      radial-gradient(circle at 20% 100%, var(--blob3), transparent 45%);
+    pointer-events: none;
+    animation: aur-drift 14s ease-in-out infinite alternate;
+  }
+  @keyframes aur-drift { from { transform: translate(0,0) scale(1); } to { transform: translate(-2%, 2%) scale(1.04); } }
+  .aur-phone .phone-inner { position: relative; z-index: 1; }
+
+  .aur-topbar { display:flex; justify-content:space-between; align-items:center; font-size: 11px; color: var(--text-dim); font-weight: 600; }
+
+  .aur-hello { font-size: 13px; color: var(--text-dim); font-weight: 600; }
+  .aur-hello b { color: var(--text-strong); }
+
+  .aur-hero {
+    margin-top: 14px;
+    background: var(--hero-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 24px;
+    padding: 18px 20px;
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 20px 40px -22px rgba(20,25,45,.25);
+  }
+  body.dark .aur-hero { box-shadow: 0 20px 40px -20px rgba(0,0,0,.6); }
+  .aur-hero::after {
+    content:'';
+    position:absolute; width:140px; height:140px;
+    background: radial-gradient(circle, var(--blob1), transparent 70%);
+    top:-50px; right:-30px; border-radius:50%;
+    animation: aur-blob 6s ease-in-out infinite;
+  }
+  @keyframes aur-blob { 0%,100% { transform: scale(1); } 50% { transform: scale(1.18); } }
+  .aur-hero-label { font-family:'Plus Jakarta Sans',sans-serif; font-size: 11px; text-transform:uppercase; letter-spacing:.1em; color: var(--text-dim); font-weight:700; position:relative; z-index:1; }
+  .aur-hero-total { font-family:'Plus Jakarta Sans',sans-serif; font-size: 32px; font-weight:800; color: var(--text-strong); margin-top:4px; letter-spacing:-0.02em; font-variant-numeric: tabular-nums; position:relative; z-index:1; }
+  .aur-hero-kept { font-size: 12.5px; color: var(--text-mid); margin-top: 4px; font-weight: 600; position: relative; z-index: 1; }
+  .aur-hero-kept b { color: var(--text-strong); }
+  .aur-hero-line { font-size: 12.5px; margin-top: 8px; font-weight:700; position:relative; z-index:1; display:flex; align-items:center; gap:6px; }
+  .aur-hero-line.up { color: var(--up); } .aur-hero-line.down { color: var(--down); }
+  .aur-hero-line .pct { color: var(--text-dim); font-weight: 600; }
+  .aur-spark { font-size: 13px; letter-spacing: 1px; color: var(--accent1); margin-top: 10px; position: relative; z-index: 1; }
+  .aur-hero-meta { font-size: 11px; color: var(--text-faint); margin-top: 6px; position: relative; z-index: 1; }
+
+  .aur-section-title { font-family:'Plus Jakarta Sans',sans-serif; font-size: 15px; font-weight:800; color: var(--text-strong); margin: 20px 0 12px; display:flex; align-items:center; justify-content:space-between; }
+  .aur-section-title span.tag { font-family:'Inter',sans-serif; font-size: 11px; font-weight:700; color: var(--up); background: var(--blob1); padding: 3px 9px; border-radius:999px; }
+
+  .aur-card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 20px; padding: 15px; margin-bottom: 10px; backdrop-filter: blur(8px); box-shadow: 0 12px 28px -18px rgba(20,25,45,.18); transition: transform .2s ease, box-shadow .2s ease, background .3s ease, border-color .3s ease; }
+  body.dark .aur-card { box-shadow: 0 12px 28px -16px rgba(0,0,0,.5); }
+  .aur-card:hover { transform: translateY(-2px); }
+
+  .aur-holder-name { font-weight: 800; font-size: 14px; color: var(--text-strong); display:flex; align-items:center; gap:6px; }
+  .aur-holder-bal { font-family:'Plus Jakarta Sans',sans-serif; font-size: 22px; font-weight:800; color: var(--text-strong); margin-top: 10px; font-variant-numeric: tabular-nums; }
+  .aur-holder-kept { font-size: 12px; color: var(--text-dim); margin-top: 2px; font-weight: 600; }
+  .aur-holder-kept b { color: var(--text-mid); }
+  .aur-holder-row { display:flex; justify-content:space-between; align-items:baseline; font-size: 12.5px; margin-top: 9px; font-weight: 700; }
+  .aur-holder-row .lbl { color: var(--text-mid); font-weight: 600; display:flex; align-items:center; gap:5px; }
+  .aur-holder-row.up { color: var(--up); } .aur-holder-row.down { color: var(--down); }
+  .aur-holder-row .pct { font-size: 11px; color: var(--text-dim); font-weight:600; margin-left:4px; }
+  .aur-holder-foot { display:flex; justify-content:space-between; align-items:center; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--divider); }
+  .aur-holder-spark { font-size: 13px; letter-spacing: 1px; color: var(--accent2); }
+  .aur-holder-meta { font-size: 10.5px; color: var(--text-faint); font-weight: 600; }
+  .aur-holder-warn { font-size: 10.5px; color: var(--down); margin-top: 6px; font-weight: 600; }
+
+  .aur-pill { font-size: 10.5px; font-weight:800; padding: 3px 9px; border-radius:999px; }
+  .aur-pill.up { background: var(--blob1); color: var(--up); }
+  .aur-pill.down { background: rgba(244,63,94,.14); color: var(--down); }
+
+  .aur-chips { display:flex; flex-wrap:wrap; gap:7px; margin-top: 12px; }
+  .aur-chip { font-size: 11.5px; font-weight: 700; color: var(--text-dim); background: var(--ghost-bg); border: 1px solid var(--ghost-border); border-radius: 999px; padding: 7px 12px; transition: all .2s ease; }
+  .aur-chip.active { color: #04212a; background: linear-gradient(135deg,var(--accent1),var(--accent2)); border-color: transparent; }
+
+  .aur-quote { background: var(--quote-bg); border: 1px solid var(--card-border); border-radius: 16px; padding: 12px 14px; margin-top: 4px; backdrop-filter: blur(6px); transition: background .3s ease, border-color .3s ease; }
+  .aur-quote-line { display:flex; justify-content:space-between; align-items:center; font-size: 12.5px; padding: 7px 0; gap: 10px; }
+  .aur-quote-line + .aur-quote-line { border-top: 1px solid var(--divider); }
+  .aur-quote-line .lbl { color: var(--text-mid); font-weight:600; display:flex; align-items:center; gap:6px; }
+  .aur-quote-line .val { font-variant-numeric: tabular-nums; font-weight:800; color: var(--text-strong); text-align: right; white-space: nowrap; }
+  .aur-quote-line .val .arrow { color: var(--text-faint); margin:0 5px; font-weight:500; }
+  .aur-quote-line .pct { font-size: 10.5px; margin-left: 6px; font-weight:800; }
+  .aur-quote-line .pct.up { color: var(--up); } .aur-quote-line .pct.down { color: var(--down); }
+  .aur-quote-sub { padding-left: 14px; font-weight:500 !important; color: var(--text-dim) !important; }
+
+  .aur-deal-line { display:flex; justify-content:space-between; align-items:center; font-size: 12.5px; padding: 7px 0; }
+  .aur-deal-line + .aur-deal-line { border-top: 1px solid var(--divider); }
+  .aur-deal-line .t { color: var(--text-faint); width: 44px; flex-shrink:0; }
+  .aur-deal-line .sym { color: var(--text-mid); font-weight: 700; flex: 1; }
+  .aur-deal-line .v { font-weight: 800; font-variant-numeric: tabular-nums; }
+  .aur-deal-line .v.up { color: var(--up); } .aur-deal-line .v.down { color: var(--down); }
+
+  .aur-guest { display:flex; align-items:center; gap:11px; padding: 11px 0; border-top: 1px solid var(--divider); }
+  .aur-guest:first-of-type { border-top: none; }
+  .aur-avatar { width:38px; height:38px; border-radius:50%; background: linear-gradient(135deg,var(--accent1),var(--accent2)); display:flex; align-items:center; justify-content:center; font-weight:800; font-size:13px; color:#04212a; font-family:'Plus Jakarta Sans',sans-serif; flex-shrink:0; box-shadow: 0 6px 14px -6px rgba(52,211,153,.5); }
+  .aur-guest-name { font-weight:800; font-size:13px; color: var(--text-strong); }
+  .aur-guest-since { font-size: 10.5px; color: var(--text-dim); margin-top:2px; }
+  .aur-guest-count { margin-left:auto; text-align:right; font-size: 12px; color: var(--text-dim); font-weight: 700; }
+
+  .aur-invite-box { background: linear-gradient(135deg, var(--blob1), var(--blob2)); border: 1px solid var(--card-border); border-radius: 20px; padding: 16px; text-align:center; margin-top: 4px; }
+  .aur-invite-code { font-family:'Plus Jakarta Sans',sans-serif; font-size: 21px; font-weight:800; color: var(--text-strong); letter-spacing:.08em; margin-top:6px; }
+  .aur-invite-hint { font-size: 11px; color: var(--text-mid); margin-top:6px; font-weight:600; }
+  .aur-link-row { display:flex; align-items:center; gap:8px; background: var(--quote-bg); border:1px solid var(--card-border); border-radius:14px; padding:10px 12px; margin-top:8px; }
+  .aur-link-row code { font-size: 11px; color: var(--text-mid); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; background: none; }
+  .aur-icon-btn { width:30px; height:30px; border-radius:10px; background: var(--icon-bg); border:1px solid var(--ghost-border); color: var(--text-dim); display:flex; align-items:center; justify-content:center; font-size:12px; cursor:pointer; flex-shrink:0; transition: all .2s ease; }
+  .aur-icon-btn:hover { color: var(--up); border-color: var(--accent1); }
+
+  .aur-btn { font-family:'Plus Jakarta Sans',sans-serif; background: linear-gradient(135deg,var(--accent1),var(--accent2)); color:#04212a; border:none; border-radius:16px; font-weight:800; font-size:14px; padding:13px; width:100%; margin-top:14px; cursor:pointer; box-shadow: 0 14px 26px -12px rgba(52,211,153,.45); transition: transform .15s ease, box-shadow .2s ease; }
+  .aur-btn:hover { box-shadow: 0 16px 30px -10px rgba(52,211,153,.6); }
+  .aur-btn:active { transform: scale(.98); }
+  .aur-btn.ghost { background: var(--ghost-bg); border: 1px solid var(--ghost-border); box-shadow:none; color: var(--text-mid); }
+  .aur-btn.danger { background: rgba(244,63,94,.1); border: 1px solid rgba(244,63,94,.3); box-shadow:none; color: var(--down); }
+  .aur-row2 { display:flex; gap:10px; }
+  .aur-row2 .aur-btn { margin-top:10px; }
+
+  .aur-navbar { display:flex; justify-content:space-around; margin: 18px -16px -28px; padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--divider); background: var(--navbar-bg); position:relative; z-index:2; backdrop-filter: blur(10px); transition: background .3s ease, border-color .3s ease; }
+  .aur-navitem { display:flex; flex-direction:column; align-items:center; gap:4px; font-size: 9.5px; font-weight:700; color: var(--text-faint); }
+  .aur-navitem.active { color: var(--up); }
+
+  .aur-cab-row { display:flex; align-items:center; justify-content:space-between; padding: 13px 14px; background: var(--card-bg); border:1px solid var(--card-border); border-radius:16px; margin-top:8px; cursor:pointer; box-shadow: 0 8px 18px -14px rgba(20,25,45,.18); transition: transform .15s ease; }
+  .aur-cab-row:hover { transform: translateY(-1px); }
+  .aur-cab-name { font-size:13px; font-weight:800; color: var(--text-strong); }
+  .aur-cab-chev { color: var(--text-faint); font-size:13px; }
+
+  .aur-toggle-row { display:flex; justify-content:space-between; align-items:center; background: var(--card-bg); border:1px solid var(--card-border); border-radius:18px; padding:13px 14px; margin-top:10px; box-shadow: 0 10px 22px -16px rgba(20,25,45,.18); }
+  .aur-toggle-label { font-size:12.5px; color: var(--text-strong); font-weight:700; }
+  .aur-toggle-sub { font-size:10.5px; color: var(--text-dim); margin-top:2px; }
+  .aur-switch { width:40px; height:24px; border-radius:999px; background: var(--switch-off); position:relative; flex-shrink:0; transition: background .25s ease; }
+  .aur-switch.on { background: linear-gradient(135deg,var(--accent1),var(--accent2)); }
+  .aur-switch i { position:absolute; top:2px; left:2px; width:20px; height:20px; border-radius:50%; background:#fff; box-shadow: 0 2px 6px rgba(0,0,0,.2); transition: transform .25s cubic-bezier(.2,.8,.2,1); }
+  .aur-switch.on i { transform: translateX(16px); }
+
+  .aur-code { font-family: monospace; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+
+  .credit { color: #97a0b8; font-size: 11px; margin-top: 26px; text-align: center; font-family: 'Inter', sans-serif; transition: color .3s ease; }
+  .credit b { color: #5b6484; }
+  body.dark .credit { color: #4b5568; }
+  body.dark .credit b { color: #8891ab; }
+</style>
+</head>
+<body>
+
+<div class="toggle-bar">
+  <span>Тема</span>
+  <button class="theme-switch" id="theme-toggle" aria-label="Переключить тему"><i></i></button>
+</div>
+
+<div class="stage">
+  <div class="screens">
+
+    <!-- Screen 1: Dashboard -->
+    <div>
+      <div class="phone aur-phone">
+        <div class="phone-inner">
+          <div class="aur-topbar"><span>📊 Мой кабинет</span><span>сентябрь 2026</span></div>
+
+          <div class="aur-hero">
+            <div class="aur-hero-label">Капитал под управлением</div>
+            <div class="aur-hero-total">$121 964<span style="font-size:16px;color:var(--text-dim)">.72</span></div>
+            <div class="aur-hero-kept">+ <b>$1 842.60</b> профит не выведен</div>
+            <div class="aur-hero-line up">▲ сентябрь <b>+2 840.15</b> <span class="pct">+2.41%</span></div>
+            <div class="aur-hero-line up" style="margin-top:2px">◆ всего <b>+18 964.30</b> <span class="pct">+18.6%</span></div>
+          </div>
+
+          <div class="aur-section-title">Кабинеты <span class="tag">3</span></div>
+
+          <div class="aur-card">
+            <div class="aur-holder-name">👤 Дмитрий (я)</div>
+            <div class="aur-holder-bal">$60 000.39</div>
+            <div class="aur-holder-kept">+ <b>$412.80</b> профит</div>
+            <div class="aur-holder-row up"><span class="lbl">▲ сентябрь</span><span>+1 284.60<span class="pct">+2.14%</span></span></div>
+            <div class="aur-holder-row up"><span class="lbl">◆ всего</span><span>+9 840.20<span class="pct">+19.6%</span></span></div>
+            <div class="aur-holder-foot">
+              <span class="aur-holder-spark">▂▃▅▄▆▇█▆</span>
+              <span class="aur-holder-meta">1 счёт · 22 сделки</span>
+            </div>
+          </div>
+
+          <div class="aur-card">
+            <div class="aur-holder-name">👤 DZMITRY SHAULIUKOU</div>
+            <div class="aur-holder-bal">$989.98</div>
+            <div class="aur-holder-kept">+ <b>$64.10</b> профит</div>
+            <div class="aur-holder-row down"><span class="lbl">▼ сентябрь</span><span>−12.40<span class="pct">−0.42%</span></span></div>
+            <div class="aur-holder-row up"><span class="lbl">◆ всего</span><span>+248.90<span class="pct">+8.1%</span></span></div>
+            <div class="aur-holder-foot">
+              <span class="aur-holder-spark">▇▆▄▃▂▃▄▃</span>
+              <span class="aur-holder-meta">2 счёта · 9 сделок</span>
+            </div>
+          </div>
+
+          <div class="aur-card">
+            <div class="aur-holder-name">👤 ALA SHAULIUKOVA</div>
+            <div class="aur-holder-bal">$60 000.20</div>
+            <div class="aur-holder-kept">+ <b>$1 365.70</b> профит</div>
+            <div class="aur-holder-row up"><span class="lbl">▲ сентябрь</span><span>+1 568.35<span class="pct">+1.97%</span></span></div>
+            <div class="aur-holder-row up"><span class="lbl">◆ всего</span><span>+8 875.20<span class="pct">+17.9%</span></span></div>
+            <div class="aur-holder-foot">
+              <span class="aur-holder-spark">▃▄▅▆▆▇▇█</span>
+              <span class="aur-holder-meta">1 счёт · 26 сделок</span>
+            </div>
+            <div class="aur-holder-warn">⚠ 0 из 1 без связи с терминалом</div>
+          </div>
+
+          <div class="aur-row2">
+            <button class="aur-btn ghost">＋ Счёт</button>
+            <button class="aur-btn ghost">⚙︎ Настройки</button>
+          </div>
+
+          <div class="aur-navbar">
+            <div class="aur-navitem active">◆ Счета</div>
+            <div class="aur-navitem">↯ Отчёты</div>
+            <div class="aur-navitem">♥ Гости</div>
+            <div class="aur-navitem">☰ Ещё</div>
+          </div>
+        </div>
+      </div>
+      <div class="screen-label">01 · Обзор капитала</div>
+    </div>
+
+    <!-- Screen 2: Period report -->
+    <div>
+      <div class="phone aur-phone">
+        <div class="phone-inner">
+          <div class="aur-hello">← <b>SONIC · Дмитрий</b></div>
+          <div class="aur-holder-since" style="font-size:11px;color:var(--text-dim);margin-top:2px">Exness-MT5Real10 · <code class="aur-code">60000123</code></div>
+
+          <div class="aur-hero" style="margin-top:12px">
+            <div class="aur-hero-label">Баланс стратегии</div>
+            <div class="aur-hero-total">$60 000<span style="font-size:16px;color:var(--text-dim)">.39</span></div>
+            <div class="aur-hero-line up">◆ всего <b>+9 840.20</b> <span class="pct">+19.6%</span></div>
+          </div>
+
+          <div class="aur-chips">
+            <span class="aur-chip active">Сегодня</span>
+            <span class="aur-chip">Вчера</span>
+            <span class="aur-chip">Неделя</span>
+            <span class="aur-chip">Прошлая неделя</span>
+            <span class="aur-chip">Месяц</span>
+            <span class="aur-chip">Всё время</span>
+          </div>
+
+          <div class="aur-section-title">Сегодня</div>
+          <div class="aur-card">
+            <div class="aur-holder-row up" style="margin-top:0"><span class="lbl">▲ результат</span><span>+184.20<span class="pct">+0.31%</span></span></div>
+            <div class="aur-holder-foot" style="border-top:none; margin-top:6px; padding-top:0">
+              <span class="aur-holder-spark">▃▅▂▇▄</span>
+              <span class="aur-holder-meta">по дням</span>
+            </div>
+            <div class="aur-quote-line" style="padding-top:10px"><span class="lbl">заработано</span><span class="val">+263.14</span></div>
+            <div class="aur-quote-line"><span class="lbl">удержано (30%)</span><span class="val">78.94</span></div>
+            <div class="aur-quote-line"><span class="lbl">📈 сделок</span><span class="val">4 · 3 в плюс, 1 в минус <span style="color:var(--text-dim)">(75%)</span></span></div>
+          </div>
+
+          <div class="aur-section-title">📊 Сделки <span class="tag">МСК</span></div>
+          <div class="aur-card" style="padding:2px 15px">
+            <div class="aur-deal-line"><span class="t">09:12</span><span class="sym">BUY EURUSD</span><span class="v up">+184.20</span></div>
+            <div class="aur-deal-line"><span class="t">08:47</span><span class="sym">SELL XAUUSD</span><span class="v down">−41.05</span></div>
+            <div class="aur-deal-line"><span class="t">07:58</span><span class="sym">BUY US30</span><span class="v up">+96.75</span></div>
+            <div class="aur-deal-line"><span class="t">06:20</span><span class="sym">BUY GBPUSD</span><span class="v up">+58.90</span></div>
+          </div>
+
+          <div class="aur-navbar">
+            <div class="aur-navitem">◆ Счета</div>
+            <div class="aur-navitem active">↯ Отчёты</div>
+            <div class="aur-navitem">♥ Гости</div>
+            <div class="aur-navitem">☰ Ещё</div>
+          </div>
+        </div>
+      </div>
+      <div class="screen-label">02 · Отчёт по счёту</div>
+    </div>
+
+    <!-- Screen 3: Guests list -->
+    <div>
+      <div class="phone aur-phone">
+        <div class="phone-inner">
+          <div class="aur-hello">← <b>Гости</b></div>
+          <div style="font-size:11.5px;color:var(--text-dim);margin-top:10px;line-height:1.5">Кого пустил владелец ссылок: когда зашли и сколько твоих счетов у них.</div>
+
+          <div class="aur-section-title" style="margin-top:16px">По твоим ссылкам</div>
+          <div class="aur-card" style="padding:4px 14px">
+            <div class="aur-guest">
+              <div class="aur-avatar">DS</div>
+              <div><div class="aur-guest-name">DymShe</div><div class="aur-guest-since">зашёл 15.08.2026</div></div>
+              <div class="aur-guest-count">счетов 4</div>
+            </div>
+            <div class="aur-guest">
+              <div class="aur-avatar">KK</div>
+              <div><div class="aur-guest-name">k_koleshko</div><div class="aur-guest-since">зашёл 17.08.2026</div></div>
+              <div class="aur-guest-count">счетов 1</div>
+            </div>
+            <div class="aur-guest">
+              <div class="aur-avatar">LC</div>
+              <div><div class="aur-guest-name">L.Chumakou</div><div class="aur-guest-since">зашёл 02.09.2026</div></div>
+              <div class="aur-guest-count">счетов 2</div>
+            </div>
+          </div>
+
+          <div style="font-size:11px;color:var(--text-faint);margin-top:12px;line-height:1.5">Убрать — закрыть доступ и стереть копии счетов у человека. Вернуться он сможет только по новому приглашению.</div>
+
+          <div class="aur-navbar">
+            <div class="aur-navitem">◆ Счета</div>
+            <div class="aur-navitem">↯ Отчёты</div>
+            <div class="aur-navitem active">♥ Гости</div>
+            <div class="aur-navitem">☰ Ещё</div>
+          </div>
+        </div>
+      </div>
+      <div class="screen-label">03 · Список гостей</div>
+    </div>
+
+    <!-- Screen 4: Guest card -->
+    <div>
+      <div class="phone aur-phone">
+        <div class="phone-inner">
+          <div class="aur-hello">← <b>DymShe</b></div>
+
+          <div style="display:flex; align-items:center; gap:12px; margin-top:10px">
+            <div class="aur-avatar" style="width:50px;height:50px;font-size:16px">DS</div>
+            <div>
+              <div style="font-family:'Plus Jakarta Sans',sans-serif; font-size:18px; font-weight:800; color:var(--text-strong)">DymShe</div>
+              <div class="aur-guest-since">🕒 зашёл 15.08.2026 в 16:52</div>
+            </div>
+          </div>
+
+          <div class="aur-section-title" style="margin-top:18px">💼 Твои счета у него</div>
+          <div class="aur-quote">
+            <div class="aur-quote-line"><span class="lbl">👤 DZMITRY SHAULIUKOU</span></div>
+            <div class="aur-quote-line"><span class="lbl aur-quote-sub">NEO.FX, SONIC</span></div>
+            <div class="aur-quote-line"><span class="lbl">👤 KANSTANTSIN SHAULIUKOU</span></div>
+            <div class="aur-quote-line"><span class="lbl aur-quote-sub">SONIC</span></div>
+          </div>
+          <button class="aur-btn ghost">🗑 Забрать счета</button>
+
+          <div class="aur-section-title">💎 Счета гостя</div>
+          <div class="aur-quote">
+            <div class="aur-quote-line"><span class="lbl">• SONIC</span><span class="val">704.01 <span class="arrow">→</span>750.00 $</span></div>
+            <div class="aur-quote-line"><span class="lbl">• NEO.FX</span><span class="val">239.00 <span class="arrow">→</span>239.98 $</span></div>
+          </div>
+
+          <div class="aur-section-title">📊 Заработок</div>
+          <div class="aur-quote">
+            <div class="aur-quote-line"><span class="lbl">☀️ Сегодня</span><span class="val">▲ +12.40 <span class="pct up">+1.8%</span></span></div>
+            <div class="aur-quote-line"><span class="lbl">📅 Неделя</span><span class="val">▲ +38.90 <span class="pct up">+5.4%</span></span></div>
+            <div class="aur-quote-line"><span class="lbl">🗓 Месяц</span><span class="val">▲ +124.00 <span class="pct up">+17.6%</span></span></div>
+            <div class="aur-quote-line"><span class="lbl">⭐ Всё время</span><span class="val">▲ +186.30 <span class="pct up">+26.1%</span></span></div>
+          </div>
+
+          <div class="aur-row2">
+            <button class="aur-btn danger">🚪 Убрать доступ</button>
+            <button class="aur-btn ghost">↩︎ Назад</button>
+          </div>
+
+          <div class="aur-navbar">
+            <div class="aur-navitem">◆ Счета</div>
+            <div class="aur-navitem">↯ Отчёты</div>
+            <div class="aur-navitem active">♥ Гости</div>
+            <div class="aur-navitem">☰ Ещё</div>
+          </div>
+        </div>
+      </div>
+      <div class="screen-label">04 · Карточка гостя</div>
+    </div>
+
+    <!-- Screen 5: Invites -->
+    <div>
+      <div class="phone aur-phone">
+        <div class="phone-inner">
+          <div class="aur-hello">← <b>Мои ссылки</b></div>
+
+          <div class="aur-invite-box">
+            <div style="font-size:11px;color:var(--text-mid);font-weight:800;text-transform:uppercase;letter-spacing:.08em">Новая ссылка</div>
+            <div class="aur-invite-code">TAG-7F92LK</div>
+            <div class="aur-invite-hint">Открывает доступ к твоим счетам гостю</div>
+          </div>
+
+          <div class="aur-section-title">Мои ссылки <span class="tag">3</span></div>
+
+          <div class="aur-link-row">
+            <code>t.me/tagmarketgold_bot?start=7F92LK</code>
+            <div class="aur-icon-btn">⧉</div>
+            <div class="aur-icon-btn">↗</div>
+            <div class="aur-icon-btn">✕</div>
+          </div>
+          <div class="aur-link-row">
+            <code>t.me/tagmarketgold_bot?start=A31KXZ</code>
+            <div class="aur-icon-btn">⧉</div>
+            <div class="aur-icon-btn">↗</div>
+            <div class="aur-icon-btn">✕</div>
+          </div>
+          <div class="aur-link-row">
+            <code>t.me/tagmarketgold_bot?start=9CQP04</code>
+            <div class="aur-icon-btn">⧉</div>
+            <div class="aur-icon-btn">↗</div>
+            <div class="aur-icon-btn">✕</div>
+          </div>
+
+          <button class="aur-btn">🔗 Новая ссылка</button>
+
+          <div class="aur-navbar">
+            <div class="aur-navitem">◆ Счета</div>
+            <div class="aur-navitem">↯ Отчёты</div>
+            <div class="aur-navitem">♥ Гости</div>
+            <div class="aur-navitem active">☰ Ещё</div>
+          </div>
+        </div>
+      </div>
+      <div class="screen-label">05 · Ссылки-приглашения</div>
+    </div>
+
+    <!-- Screen 6: Settings -->
+    <div>
+      <div class="phone aur-phone">
+        <div class="phone-inner">
+          <div class="aur-hello">← <b>Настройки</b></div>
+          <div style="font-size:11px;color:var(--text-faint);margin-top:4px">🔔 идут · 🔕 выключены · 🔔🔕 часть счетов молчит</div>
+
+          <div class="aur-section-title" style="margin-top:10px">Аккаунты</div>
+          <div class="aur-cab-row">
+            <span>🔔</span>
+            <span class="aur-cab-name" style="flex:1; margin-left:10px">SONIC — Дмитрий (я)</span>
+            <span class="aur-cab-chev">›</span>
+          </div>
+          <div class="aur-cab-row">
+            <span>🔔🔕</span>
+            <span class="aur-cab-name" style="flex:1; margin-left:10px">NEO.FX, SONIC — DZMITRY SHAULIUKOU</span>
+            <span class="aur-cab-chev">›</span>
+          </div>
+          <div class="aur-cab-row">
+            <span>🔕</span>
+            <span class="aur-cab-name" style="flex:1; margin-left:10px">SONIC — ALA SHAULIUKOVA</span>
+            <span class="aur-cab-chev">›</span>
+          </div>
+
+          <div class="aur-row2">
+            <button class="aur-btn ghost">＋ Счёт</button>
+            <button class="aur-btn ghost">👥 Гости</button>
+          </div>
+          <div class="aur-row2">
+            <button class="aur-btn ghost">🔗 Пригласить</button>
+            <button class="aur-btn ghost">📋 Мои ссылки</button>
+          </div>
+
+          <div class="aur-section-title">Только для основателя</div>
+          <div class="aur-toggle-row">
+            <div><div class="aur-toggle-label">🔄 Статус агента</div><div class="aur-toggle-sub">Сообщать об обновлениях и сбоях</div></div>
+            <div class="aur-switch on"><i></i></div>
+          </div>
+
+          <div style="font-size:11px;color:var(--text-faint);margin-top:14px">/stop — отключить бота и стереть свои данные.</div>
+
+          <div class="aur-navbar">
+            <div class="aur-navitem">◆ Счета</div>
+            <div class="aur-navitem">↯ Отчёты</div>
+            <div class="aur-navitem">♥ Гости</div>
+            <div class="aur-navitem active">☰ Ещё</div>
+          </div>
+        </div>
+      </div>
+      <div class="screen-label">06 · Настройки</div>
+    </div>
+
+  </div>
+</div>
+
+<div class="credit">TagMarkets Mini App · <b>Aurora</b> · переключатель темы вверху · листайте экраны вбок</div>
+
+<script>
+  var toggle = document.getElementById('theme-toggle');
+  var saved = null;
+  try { saved = localStorage.getItem('tm-aurora-theme'); } catch (e) {}
+  if (saved === 'dark') document.body.classList.add('dark');
+
+  toggle.addEventListener('click', function () {
+    document.body.classList.toggle('dark');
+    try {
+      localStorage.setItem('tm-aurora-theme', document.body.classList.contains('dark') ? 'dark' : 'light');
+    } catch (e) {}
+  });
+</script>
+</body>
+</html>
