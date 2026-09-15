@@ -466,6 +466,8 @@ def settings_menu(owner, db=None) -> tuple[str, InlineKeyboardMarkup]:
         rows.append([InlineKeyboardButton(
             text=("🔄 Статус агента: сообщать" if upd_on else "🔄 Статус агента: молчать"),
             callback_data="cfg:update_alerts")])
+        rows.append([InlineKeyboardButton(text="📢 Сообщение пользователям",
+                                          callback_data="cfg:bcast")])
     rows.append([InlineKeyboardButton(text="↩︎ Назад", callback_data="dash")])
     text = ("⚙︎ <b>Настройки</b>\n" + trades.THIN +
             "\nВыбери аккаунт — внутри его счета.\n"
@@ -656,6 +658,39 @@ def link_buttons(link: str, inline_ok: bool = False) -> list[InlineKeyboardButto
     share = f"https://t.me/share/url?url={quote(link, safe='')}"
     return [InlineKeyboardButton(text="📋 Копировать", copy_text=CopyTextButton(text=link)),
            InlineKeyboardButton(text="↗️ Переслать", url=share)]
+
+
+def all_guests(db) -> list[tuple[str, str]]:
+    """Все, кто зашёл по чьей-либо ссылке и не отключил бота: [(uid, имя)].
+
+    В отличие от guests_of() не привязано к конкретному владельцу — это
+    список для рассылки основателя, которому можно писать любому активному
+    пользователю бота, а не только своим приглашённым.
+    """
+    out = []
+    for key in kv_keys(db, "guest:%"):
+        uid = key.split(":", 1)[1]
+        if kv_get(db, key) != "1" or kv_get(db, f"left:{uid}") == "1":
+            continue
+        out.append((uid, kv_get(db, f"guest_name:{uid}") or uid))
+    return out
+
+
+def bcast_menu(db) -> tuple[str, InlineKeyboardMarkup]:
+    targets = all_guests(db)
+    rows = []
+    if targets:
+        rows.append([InlineKeyboardButton(text=f"📢 Всем ({len(targets)})",
+                                          callback_data="cfg:bcast:all")])
+    rows += [[InlineKeyboardButton(text=f"👤 {who[:24]}", callback_data=f"cfg:bcast:to:{uid}")]
+             for uid, who in targets]
+    rows.append([InlineKeyboardButton(text="↩︎ Назад", callback_data="cfg")])
+    text = ("📢 <b>Сообщение пользователям</b>\n" + trades.THIN +
+            "\nВыбери «Всем» или конкретного человека, потом пришли текст "
+            "одним сообщением — перешлю его от твоего имени.")
+    if not targets:
+        text += "\n\n<i>Пока по ссылкам никто не заходил — писать некому.</i>"
+    return text, InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def guests_of(db, owner) -> list[tuple[str, str]]:
@@ -1381,6 +1416,10 @@ class Invite(StatesGroup):
     pick = State()
 
 
+class Broadcast(StatesGroup):
+    text = State()
+
+
 CANCEL = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="Отмена", callback_data="cancel")]])
 
@@ -1936,6 +1975,68 @@ async def main():
         kv_set(db, "update_alerts", "1" if now_on else "0")
         await cb.answer("Буду сообщать об обновлениях" if now_on else "Про обновления молчу")
         await swap(cb, *settings_menu(cb.from_user.id, db))
+
+    @dp.callback_query(F.data == "cfg:bcast")
+    async def cfg_bcast(cb: CallbackQuery):
+        if not is_founder(cb.from_user.id):
+            await cb.answer()
+            return
+        await cb.answer()
+        await swap(cb, *bcast_menu(db))
+
+    @dp.callback_query(F.data == "cfg:bcast:all")
+    async def cfg_bcast_all(cb: CallbackQuery, state: FSMContext):
+        if not is_founder(cb.from_user.id):
+            await cb.answer()
+            return
+        await cb.answer()
+        await state.set_state(Broadcast.text)
+        await state.update_data(target="all")
+        await cb.message.answer(
+            "✏️ Пришли текст сообщения — уйдёт всем пользователям бота одним "
+            "сообщением от твоего имени.", reply_markup=CANCEL)
+
+    @dp.callback_query(F.data.startswith("cfg:bcast:to:"))
+    async def cfg_bcast_to(cb: CallbackQuery, state: FSMContext):
+        if not is_founder(cb.from_user.id):
+            await cb.answer()
+            return
+        uid = cb.data.split(":", 3)[3]
+        who = kv_get(db, f"guest_name:{uid}") or uid
+        await cb.answer()
+        await state.set_state(Broadcast.text)
+        await state.update_data(target=uid)
+        await cb.message.answer(
+            f"✏️ Пришли текст сообщения для <b>{html.escape(str(who))}</b> — "
+            f"перешлю от твоего имени.", reply_markup=CANCEL)
+
+    @dp.message(Broadcast.text)
+    async def cfg_bcast_send(msg: Message, state: FSMContext):
+        if not is_founder(msg.from_user.id):
+            await state.clear()
+            return
+        target = (await state.get_data()).get("target")
+        await state.clear()
+        body = (msg.text or "").strip()
+        if not body:
+            await msg.answer("Пустое сообщение — не отправляю.")
+            return
+        out = f"📢 <b>Сообщение от основателя</b>\n{trades.THIN}\n{html.escape(body)}"
+        uids = [t for t, _ in all_guests(db)] if target == "all" else [target]
+        ok = fail = 0
+        for uid in uids:
+            try:
+                await send(bot, int(uid), out)
+                ok += 1
+            except Exception as e:
+                fail += 1
+                log.warning("рассылка: не доставил %s: %s", uid, e)
+            await asyncio.sleep(0.05)
+        report = f"✅ Отправлено: <b>{ok}</b>"
+        if fail:
+            report += f", не доставлено: <b>{fail}</b>"
+        await send(bot, msg.chat.id, report)
+        await send(bot, msg.chat.id, *settings_menu(msg.from_user.id, db))
 
     @dp.callback_query(F.data.startswith("wallet_reset:"))
     async def wallet_reset_confirm(cb: CallbackQuery):
