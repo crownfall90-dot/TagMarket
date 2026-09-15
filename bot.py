@@ -830,16 +830,22 @@ def guest_view(db, owner, uid, expand_take: bool = False) -> tuple[str, InlineKe
 
     if expand_take:
         for holder, accs in by_holder.items():
-            first = holder.split()[0][:10]
-            # по два в ряд — компактнее, чем одна широкая кнопка на всю ширину
-            take_btns = [InlineKeyboardButton(
-                text=f"↩︎ {(src.get('strategy') or src['name'])[:12]} · {first}",
-                callback_data=f"cfg:take:{uid}:{src['login']}") for src in accs]
+            # по два в ряд — компактнее, чем одна широкая кнопка на всю ширину.
+            # Имя целиком, если влезает рядом со второй кнопкой в строке;
+            # если нет — только первое слово, а не обрубок посреди имени
+            take_btns = []
+            for src in accs:
+                label = src.get("strategy") or src["name"]
+                full = f"{label} · {holder}"
+                text = full if len(full) <= 20 else f"{label} · {holder.split()[0]}"
+                take_btns.append(InlineKeyboardButton(
+                    text=f"↩︎ {text}", callback_data=f"cfg:take:{uid}:{src['login']}"))
             for i in range(0, len(take_btns), 2):
                 rows.append(take_btns[i:i + 2])
             if len(accs) > 1:    # весь аккаунт разом — когда стратегий несколько
+                whole = holder if len(holder) <= 24 else holder.split()[0]
                 rows.append([InlineKeyboardButton(
-                    text=f"↩︎↩︎ Весь {holder[:16]} ({len(accs)})",
+                    text=f"↩︎↩︎ Весь {whole} ({len(accs)})",
                     callback_data=f"cfg:takeall:{uid}:{accs[0]['cabinet'] or accounts.NO_CABINET}")])
         if by_holder:
             rows.append([InlineKeyboardButton(text="▲ Свернуть", callback_data=f"cfg:guest:{uid}")])
