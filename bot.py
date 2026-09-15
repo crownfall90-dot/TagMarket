@@ -670,7 +670,14 @@ def guests_of(db, owner) -> list[tuple[str, str]]:
 
 
 def guests_view(db, owner) -> tuple[str, InlineKeyboardMarkup]:
-    """Кого пустил владелец ссылок: когда зашли и кнопка убрать доступ."""
+    """Кого пустил владелец ссылок: когда зашли и кнопка убрать доступ.
+
+    Заработок за периоды сюда намеренно не выносим — посчитать его требует
+    переключить MT5-терминал на каждый счёт каждого гостя по очереди, и при
+    нескольких гостях список открывался бы секундами вместо мгновенно.
+    Подробности — в карточке конкретного гостя, там переключение и так уже
+    происходит ради списка его счетов.
+    """
     rows, lines = [], []
     for uid, who in guests_of(db, owner):
         since = when_joined(db, uid)
@@ -725,6 +732,48 @@ def _guest_money_lines(db, uid, indent: str = "", seen: set = None,
     return lines
 
 
+def _guest_period_summary(uid) -> str:
+    """Компактная строка: заработок гостя за сегодня/неделю/месяц — сумма и
+    процент к капиталу на момент каждой сделки (та же мера, что в отчётах).
+
+    Только собственные счета гостя (без рекурсии в его под-гостей — там уже
+    может быть много счетов у разных людей, и сложение всех процентов в один
+    было бы бессмысленно: у каждого свой капитал и своя база).
+    """
+    accs = accounts.load(uid)
+    if not accs:
+        return ""
+
+    now = trades.clock()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    week_start = today_start - timedelta(days=now.weekday())
+    month_start = today_start.replace(day=1)
+    periods = [("Сегодня", today_start), ("Неделя", week_start), ("Месяц", month_start)]
+
+    sums = {label: 0.0 for label, _ in periods}
+    pcts = {label: 0.0 for label, _ in periods}
+    any_data = False
+    for a in accs:
+        if not connect(a):
+            continue
+        any_data = True
+        all_rows = trades.fetch(datetime(2000, 1, 1), now + timedelta(days=1))
+        for label, start in periods:
+            period_rows = [r for r in all_rows if r["time"] >= start]
+            net = trades.net_of_fee(trades.mine(trades.summary(period_rows)["total"]))
+            sums[label] += net
+            pcts[label] += trades.growth_pct(period_rows, all_rows)
+
+    if not any_data:
+        return ""
+
+    parts = []
+    for label, _ in periods:
+        parts.append(f"{label} {trades.amount(sums[label], signed=True)} "
+                    f"<i>({trades.pct(pcts[label])})</i>")
+    return " · ".join(parts)
+
+
 def guest_view(db, owner, uid) -> tuple[str, InlineKeyboardMarkup]:
     """Карточка гостя: какие мои счета у него и что с ними можно сделать."""
     who = kv_get(db, f"guest_name:{uid}") or str(uid)
@@ -764,6 +813,9 @@ def guest_view(db, owner, uid) -> tuple[str, InlineKeyboardMarkup]:
     money_lines = _guest_money_lines(db, uid, exclude_logins=frozenset(mine))
     if money_lines:
         body += f"\n\n<b>Свои счета гостя</b>\n{trades.quote(money_lines)}"
+        period = _guest_period_summary(uid)
+        if period:
+            body += f"\n<i>{period}</i>"
 
     rows.append([InlineKeyboardButton(text="🚪 Убрать доступ совсем",
                                       callback_data=f"cfg:guestkill:{uid}")])
@@ -1472,6 +1524,21 @@ async def main():
         if not ok:
             log.warning("отклонён запрос: id=%s (%s)",
                         getattr(user, "id", "?"), getattr(user, "username", ""))
+            # на явную попытку входа — ответить, а не молчать; на всё
+            # остальное (случайные сообщения от посторонних) — тишина,
+            # чтобы не превращать бота в отвечающего кому попало
+            msg = getattr(event, "message", None)
+            text = (getattr(msg, "text", "") or "").split(maxsplit=1)[0].lower()
+            if msg is not None and text in ("/start", "/help"):
+                try:
+                    await bot.send_message(
+                        msg.chat.id,
+                        "🔒 <b>Доступ закрыт</b>\n" + trades.THIN +
+                        "\nЭтот бот работает только по приглашениям.\n"
+                        "Попроси у администратора ссылку-приглашение и перейди по ней.",
+                        parse_mode="HTML")
+                except Exception as e:
+                    log.warning("не ответил на отклонённый /start: %s", e)
             return
         return await handler(event, data)
 
