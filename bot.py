@@ -104,7 +104,13 @@ NOTIFY_HISTORY_LIMIT = int(os.getenv("NOTIFY_HISTORY_LIMIT", 30))
 async def send(bot: Bot, chat_id, text: str, markup=None, track: bool = True):
     """Шлёт сообщение. track=False — не считать его частью ротации истории
     (дашборд остаётся всегда: это экран, к которому возвращаются, а не
-    уведомление, которое становится неактуальным)."""
+    уведомление, которое становится неактуальным).
+
+    Без своей клавиатуры сообщение уходит с кнопкой дашборда: из любого
+    уведомления нужен один клик к общей картине, иначе человек ищет его
+    руками где-то выше по чату.
+    """
+    markup = None if markup is NO_BUTTONS else (markup or DASHBOARD_BTN)
     if len(text) > TG_LIMIT:
         text = text[:TG_LIMIT] + "\n<i>…сообщение обрезано</i>"
     try:
@@ -180,6 +186,11 @@ ALL = "*"      # псевдо-счёт «все вместе»
 # засоряет чат: из уведомления нужен один переход — к общей картине.
 DASHBOARD_BTN = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="📊 Дашборд", callback_data="dash")]])
+
+# send() без клавиатуры сам подставляет кнопку дашборда — это способ сказать
+# «кнопок не надо» там, где она была бы мёртвой: человеку, которого только
+# что отключили, дашборд уже не откроется
+NO_BUTTONS = object()
 
 MONTHS = trades.MONTHS      # словарь один на бот и отчёты
 
@@ -2021,7 +2032,10 @@ async def main():
         if not body:
             await msg.answer("Пустое сообщение — не отправляю.")
             return
-        out = f"📢 <b>Сообщение от основателя</b>\n{trades.THIN}\n{html.escape(body)}"
+        # рассылке и личному — разные шапки: «всем» человек читает как новость
+        # сервиса, личное — как обращение к себе, и путать их не стоит
+        head = "📣 <b>Объявление</b>" if target == "all" else "✉️ <b>Сообщение лично тебе</b>"
+        out = f"{head}\n{trades.THIN}\n{html.escape(body)}"
         uids = [t for t, _ in all_guests(db)] if target == "all" else [target]
         ok = fail = 0
         for uid in uids:
@@ -2135,7 +2149,7 @@ async def main():
             await send(bot, int(uid),
                        "🚪 <b>Доступ к боту закрыт</b>\n" + trades.THIN +
                        "\nВладелец счетов убрал тебя. Данные и копии счетов стёрты.\n"
-                       "<i>Вернуться можно по новому приглашению.</i>")
+                       "<i>Вернуться можно по новому приглашению.</i>", NO_BUTTONS)
         except Exception as e:
             log.warning("не уведомил гостя %s об отключении: %s", uid, e)
         log.info("гость %s убран владельцем %s (счетов %d)", uid, cb.from_user.id,
