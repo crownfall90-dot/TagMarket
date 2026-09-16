@@ -543,7 +543,10 @@ def ensure_demo_account(owner) -> bool:
             "owner": owner, "name": DEMO_NAME, "cabinet": DEMO_CABINET,
             "holder": "Копитрейдинг", "login": DEMO_LOGIN,
             "password": DEMO_PASSWORD, "server": DEMO_SERVER,
-            "demo": True, "multiplier": 1,
+            # тот же брокер и то же плечо Amplify, что у обычных счетов —
+            # баланс MT5 на этом логине тоже усилен ×24, без деления
+            # капитал показывало бы баланс, а не реальные вложенные деньги
+            "demo": True, "multiplier": DEFAULT_MULTIPLIER,
         })
         return True
     except ValueError as e:
@@ -557,6 +560,37 @@ def demo_button(owner) -> list[InlineKeyboardButton] | None:
     if not acc or not acc.get("enabled", True):
         return None
     return [InlineKeyboardButton(text=DEMO_NAME, callback_data="cab:DEMO:today")]
+
+
+async def announce_demo_account(bot: Bot, db) -> None:
+    """Разово объявляет о демо-счёте всем, у кого он уже есть. Флаг в kv не
+    даёт разослать это письмо повторно при следующих перезапусках бота —
+    только тем, кто получит демо-счёт впервые (см. accept_invite)."""
+    if kv_get(db, "demo_announced") == "1":
+        return
+    kv_set(db, "demo_announced", "1")     # сначала флаг: повтор рассылки хуже, чем пропуск
+    text = ("🎁 <b>Новое: демо-счёт для наблюдения</b>\n" + trades.THIN +
+            "\nПодключили счёт копитрейдинга с балансом около <b>$45 000</b> — "
+            "под управлением брокера, investor-пароль (торговать через него "
+            "нельзя). Можно вживую смотреть, как заходят сделки и растёт "
+            "баланс на крупную сумму.\n\n"
+            "📅 Доступны сводки за день, неделю, месяц и всё время — так же, "
+            "как по твоим счетам.\n\n"
+            "<i>Не нужен — скрой в настройках кнопкой «👁 Демо-счёт», без "
+            "удаления. Показать обратно можно в любой момент.</i>")
+    ok = fail = 0
+    for uid in {FOUNDER} | {u for u, _ in all_guests(db)}:
+        row = demo_button(uid) if uid else None
+        if not row:
+            continue
+        try:
+            await send(bot, int(uid), text, InlineKeyboardMarkup(inline_keyboard=[row]))
+            ok += 1
+        except Exception as e:
+            fail += 1
+            log.warning("не объявил демо-счёт %s: %s", uid, e)
+        await asyncio.sleep(0.05)
+    log.info("демо-счёт объявлен: отправлено %d, не доставлено %d", ok, fail)
 
 
 def wipe_user(db, uid) -> dict:
@@ -1661,6 +1695,7 @@ async def main():
         for uid in {FOUNDER} | {u for u, _ in all_guests(db)}:
             if uid:
                 ensure_demo_account(uid)
+        await announce_demo_account(bot, db)
 
     def invite_token(event) -> str:
         """Токен из ссылки t.me/бот?start=ТОКЕН, если это она."""
