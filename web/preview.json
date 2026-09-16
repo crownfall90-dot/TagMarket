@@ -158,6 +158,7 @@
       "wins": 54
     },
     "currency": "USD",
+    "capital_base": 12480.50,
     "deals": [
       {
         "ticket": 700000,

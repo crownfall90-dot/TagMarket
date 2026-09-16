@@ -211,7 +211,8 @@ async def report(request):
              for r in filtered[offset:offset + 50]]
     months = [{"month": m["month"], "count": m["trades"],
                "net": trades.net_of_fee(trades.mine(m["gross"] + m["platform"]))} for m in trades.monthly(120)]
-    return web.json_response({"title": title, "summary": summary, "currency": trades.currency(),
+    base_for_pct = float(acc.get("base") or (store.get_state(request.app["trades"], acc["login"]) or {}).get("balance") or 0)
+    return web.json_response({"title": title, "summary": summary, "currency": trades.currency(), "capital_base": base_for_pct,
         "deals": deals, "has_more": offset + 50 < len(filtered), "offset": offset,
         "chart": [{"day": k, "value": v} for k, v in sorted(chart.items())],
         "months": months, "archived": bool(archived),
