@@ -874,6 +874,8 @@ def _guest_money_lines(db, uid, indent: str = "", seen: set = None,
 
     lines = []
     for a in accounts.load(uid):
+        if a.get("demo"):
+            continue
         if int(a["login"]) in exclude_logins:
             continue
         label = html.escape(a.get("strategy") or a["name"])
@@ -930,6 +932,8 @@ def _guest_period_summary(db, uid) -> str:
     any_data = False
     cur = ""
     for a in accs:
+        if a.get("demo"):
+            continue
         if not connect(a):
             continue
         any_data = True
