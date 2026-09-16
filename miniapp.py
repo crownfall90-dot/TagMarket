@@ -13,6 +13,8 @@ import os
 import time
 import calendar
 import logging
+import tempfile
+import uuid
 from collections import OrderedDict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -20,6 +22,8 @@ from urllib.parse import parse_qsl
 from account_lock import locked
 
 from aiohttp import web
+from aiogram.enums import ParseMode
+from aiogram.types import FSInputFile
 
 os.environ["TRADES_SOURCE"] = "store"
 import accounts
@@ -46,6 +50,53 @@ def plain_report(markup):
     parser = Text()
     parser.feed(markup)
     return "".join(parser.parts)
+
+
+class _BroadcastHTML(HTMLParser):
+    """Keep only Telegram HTML formatting supported by the broadcast editor."""
+    ALLOWED = {"b", "strong", "i", "em", "u", "s", "code", "pre", "blockquote", "a"}
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts = []
+        self.stack = []
+
+    def handle_starttag(self, tag, attrs):
+        tag = {"strong": "b", "em": "i"}.get(tag, tag)
+        if tag not in self.ALLOWED:
+            self.stack.append(None)
+            return
+        if tag == "a":
+            href = dict(attrs).get("href", "")
+            if not href.startswith(("https://", "http://")):
+                self.stack.append(None)
+                return
+            self.parts.append(f'<a href="{html.escape(href, quote=True)}">')
+        else:
+            self.parts.append(f"<{tag}>")
+        self.stack.append(tag)
+
+    def handle_endtag(self, tag):
+        tag = {"strong": "b", "em": "i"}.get(tag, tag)
+        opened = self.stack.pop() if self.stack else None
+        if opened == tag:
+            self.parts.append(f"</{tag}>")
+
+    def handle_data(self, data):
+        self.parts.append(html.escape(data))
+
+
+def sanitize_broadcast_html(value, limit=4096):
+    value = str(value or "")
+    if len(value) > limit:
+        raise ValueError("text")
+    parser = _BroadcastHTML()
+    parser.feed(value)
+    parser.close()
+    result = "".join(parser.parts).strip()
+    if len(result) > limit:
+        raise ValueError("text")
+    return result
 
 
 def validate_init_data(raw, token, now=None):
@@ -423,8 +474,39 @@ async def broadcast(request):
     uid, _ = authorize(request)
     if not logic.is_founder(uid):
         raise web.HTTPForbidden(text="Только для основателя")
-    data = await request.json()
-    body = bounded_text(data, "text", 3000, True)
+    media_path = None
+    media_kind = None
+    if request.content_type.startswith("multipart/"):
+        data = {}
+        reader = await request.multipart()
+        async for part in reader:
+            if part.name == "media":
+                if part.content_type not in ("image/jpeg", "image/png", "image/webp", "video/mp4", "video/quicktime"):
+                    raise web.HTTPBadRequest(text="Разрешены JPG, PNG, WEBP, MP4 и MOV")
+                suffix = ".mp4" if part.content_type.startswith("video/") else ".img"
+                media_path = Path(tempfile.gettempdir()) / f"tagmarkets-broadcast-{uuid.uuid4().hex}{suffix}"
+                size = 0
+                with media_path.open("wb") as dst:
+                    while chunk := await part.read_chunk(64 * 1024):
+                        size += len(chunk)
+                        if size > 20 * 1024 * 1024:
+                            media_path.unlink(missing_ok=True)
+                            raise web.HTTPRequestEntityTooLarge(max_size=20 * 1024 * 1024,
+                                                               actual_size=size)
+                        dst.write(chunk)
+                media_kind = "video" if part.content_type.startswith("video/") else "photo"
+            else:
+                data[part.name] = (await part.text()).strip()
+    else:
+        data = await request.json()
+    try:
+        body = sanitize_broadcast_html(data.get("text", ""))
+    except ValueError:
+        if media_path:
+            media_path.unlink(missing_ok=True)
+        raise web.HTTPBadRequest(text="Текст слишком длинный")
+    if not body and not media_path:
+        raise web.HTTPBadRequest(text="Добавьте текст или медиафайл")
     target = str(data.get("target", "all"))
     db = request.app["db"]
     known = {u for u, _ in logic.all_guests(db)}
@@ -448,12 +530,21 @@ async def broadcast(request):
     try:
         for recipient in sorted(known if target == "all" else {target}):
             try:
-                await sender.send_message(recipient, body)
+                if media_kind == "photo":
+                    await sender.send_photo(recipient, FSInputFile(media_path), caption=body or None,
+                                            parse_mode=ParseMode.HTML)
+                elif media_kind == "video":
+                    await sender.send_video(recipient, FSInputFile(media_path), caption=body or None,
+                                            parse_mode=ParseMode.HTML, supports_streaming=True)
+                else:
+                    await sender.send_message(recipient, body, parse_mode=ParseMode.HTML)
                 ok += 1
             except Exception:
                 failed += 1
     finally:
         await session.close()
+        if media_path:
+            media_path.unlink(missing_ok=True)
     result = {"sent": ok, "failed": failed}
     partner.kv_set(db, f"mini_broadcast:{key}", json.dumps(result))
     return web.json_response(result)

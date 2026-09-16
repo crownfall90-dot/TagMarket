@@ -525,7 +525,9 @@ async def main():
     import aiohttp
     # Telegram initData, webhook payloads and broadcasts are small; reject
     # unexpectedly large bodies before they reach JSON/form parsers.
-    app = web.Application(client_max_size=2 * 1024 * 1024)
+    # Telegram media broadcasts are capped at 20 MiB by the API handler;
+    # leave a small multipart overhead margin here.
+    app = web.Application(client_max_size=22 * 1024 * 1024)
     app["db"] = partner.open_db()
     # Telegram недоступен с сервера напрямую (Москва) — тот же прокси, что у бота.
     # Без него вебхуки исправно приходили, а сообщения молча не доставлялись
