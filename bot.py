@@ -90,6 +90,17 @@ FOUNDER = (os.getenv("FOUNDER_ID")
 DB = os.getenv("STATE_DB", os.path.join("data", "state.db"))
 TG_LIMIT = 4000
 
+# Демо-счёт копитрейдинга: реальный чужой счёт, отданный владельцем под
+# наблюдение всем пользователям бота. investor-пароль — торговать через него
+# нельзя физически. Логин/пароль — только в .env на сервере, не в коде и не
+# в git; без них фича молча выключена (DEMO_ON=False)
+DEMO_LOGIN = os.getenv("DEMO_LOGIN", "")
+DEMO_PASSWORD = os.getenv("DEMO_PASSWORD", "")
+DEMO_SERVER = os.getenv("DEMO_SERVER", "TMFinancials-Server")
+DEMO_NAME = "👁 Копитрейдинг · 45k$"      # и name счёта, и то, что видно в шапке отчёта
+DEMO_CABINET = "DEMO"                      # не пересекается с реальными CU-номерами
+DEMO_ON = bool(DEMO_LOGIN and DEMO_PASSWORD)
+
 
 # db для ротации истории (_prune_history) — тот же объект, что main() держит
 # в локальной db и передаёт замыканиям хендлеров. send() определена на уровне
@@ -293,9 +304,12 @@ def account_totals(acc: dict) -> dict | None:
 def dashboard(owner) -> tuple[str, InlineKeyboardMarkup]:
     """Стартовый экран: по каждому кабинету — вложено, PnL и ROI."""
     groups = accounts.cabinets(owner)
+    demo_row = demo_button(owner)
     if not groups:
-        return NO_ACCOUNTS, InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="＋ Добавить счёт", callback_data="add")]])
+        rows = [[InlineKeyboardButton(text="＋ Добавить счёт", callback_data="add")]]
+        if demo_row:
+            rows.append(demo_row)
+        return NO_ACCOUNTS, InlineKeyboardMarkup(inline_keyboard=rows)
 
     blocks, rows = [], []
     grand_now = grand_pnl = grand_month = 0.0
@@ -375,6 +389,8 @@ def dashboard(owner) -> tuple[str, InlineKeyboardMarkup]:
                  f"◆ всего <b>{trades.amount(grand_pnl, signed=True)}</b>"
                  f" · <i>{trades.pct(total_roi)}</i></blockquote>")
 
+    if demo_row:
+        rows.append(demo_row)
     rows.append([InlineKeyboardButton(text="＋ Счёт", callback_data="add"),
                  InlineKeyboardButton(text="⚙︎ Настройки", callback_data="cfg")])
     text = f"{head}\n{trades.THIN}\n" + "\n\n".join(blocks) + "\n\n<i>Выбери аккаунт ниже.</i>"
@@ -468,6 +484,13 @@ def settings_menu(owner, db=None) -> tuple[str, InlineKeyboardMarkup]:
             text=f"{group_bell(info['accounts'])}  {accounts.label(cab, owner)[:26]}",
             callback_data=f"cfg:cab:{cab}")])
 
+    demo_acc = accounts.by_name(DEMO_NAME, owner)
+    if demo_acc:
+        shown = demo_acc.get("enabled", True)
+        rows.append([InlineKeyboardButton(
+            text=("👁 Демо-счёт: показан" if shown else "🙈 Демо-счёт: скрыт"),
+            callback_data="cfg:demo:toggle")])
+
     rows.append([InlineKeyboardButton(text="＋ Счёт", callback_data="add"),
                  InlineKeyboardButton(text="👥 Гости", callback_data="cfg:guests")])
     rows.append([InlineKeyboardButton(text="🔗 Пригласить", callback_data="cfg:inv"),
@@ -483,6 +506,8 @@ def settings_menu(owner, db=None) -> tuple[str, InlineKeyboardMarkup]:
     text = ("⚙︎ <b>Настройки</b>\n" + trades.THIN +
             "\nВыбери аккаунт — внутри его счета.\n"
             "<i>🔔 уведомления идут · 🔕 выключены · 🔔🔕 часть счетов молчит</i>")
+    if demo_acc:
+        text += "\n<i>👁 Демо-счёт — можно скрыть, удалить нельзя.</i>"
     if not is_founder(owner):
         text += "\n\n<i>/stop — отключить бота и стереть свои данные.</i>"
     return text, InlineKeyboardMarkup(inline_keyboard=rows)
@@ -506,6 +531,32 @@ def cabinet_settings(owner, cabinet: str, db=None) -> tuple[str, InlineKeyboardM
 
 def is_founder(uid) -> bool:
     return bool(FOUNDER) and str(uid) == str(FOUNDER)
+
+
+def ensure_demo_account(owner) -> bool:
+    """Заводит личную копию демо-счёта, если её ещё нет. True — завёл только
+    что (по этому флагу решаем, показывать ли приветственный текст)."""
+    if not DEMO_ON or accounts.by_name(DEMO_NAME, owner):
+        return False
+    try:
+        accounts.add({
+            "owner": owner, "name": DEMO_NAME, "cabinet": DEMO_CABINET,
+            "holder": "Копитрейдинг", "login": DEMO_LOGIN,
+            "password": DEMO_PASSWORD, "server": DEMO_SERVER,
+            "demo": True, "multiplier": 1,
+        })
+        return True
+    except ValueError as e:
+        log.warning("не завёл демо-счёт для %s: %s", owner, e)
+        return False
+
+
+def demo_button(owner) -> list[InlineKeyboardButton] | None:
+    """Кнопка демо-счёта для дашборда, если он есть и не скрыт."""
+    acc = accounts.by_name(DEMO_NAME, owner)
+    if not acc or not acc.get("enabled", True):
+        return None
+    return [InlineKeyboardButton(text=DEMO_NAME, callback_data="cab:DEMO:today")]
 
 
 def wipe_user(db, uid) -> dict:
@@ -1604,6 +1655,13 @@ async def main():
     # ALLOWED_USERS в .env оставляет бота личным, если однажды понадобится.
     allowed = {x.strip() for x in os.getenv("ALLOWED_USERS", "").split(",") if x.strip()}
 
+    # бэкфил демо-счёта всем действующим пользователям разом — покрывает и тех,
+    # кто зарегистрировался до появления фичи, и восстановление после сбоя
+    if DEMO_ON:
+        for uid in {FOUNDER} | {u for u, _ in all_guests(db)}:
+            if uid:
+                ensure_demo_account(uid)
+
     def invite_token(event) -> str:
         """Токен из ссылки t.me/бот?start=ТОКЕН, если это она."""
         msg = getattr(event, "message", None)
@@ -1657,6 +1715,7 @@ async def main():
         token = (command.args or "").strip() if command else ""
         if token:
             await accept_invite(msg, token)
+        ensure_demo_account(msg.from_user.id)   # подстраховка, если бэкфил при старте не застал
         text, kb = dashboard(msg.from_user.id)
         await send(bot, msg.chat.id, text, kb, track=False)
 
@@ -1702,7 +1761,17 @@ async def main():
 
         what = ("Доступны счета: <b>" + html.escape(", ".join(added)) + "</b>" if added
                 else "Счета пока не добавлены — заведи свой в настройках.")
-        await send(bot, msg.chat.id, f"✅ <b>Приглашение принято</b>\n{trades.THIN}\n{what}")
+        # свой демо-текст показываем только тому, кому завели прямо сейчас —
+        # у уже зарегистрированных (verdict == "known") он не всплывёт заново
+        got_demo = ensure_demo_account(uid)
+        demo_note = ("\n\n👁 <b>Подключён демо-счёт «Копитрейдинг · 45k$»</b> — "
+                     "сразу видно сделки и статистику по крупной сумме в реальном "
+                     "времени. Удалить нельзя, скрыть можно в настройках."
+                     if got_demo else "")
+        own_note = ("\n\n💼 Заведи и свой счёт в настройках — тогда бот будет "
+                    "следить и за твоими сделками." if added else "")
+        await send(bot, msg.chat.id,
+                   f"✅ <b>Приглашение принято</b>\n{trades.THIN}\n{what}{demo_note}{own_note}")
 
         # ссылка сгорела — сразу выпускаем следующую с теми же счетами, чтобы
         # приглашать дальше можно было не заходя в настройки
@@ -1985,6 +2054,15 @@ async def main():
         now_on = not update_alerts_on(db)
         kv_set(db, "update_alerts", "1" if now_on else "0")
         await cb.answer("Буду сообщать об обновлениях" if now_on else "Про обновления молчу")
+        await swap(cb, *settings_menu(cb.from_user.id, db))
+
+    @dp.callback_query(F.data == "cfg:demo:toggle")
+    async def cfg_demo_toggle(cb: CallbackQuery):
+        if not accounts.by_name(DEMO_NAME, cb.from_user.id):
+            await cb.answer()
+            return
+        value = accounts.toggle(DEMO_NAME, cb.from_user.id, "enabled")
+        await cb.answer("Показан на дашборде" if value else "Скрыт — можно включить обратно")
         await swap(cb, *settings_menu(cb.from_user.id, db))
 
     @dp.callback_query(F.data == "cfg:bcast")

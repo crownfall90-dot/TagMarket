@@ -49,6 +49,7 @@ def load(owner=None) -> list[dict]:
         acc.setdefault("strategy", "")    # название стратегии, напр. SONIC 1
         acc.setdefault("base", None)      # мои деньги на дату base_at (из портала)
         acc.setdefault("base_at", None)
+        acc.setdefault("demo", False)     # чужой счёт для наблюдения, не в счёт капитала владельца
         acc["notify"] = {**DEFAULT_NOTIFY, **(acc.get("notify") or {})}
     if owner is None:
         return data
@@ -90,9 +91,17 @@ def dedup(accs: list[dict], by_owner: bool = True) -> list[dict]:
 
 
 def cabinets(owner) -> dict[str, dict]:
-    """Кабинеты пользователя: {customer_no: {holder, accounts:[...]}}."""
+    """Кабинеты пользователя: {customer_no: {holder, accounts:[...]}}.
+
+    Демо-счета (demo=True) сюда не попадают: через эту функцию считаются
+    деньги на дашборде и в сводках, а демо — чужой счёт для наблюдения, его
+    капитал не должен подмешиваться к капиталу владельца. У демо-счёта свой
+    отдельный вход в интерфейсе (см. bot.py: DEMO_CABINET, demo_button()).
+    """
     out: dict[str, dict] = {}
     for acc in dedup(load(owner)):
+        if acc.get("demo"):
+            continue
         key = acc.get("cabinet") or NO_CABINET
         group = out.setdefault(key, {"holder": acc.get("holder", ""), "accounts": []})
         if acc.get("holder") and not group["holder"]:
@@ -202,6 +211,10 @@ def add(acc: dict) -> None:
 
 def remove(name: str, owner) -> bool:
     data = _read()
+    target = next((a for a in data
+                   if a["name"] == name and str(a["owner"]) == str(owner)), None)
+    if target and target.get("demo"):
+        return False    # демо-счёт можно только скрыть (enabled), не удалить
     left = [a for a in data
             if not (a["name"] == name and str(a["owner"]) == str(owner))]
     if len(left) == len(data):
@@ -217,6 +230,10 @@ def remove_login(login, owner) -> str:
     забрать её обратно по нашему названию не вышло бы.
     """
     data = _read()
+    target = next((a for a in data
+                   if int(a["login"]) == int(login) and str(a["owner"]) == str(owner)), None)
+    if target and target.get("demo"):
+        return ""       # демо-счёт можно только скрыть (enabled), не удалить
     left = [a for a in data
             if not (int(a["login"]) == int(login) and str(a["owner"]) == str(owner))]
     if len(left) == len(data):
