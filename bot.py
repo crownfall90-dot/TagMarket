@@ -438,10 +438,16 @@ def account_view(owner, login: int, period_name: str) -> tuple[str, InlineKeyboa
                                   with_deals=True, until=until))
 
     rows = period_row(f"acc:{login}", period_name)
-    back = accounts.NO_CABINET if not acc.get("cabinet") else acc["cabinet"]
-    rows.append([InlineKeyboardButton(text="↩︎ Назад",
-                                      callback_data=f"cab:{back}:{period_name}"),
-                 InlineKeyboardButton(text="⚙︎ Настройки", callback_data="cfg")])
+    # демо-счёт — единственный в своём псевдо-кабинете, промежуточный список
+    # из одной строки только лишний клик; «Назад» ведёт сразу на дашборд
+    if acc.get("demo"):
+        rows.append([InlineKeyboardButton(text="↩︎ Назад", callback_data="dash"),
+                     InlineKeyboardButton(text="⚙︎ Настройки", callback_data="cfg")])
+    else:
+        back = accounts.NO_CABINET if not acc.get("cabinet") else acc["cabinet"]
+        rows.append([InlineKeyboardButton(text="↩︎ Назад",
+                                          callback_data=f"cab:{back}:{period_name}"),
+                     InlineKeyboardButton(text="⚙︎ Настройки", callback_data="cfg")])
     return text, InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -555,11 +561,17 @@ def ensure_demo_account(owner) -> bool:
 
 
 def demo_button(owner) -> list[InlineKeyboardButton] | None:
-    """Кнопка демо-счёта для дашборда, если он есть и не скрыт."""
+    """Кнопка демо-счёта для дашборда, если он есть и не скрыт.
+
+    Ведёт сразу в отчёт счёта (acc:), а не в список кабинета (cab:) — в
+    демо-«кабинете» всё равно только один счёт, и список из одной строки
+    был бы лишним промежуточным экраном.
+    """
     acc = accounts.by_name(DEMO_NAME, owner)
     if not acc or not acc.get("enabled", True):
         return None
-    return [InlineKeyboardButton(text=DEMO_NAME, callback_data="cab:DEMO:today")]
+    return [InlineKeyboardButton(text=DEMO_NAME,
+                                 callback_data=f"acc:{acc['login']}:today")]
 
 
 async def announce_demo_account(bot: Bot, db) -> None:
@@ -1270,7 +1282,12 @@ def build_all(name: str, owner=None, cabinet: str = None) -> str:
                               f"{got['trades']} сд · <i>{month_name}</i>{mark}")
             months = "\n\n📦 <b>По месяцам</b>\n" + trades.quote(rows_m)
 
-    where = accounts.label(cabinet, owner) if cabinet else "Все счета"
+    # для демо-псевдокабинета accounts.label() вернул бы технический ключ
+    # "DEMO" как есть — cabinets() его специально не знает (не считает деньги)
+    if cabinet == DEMO_CABINET:
+        where = DEMO_NAME
+    else:
+        where = accounts.label(cabinet, owner) if cabinet else "Все счета"
     # капитал и накопленный профит порознь: профит лежит на стратегии, пока его
     # не вывели, и одной суммой непонятно, сколько из этого заработано.
     # Профит — величина «на сейчас», а не результат периода отчёта, поэтому
