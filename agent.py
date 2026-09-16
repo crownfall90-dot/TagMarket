@@ -11,13 +11,13 @@
     AGENT_INTERVAL=15          — пауза между кругами, секунды
 
 Резерв (две машины на одни и те же счета):
-    AGENT_ROLE=primary|standby — по умолчанию primary (работает всегда)
+    AGENT_ROLE=primary|standby — роль машины, по умолчанию primary
     STANDBY_TIMEOUT=90         — секунд без синка отовсюду, прежде чем
                                  standby сам включится (по умолчанию)
-Двух primary одновременно быть не должно: они будут выбивать друг друга
-из терминала при каждом логине в один счёт. standby молчит, пока видит
-через публичный /status сервера, что кто-то (primary) недавно слал данные;
-включается сам, только если синк отовсюду пропал дольше STANDBY_TIMEOUT.
+Сервер выдаёт одному процессу исключительное право опроса на 180 секунд.
+Его продлевает успешная передача данных. Остальные машины ждут, даже если
+роль primary. Вернувшаяся машина не вытесняет исправно работающую резервную.
+STANDBY_TIMEOUT оставлен для совместимости старого диагностического метода.
 
 Автообновление (канареечный деплой между машинами):
     AUTO_UPDATE=1              — включено по умолчанию, 0/false выключает
@@ -37,6 +37,7 @@ import re
 import socket
 import sys
 import time
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import requests
@@ -114,6 +115,24 @@ def _touch_beat() -> None:
         log.warning("не записал отметку: %s", e)
 
 ROLE = os.getenv("AGENT_ROLE", "primary").strip().lower()
+SESSION = uuid.uuid4().hex
+
+
+def claim_terminal() -> bool:
+    """Never touch MT5 without an exclusive server-issued polling lease.
+
+    A recovered primary waits for the current owner; no automatic preemption.
+    Network errors and an older server both fail closed.
+    """
+    try:
+        response = requests.post(f"{SERVER}/agent/claim", headers={"X-Token": TOKEN},
+                                 json={"host": socket.gethostname(), "session": SESSION,
+                                       "role": ROLE}, timeout=15)
+        response.raise_for_status()
+        return response.json().get("granted") is True
+    except Exception as exc:
+        log.warning("не получил право опроса терминала: %s", exc)
+        return False
 # ощутимо больше цикла синка (по умолчанию 15с) — короткая сетевая заминка
 # на primary не должна включать вторую машину поверх первой
 STANDBY_TIMEOUT = int(os.getenv("STANDBY_TIMEOUT", 90))
@@ -806,6 +825,7 @@ def collect(acc: dict) -> dict:
         "command_done": done,       # сервер снимет команду после выполнения
         "host": socket.gethostname(),
         "role": ROLE,
+        "session": SESSION,
     }
 
 
@@ -877,7 +897,7 @@ def main():
     # или None->True->False, а не на самом первом определении роли: обычный
     # старт standby — это не авария, тревожить незачем
     standing_by = None
-    took_over = False   # резерв реально включался — обратно в ожидание больше не переходит
+    took_over = False   # держит право опроса — важен для безопасного автообновления
     update_confirmed = False   # первый успешный круг на этом коде уже подтверждён
     last_env_sync = 0.0
     last_update_check = 0.0
@@ -909,19 +929,16 @@ def main():
             report_canary(canary_commit)
             last_canary_report = time.monotonic()
 
-        # took_over: как только резерв реально взял управление, обратно не
-        # оглядываемся. server_alive() смотрит на sync_seconds_ago по ВСЕМ
-        # машинам без разбора, чей это синк — а раз мы сами теперь синкуем
-        # каждый круг, он всегда видит «кто-то жив только что» и без этой
-        # защёлки резерв включался и выключался бы каждые ~STANDBY_TIMEOUT
-        # секунд, дублируя уведомления о смене роли и синкуя реже, чем надо.
-        if ROLE == "standby" and not took_over and server_alive():
+        # Проверяем владение на каждом круге, включая primary и уже активный
+        # standby. Потеря связи с сервером означает ожидание, а не второй опрос.
+        if not claim_terminal():
             if standing_by is not True:
-                log.info("резерв: синк идёт с другой машины, жду молча")
+                log.info("право опроса не получено, жду следующего круга")
                 if standing_by is False:      # реальный переход, не первый запуск
                     notify_role_change("standby")
                 standing_by = True
             send_heartbeat()
+            took_over = False
             _touch_beat()       # цикл жив и осознанно молчит — не зависание
             if AUTO_UPDATE and not update_confirmed:
                 # дошли досюда без падений — этот код рабочий, даже если он
@@ -931,11 +948,11 @@ def main():
             time.sleep(INTERVAL)
             continue
         if standing_by is True:
-            log.warning("резерв: синк отовсюду пропал (>%d с) — включаюсь насовсем "
-                       "(до перезапуска)", STANDBY_TIMEOUT)
+            log.info("получено исключительное право опроса терминала")
             notify_role_change("active")
             took_over = True
         standing_by = False
+        took_over = True
 
         try:
             accs = fetch_accounts()
@@ -959,6 +976,8 @@ def main():
 
         ok = False
         for acc in accs:
+            if not claim_terminal():
+                break
             try:
                 payload = collect(acc)
                 new = push(payload)

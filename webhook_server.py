@@ -25,6 +25,7 @@ from dotenv import load_dotenv
 import accounts
 import partner  # формат событий и дедуп общие с ботом, но без зависимости от MT5
 import store
+import coordination
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -249,7 +250,7 @@ def check_token(request) -> None:
     # раньше расходятся строки — теоретическая утечка токена по времени ответа
     q = request.query.get("token") or ""
     h = request.headers.get("X-Token") or ""
-    if not (secrets.compare_digest(q, TOKEN) or secrets.compare_digest(h, TOKEN)):
+    if not TOKEN or not (secrets.compare_digest(q, TOKEN) or secrets.compare_digest(h, TOKEN)):
         log.warning("агент: неверный токен от %s", request.remote)
         raise web.HTTPForbidden(text="bad token")
 
@@ -443,6 +444,8 @@ async def agent_sync(request):
     except (ValueError, TypeError, KeyError) as e:
         raise web.HTTPBadRequest(text=f"bad payload: {e}")
     db = request.app["trades"]
+    if not coordination.permits(request.app["db"], data.get("host"), data.get("session")):
+        raise web.HTTPConflict(text="polling lease lost")
 
     store.save_state(db, login, data.get("balance", 0.0), data.get("equity", 0.0),
                      data.get("currency", ""), data.get("server", ""),
@@ -470,10 +473,27 @@ async def agent_sync(request):
         kvdb = request.app["db"]
         partner.kv_set(kvdb, "active_machine", host)
         partner.kv_set(kvdb, f"machine_seen:{host}", utcnow().isoformat())
+        partner.kv_set(kvdb, f"machine_sync:{host}", utcnow().isoformat())
         role = str(data.get("role") or "").strip().lower()
         if role in ("primary", "standby"):
             partner.kv_set(kvdb, f"machine_role:{host}", role)
+    coordination.renew(request.app["db"], data.get("host"), data.get("session"))
     return web.json_response({"ok": True, "new": new})
+
+
+async def agent_claim(request):
+    check_token(request)
+    try:
+        data = await request.json()
+        host, session, role = data["host"], data["session"], data["role"]
+        if (not isinstance(host, str) or not 1 <= len(host) <= 128
+                or not isinstance(session, str) or not 16 <= len(session) <= 128
+                or role not in ("primary", "standby")):
+            raise ValueError("invalid agent identity")
+    except (ValueError, TypeError, KeyError):
+        raise web.HTTPBadRequest(text="invalid agent identity")
+    result = coordination.claim(request.app["db"], host, session, role)
+    return web.json_response(result)
 
 
 async def main():
@@ -493,6 +513,7 @@ async def main():
     app.router.add_get("/agent/accounts", agent_accounts)
     app.router.add_get("/agent/env", agent_env)
     app.router.add_post("/agent/sync", agent_sync)
+    app.router.add_post("/agent/claim", agent_claim)
     app.router.add_post("/agent/role_change", agent_role_change)
     app.router.add_post("/agent/update_notify", agent_update_notify)
     app.router.add_post("/agent/update_report", agent_update_report)
