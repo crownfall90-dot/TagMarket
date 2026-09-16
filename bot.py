@@ -8,6 +8,7 @@ import html
 import json
 import logging
 import logging.handlers
+import math
 import os
 import secrets
 import sqlite3
@@ -26,7 +27,7 @@ from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (CallbackQuery, CopyTextButton, InlineKeyboardButton,
-                           InlineKeyboardMarkup, Message)
+                           InlineKeyboardMarkup, Message, WebAppInfo, MenuButtonWebApp)
 from dotenv import load_dotenv
 
 import accounts
@@ -1546,12 +1547,25 @@ CANCEL = InlineKeyboardMarkup(inline_keyboard=[
 
 async def finish_add(bot: Bot, chat_id, owner, data: dict) -> str:
     """Сохраняет счёт и проверяет, что в него удаётся войти."""
+    from account_lock import locked
+    import store as account_store
     acc = {"owner": owner, "cabinet": data.get("cabinet", ""), "holder": data.get("holder", ""),
            "name": data["name"], "login": int(data["login"]),
            "password": data["password"], "server": data["server"],
            "terminal": trades.TERMINAL, "multiplier": DEFAULT_MULTIPLIER}
     try:
-        accounts.add(acc)
+        with locked(accounts.PATH):
+            existing = [a for a in accounts.load() if int(a["login"]) == acc["login"]]
+            if any(str(a["owner"]) != str(owner) for a in existing):
+                return "Этот счёт уже подключён. Попроси владельца прислать приглашение для доступа."
+            if not trades.HAS_MT5 and not existing:
+                connection = account_store.open_db()
+                try:
+                    if account_store.get_state(connection, acc["login"]):
+                        return "Для повторного подключения этого счёта обратись к владельцу бота."
+                finally:
+                    connection.close()
+            accounts.add(acc)
     except ValueError as e:
         return f"❌ {html.escape(str(e))}"
 
@@ -1706,6 +1720,13 @@ async def main():
     bot = Bot(token, session=session,
               default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
+    mini_url = os.getenv("MINI_APP_URL", "").strip()
+    if mini_url.startswith("https://"):
+        try:
+            await bot.set_chat_menu_button(menu_button=MenuButtonWebApp(
+                text="Открыть приложение", web_app=WebAppInfo(url=mini_url)))
+        except Exception:
+            log.exception("не обновил кнопку Mini App; продолжаю работу бота")
     db = open_db()
     global _bot_db
     _bot_db = db
@@ -2015,14 +2036,14 @@ async def main():
             return
 
         me = msg.from_user.id
-        data = accounts._read()
-        for a in data:
-            if a["name"] == name and str(a["owner"]) == str(me):
-                a["base"] = amount
-                a["base_at"] = trades.clock().isoformat()
-                break
-        accounts.save(data)
         acc = accounts.by_name(name, me)
+        if not acc or acc.get("demo") or acc.get("shared_by"):
+            await msg.answer("Капитал этого счёта недоступен для изменения.")
+            return
+        if not math.isfinite(amount) or not 0 <= amount <= 1e12:
+            await msg.answer("Нужна конечная неотрицательная сумма.")
+            return
+        accounts.update(name, me, base=amount, base_at=trades.clock().isoformat())
         text, kb = account_menu(name, me)
         await send(bot, msg.chat.id,
                    f"✅ Записал: <b>{amount:.2f}</b> на {trades.clock():%d.%m %H:%M}.\n"

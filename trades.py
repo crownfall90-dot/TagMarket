@@ -14,6 +14,8 @@ from dotenv import load_dotenv
 log = logging.getLogger("trades")
 
 try:                        # на сервере библиотеки MT5 нет — она только под Windows
+    if os.getenv("TRADES_SOURCE") == "store":
+        raise ImportError("explicit database-only mode")
     import MetaTrader5 as mt5
     HAS_MT5 = True
 except ImportError:         # тогда те же отчёты строим из базы, которую наполняет агент
@@ -1405,10 +1407,10 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
     if cap:
         kept = retained()           # чистыми, за вычетом доли брокера
         total = cap + kept
-        out.append(f"💰 Капитал: <b>{amount(cap, cur, whole=True)}</b>")
+        out.append(f"💰 Капитал: <b>{amount(cap, cur)}</b>")
         if abs(kept) >= 0.01:
             out.append(f"📈 Накоплено профита: <b>{amount(kept, cur, signed=True)}</b> "
                        f"<i>(не выведен)</i>")
-        out.append(f"📊 Всего на стратегии: <b>{amount(total, cur, whole=True)}</b>")
+        out.append(f"📊 Всего на стратегии: <b>{amount(total, cur)}</b>")
     out.append(late_note(row))
     return "\n".join(out)

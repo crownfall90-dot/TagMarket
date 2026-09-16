@@ -1,0 +1,368 @@
+{
+  "bootstrap": {
+    "user": {
+      "id": 1,
+      "name": "Александр"
+    },
+    "accounts": [
+      {
+        "login": 10001,
+        "name": "SONIC",
+        "strategy": "SONIC",
+        "holder": "Александр Миронов",
+        "cabinet": "CUDEMO1",
+        "server": "TMFinancials-Server",
+        "enabled": true,
+        "notify": {
+          "all": true,
+          "trades": true,
+          "deposits": true,
+          "withdrawals": true
+        },
+        "demo": false,
+        "shared": false,
+        "base": null,
+        "base_at": null,
+        "synced": "2026-09-16T11:15:00",
+        "status": "fresh",
+        "totals": {
+          "now": 12480.5,
+          "pnl": 2486.72,
+          "kept": 1119.024,
+          "month_pct": 5.483113657305397,
+          "month_net": 684.32,
+          "month_trades": 68,
+          "cur": "USD",
+          "roi": 19.92
+        }
+      },
+      {
+        "login": 10002,
+        "name": "NEO.FX",
+        "strategy": "NEO.FX",
+        "holder": "Александр Миронов",
+        "cabinet": "CUDEMO1",
+        "server": "TMFinancials-Server",
+        "enabled": true,
+        "notify": {
+          "all": true,
+          "trades": true,
+          "deposits": true,
+          "withdrawals": true
+        },
+        "demo": false,
+        "shared": false,
+        "base": null,
+        "base_at": null,
+        "synced": "2026-09-16T11:15:00",
+        "status": "fresh",
+        "totals": {
+          "now": 5200,
+          "pnl": 814.6,
+          "kept": 366.57,
+          "month_pct": 6.009230769230769,
+          "month_net": 312.48,
+          "month_trades": 68,
+          "cur": "USD",
+          "roi": 15.67
+        }
+      },
+      {
+        "login": 10003,
+        "name": "SONIC 2",
+        "strategy": "SONIC 2",
+        "holder": "Виктория Орлова",
+        "cabinet": "CUDEMO2",
+        "server": "TMFinancials-Server",
+        "enabled": true,
+        "notify": {
+          "all": true,
+          "trades": true,
+          "deposits": true,
+          "withdrawals": true
+        },
+        "demo": false,
+        "shared": false,
+        "base": null,
+        "base_at": null,
+        "synced": "2026-09-16T11:15:00",
+        "status": "fresh",
+        "totals": {
+          "now": 2840,
+          "pnl": 463.5,
+          "kept": 208.57500000000002,
+          "month_pct": 6.552816901408451,
+          "month_net": 186.1,
+          "month_trades": 68,
+          "cur": "USD",
+          "roi": 16.32
+        }
+      },
+      {
+        "login": 90001,
+        "name": "Копитрейдинг · 45k$",
+        "strategy": "Копитрейдинг · 45k$",
+        "holder": "Публичная стратегия",
+        "cabinet": "DEMO",
+        "server": "TMFinancials-Server",
+        "enabled": true,
+        "notify": {
+          "all": true,
+          "trades": true,
+          "deposits": true,
+          "withdrawals": true
+        },
+        "demo": true,
+        "shared": false,
+        "base": null,
+        "base_at": null,
+        "synced": "2026-09-16T11:15:00",
+        "status": "fresh",
+        "totals": {
+          "now": 45000,
+          "pnl": 6724.89,
+          "kept": 3026.2005000000004,
+          "month_pct": 4.744000000000001,
+          "month_net": 2134.8,
+          "month_trades": 68,
+          "cur": "USD",
+          "roi": 14.94
+        }
+      }
+    ],
+    "totals": {
+      "USD": {
+        "capital": 20520.5,
+        "pnl": 3764.82,
+        "month": 1182.9,
+        "kept": 1694.17
+      }
+    },
+    "wallets": [
+      {
+        "cabinet": "CUDEMO1",
+        "name": "Александр Миронов",
+        "amount": 186.42
+      }
+    ],
+    "founder": true,
+    "update_alerts": true,
+    "server_time": "2026-09-16T11:15:00Z",
+    "refresh_seconds": 15
+  },
+  "report": {
+    "title": "Этот месяц",
+    "summary": {
+      "net_income": 684.32,
+      "count": 68,
+      "wins": 54
+    },
+    "currency": "USD",
+    "deals": [
+      {
+        "ticket": 700000,
+        "time": "2026-09-16T10:50:00Z",
+        "symbol": "XAUUSD.f",
+        "side": "SELL",
+        "net_income": 18.42,
+        "volume": 0.024,
+        "is_balance": false,
+        "comment": ""
+      },
+      {
+        "ticket": 700001,
+        "time": "2026-09-16T10:47:00Z",
+        "symbol": "XAUUSD.f",
+        "side": "BUY",
+        "net_income": 12.86,
+        "volume": 0.024,
+        "is_balance": false,
+        "comment": ""
+      },
+      {
+        "ticket": 700002,
+        "time": "2026-09-16T10:44:00Z",
+        "symbol": "XAUUSD.f",
+        "side": "SELL",
+        "net_income": -4.32,
+        "volume": 0.024,
+        "is_balance": false,
+        "comment": ""
+      },
+      {
+        "ticket": 700003,
+        "time": "2026-09-16T09:41:00Z",
+        "symbol": "XAUUSD.f",
+        "side": "BUY",
+        "net_income": 24.1,
+        "volume": 0.024,
+        "is_balance": false,
+        "comment": ""
+      },
+      {
+        "ticket": 700004,
+        "time": "2026-09-16T09:38:00Z",
+        "symbol": "XAUUSD.f",
+        "side": "SELL",
+        "net_income": 8.54,
+        "volume": 0.024,
+        "is_balance": false,
+        "comment": ""
+      },
+      {
+        "ticket": 700005,
+        "time": "2026-09-16T09:35:00Z",
+        "symbol": "XAUUSD.f",
+        "side": "BUY",
+        "net_income": 16.78,
+        "volume": 0.024,
+        "is_balance": false,
+        "comment": ""
+      },
+      {
+        "ticket": 700006,
+        "time": "2026-09-16T08:32:00Z",
+        "symbol": "XAUUSD.f",
+        "side": "SELL",
+        "net_income": 9.64,
+        "volume": 0.024,
+        "is_balance": false,
+        "comment": ""
+      },
+      {
+        "ticket": 700007,
+        "time": "2026-09-16T08:29:00Z",
+        "symbol": "XAUUSD.f",
+        "side": "BUY",
+        "net_income": 11.27,
+        "volume": 0.024,
+        "is_balance": false,
+        "comment": ""
+      }
+    ],
+    "has_more": false,
+    "offset": 0,
+    "chart": [
+      {
+        "day": "2026-09-01",
+        "value": 42.8
+      },
+      {
+        "day": "2026-09-02",
+        "value": 65.4
+      },
+      {
+        "day": "2026-09-03",
+        "value": -21.2
+      },
+      {
+        "day": "2026-09-04",
+        "value": 86.2
+      },
+      {
+        "day": "2026-09-05",
+        "value": 19.4
+      },
+      {
+        "day": "2026-09-06",
+        "value": -34.5
+      },
+      {
+        "day": "2026-09-07",
+        "value": 108.3
+      },
+      {
+        "day": "2026-09-08",
+        "value": 50.2
+      },
+      {
+        "day": "2026-09-09",
+        "value": 72.1
+      },
+      {
+        "day": "2026-09-10",
+        "value": -16.2
+      },
+      {
+        "day": "2026-09-11",
+        "value": 91.3
+      },
+      {
+        "day": "2026-09-12",
+        "value": 48.5
+      },
+      {
+        "day": "2026-09-13",
+        "value": 61.2
+      },
+      {
+        "day": "2026-09-14",
+        "value": -11.4
+      },
+      {
+        "day": "2026-09-15",
+        "value": 44.1
+      },
+      {
+        "day": "2026-09-16",
+        "value": 78.12
+      }
+    ],
+    "months": [
+      {
+        "month": "2026-06",
+        "count": 78,
+        "net": 482.12
+      },
+      {
+        "month": "2026-07",
+        "count": 81,
+        "net": 594.68
+      },
+      {
+        "month": "2026-08",
+        "count": 84,
+        "net": 725.6
+      },
+      {
+        "month": "2026-09",
+        "count": 87,
+        "net": 684.32
+      }
+    ],
+    "archived": false,
+    "report": "SONIC\nДемонстрационный отчёт · вымышленные данные"
+  },
+  "people": {
+    "guests": [
+      {
+        "id": "2",
+        "name": "Виктория Орлова",
+        "since": "12 сентября 2026",
+        "accounts": [
+          {
+            "login": 10001,
+            "name": "SONIC"
+          }
+        ]
+      }
+    ],
+    "invites": []
+  },
+  "admin": {
+    "machines": [
+      {
+        "host": "Основная машина",
+        "seen": "2026-09-16T11:15:00",
+        "role": "primary"
+      }
+    ],
+    "active": "Основная машина",
+    "users": [
+      {
+        "id": "2",
+        "name": "Виктория Орлова"
+      }
+    ]
+  }
+}

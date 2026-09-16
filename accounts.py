@@ -19,6 +19,7 @@
 
 import json
 import os
+from account_lock import transaction
 
 PATH = os.getenv("ACCOUNTS_FILE", os.path.join("data", "accounts.json"))
 REQUIRED = ("owner", "name", "login", "password", "server")
@@ -174,6 +175,7 @@ def by_name(name: str, owner) -> dict | None:
     return next((a for a in load(owner) if a["name"] == name), None)
 
 
+@transaction
 def save(data: list[dict]) -> None:
     """Пишет счета целиком. Сначала во временный файл, потом переименование.
 
@@ -190,6 +192,7 @@ def save(data: list[dict]) -> None:
     os.replace(tmp, PATH)
 
 
+@transaction
 def add(acc: dict) -> None:
     if by_name(acc["name"], acc["owner"]):
         raise ValueError(f"счёт с именем {acc['name']} у тебя уже есть")
@@ -209,6 +212,7 @@ def add(acc: dict) -> None:
     save(_read() + [acc])
 
 
+@transaction
 def remove(name: str, owner) -> bool:
     data = _read()
     target = next((a for a in data
@@ -223,6 +227,7 @@ def remove(name: str, owner) -> bool:
     return True
 
 
+@transaction
 def remove_login(login, owner) -> str:
     """Удалить счёт по номеру. Возвращает имя удалённого или пустую строку.
 
@@ -244,6 +249,7 @@ def remove_login(login, owner) -> str:
     return gone
 
 
+@transaction
 def purge(owner) -> int:
     """Удалить все счета владельца. Возвращает, сколько удалено.
 
@@ -257,6 +263,7 @@ def purge(owner) -> int:
     return len(data) - len(left)
 
 
+@transaction
 def update(target: str, owner, **changes) -> bool:
     """Правит поля своего счёта. Возвращает False, если счёт не найден.
 
@@ -287,6 +294,7 @@ def strategy_taken(owner, holder: str, strategy: str, skip_login=None) -> bool:
                for a in load(owner))
 
 
+@transaction
 def rename(name: str, owner, strategy: str) -> str:
     """Переименовать стратегию счёта. Возвращает новое отображаемое имя.
 
@@ -319,6 +327,7 @@ def rename(name: str, owner, strategy: str) -> str:
     return new_name
 
 
+@transaction
 def toggle(name: str, owner, kind: str) -> bool:
     """Переключает один вид уведомлений (или сам счёт при kind='enabled')."""
     acc = by_name(name, owner)
@@ -334,6 +343,7 @@ def toggle(name: str, owner, kind: str) -> bool:
     return notify[kind]
 
 
+@transaction
 def share(logins: list, from_owner, to_owner) -> list[str]:
     """Копирует счета другому пользователю. Возвращает имена, под которыми легли.
 
@@ -350,7 +360,11 @@ def share(logins: list, from_owner, to_owner) -> list[str]:
                     if int(a["login"]) == int(login) and str(a["owner"]) == str(from_owner)), None)
         if not src:
             continue
+        if any(int(a["login"]) == int(login) and str(a["owner"]) == str(to_owner)
+               and a["server"] == src["server"] for a in data):
+            continue
         copy = dict(src)
+        copy["shared_by"] = str(from_owner)
         copy["owner"] = int(to_owner)
         # у получателя может быть свой счёт с таким же названием
         taken = {a["name"] for a in data if str(a["owner"]) == str(to_owner)}

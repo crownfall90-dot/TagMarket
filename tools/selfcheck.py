@@ -11,7 +11,11 @@ import os
 import tempfile
 from datetime import datetime
 
-os.environ.setdefault("STATE_DB", os.path.join(tempfile.mkdtemp(), "t.db"))
+_test_dir = tempfile.mkdtemp()
+os.environ["TRADES_SOURCE"] = "store"
+os.environ["STATE_DB"] = os.path.join(_test_dir, "t.db")
+os.environ["TRADES_DB"] = os.path.join(_test_dir, "trades.db")
+os.environ["ACCOUNTS_FILE"] = os.path.join(_test_dir, "accounts.json")
 for k in ("TELEGRAM_BOT_TOKEN", "TM_ROOT", "TM_USER", "TM_PUBLIC_KEY", "TM_PRIVATE_KEY"):
     os.environ.setdefault(k, "x")
 

@@ -275,6 +275,9 @@ async def agent_env(request):
 async def agent_accounts(request):
     """Список счетов, которые агенту надо опрашивать (с паролями)."""
     check_token(request)
+    if not coordination.permits(request.app["db"], request.headers.get("X-Agent-Host"),
+                                request.headers.get("X-Agent-Session")):
+        return web.json_response([])
     db = request.app["trades"]
     return web.json_response([
         {"name": a["name"], "login": a["login"], "password": a["password"],
@@ -286,7 +289,7 @@ async def agent_accounts(request):
         # владельцев (свой счёт + расшаренная гостевая копия через share()).
         # by_owner=True тут не спас бы главный сценарий: гостевая копия
         # именно у ДРУГОГО owner'а всё равно осталась бы отдельной строкой
-        for a in accounts.dedup(accounts.load(), by_owner=False) if a.get("enabled", True)
+        for a in accounts.dedup([a for a in accounts.load() if a.get("enabled", True)], by_owner=False)
     ])
 
 
@@ -306,6 +309,8 @@ async def agent_role_change(request):
     became = data.get("became")     # "active" | "standby"
     db = request.app["db"]
     if became == "active":
+        if not coordination.permits(db, host, data.get("session")):
+            return web.json_response({"ok": False, "error": "not polling owner"}, status=409)
         partner.kv_set(db, "active_machine", host)
     elif became != "standby":
         return web.json_response({"ok": False, "error": "bad became"}, status=400)
@@ -506,6 +511,8 @@ async def main():
     app["proxy"] = os.getenv("TELEGRAM_PROXY", "").split(",")[0].strip() or None
     app["tg"] = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15))
     app["trades"] = store.open_db()
+    import miniapp
+    miniapp.setup(app)
     app.router.add_route("*", "/hook/registration", on_registration)
     app.router.add_route("*", "/hook/deposit", on_deposit)
     app.router.add_get("/health", health)

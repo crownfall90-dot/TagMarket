@@ -717,7 +717,7 @@ def notify_role_change(became: str) -> None:
     сервер уже держит его для всех остальных уведомлений и разошлёт сам."""
     try:
         requests.post(f"{SERVER}/agent/role_change",
-                      json={"host": socket.gethostname(), "became": became},
+                      json={"host": socket.gethostname(), "session": SESSION, "became": became},
                       headers={"X-Token": TOKEN}, timeout=15)
     except Exception as e:
         log.warning("не сообщил серверу о смене роли: %s", e)
@@ -762,7 +762,8 @@ def _retry_request(fn, *, retries: int = 3, backoff: float = 3.0):
 
 def fetch_accounts() -> list[dict]:
     def _do():
-        r = requests.get(f"{SERVER}/agent/accounts", headers={"X-Token": TOKEN}, timeout=10)
+        r = requests.get(f"{SERVER}/agent/accounts", headers={"X-Token": TOKEN,
+                         "X-Agent-Host": socket.gethostname(), "X-Agent-Session": SESSION}, timeout=10)
         r.raise_for_status()
         return r.json()
     return _retry_request(_do)
