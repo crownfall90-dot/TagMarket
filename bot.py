@@ -367,10 +367,10 @@ def dashboard(owner) -> tuple[str, InlineKeyboardMarkup]:
             # рядом с капиталом — профит, который лежит нетронутым: без него
             # непонятно, сколько денег на стратегии на самом деле
             f"<blockquote>💎 <b>{trades.amount(now, cur, whole=True)}</b>"
-            f" + <b>{trades.amount(kept)}</b> <i>профит</i>\n"
-            f"{mark} {MONTHS[trades.clock().month].lower()} <b>{trades.amount(month, signed=True)}</b>"
+            f" + <b>{trades.amount(kept, cur)}</b> <i>профит</i>\n"
+            f"{mark} {MONTHS[trades.clock().month].lower()} <b>{trades.amount(month, cur, signed=True)}</b>"
             f" · <i>{trades.pct(month_pct)}</i>\n"
-            f"◆ всего <b>{trades.amount(pnl, signed=True)}</b> · <i>{trades.pct(roi)}</i>\n"
+            f"◆ всего <b>{trades.amount(pnl, cur, signed=True)}</b> · <i>{trades.pct(roi)}</i>\n"
             f"{line}<i>{n} счёт{'а' if 1 < n < 5 else 'ов' if n != 1 else ''} · "
             f"{month_trades} сделок</i></blockquote>{note}")
         rows.append([InlineKeyboardButton(text=f"👤 {who[:28]}",
@@ -383,10 +383,10 @@ def dashboard(owner) -> tuple[str, InlineKeyboardMarkup]:
         month_pct = grand_weighted / grand_now if grand_now else 0.0
         mark = "▲" if grand_month >= 0 else "▼"
         head += (f"\n<blockquote>💎 <b>{trades.amount(grand_now, cur, whole=True)}</b>"
-                 f" + <b>{trades.amount(grand_kept)}</b> <i>профит</i>\n"
-                 f"{mark} {now_month.lower()} <b>{trades.amount(grand_month, signed=True)}</b>"
+                 f" + <b>{trades.amount(grand_kept, cur)}</b> <i>профит</i>\n"
+                 f"{mark} {now_month.lower()} <b>{trades.amount(grand_month, cur, signed=True)}</b>"
                  f" · <i>{trades.pct(month_pct)}</i>\n"
-                 f"◆ всего <b>{trades.amount(grand_pnl, signed=True)}</b>"
+                 f"◆ всего <b>{trades.amount(grand_pnl, cur, signed=True)}</b>"
                  f" · <i>{trades.pct(total_roi)}</i></blockquote>")
 
     if demo_row:
@@ -921,10 +921,12 @@ def _guest_period_summary(db, uid) -> str:
     sums = {label: 0.0 for label, _ in periods}
     pcts = {label: 0.0 for label, _ in periods}
     any_data = False
+    cur = ""
     for a in accs:
         if not connect(a):
             continue
         any_data = True
+        cur = trades.currency()
         all_rows = trades.fetch(datetime(2000, 1, 1), now + timedelta(days=1), all_history=True)
         for label, start in periods:
             period_rows = [r for r in all_rows if r["time"] >= start]
@@ -940,7 +942,7 @@ def _guest_period_summary(db, uid) -> str:
     for label, _ in periods:
         mark = "▲" if sums[label] >= 0 else "▼"
         lines.append(f"{icons[label]} {label} {mark} "
-                    f"<b>{trades.amount(sums[label], signed=True)}</b> "
+                    f"<b>{trades.amount(sums[label], cur, signed=True)}</b> "
                     f"<i>{trades.pct(pcts[label])}</i>")
     return "\n".join(lines)
 
@@ -1250,11 +1252,11 @@ def build_all(name: str, owner=None, cabinet: str = None) -> str:
         total_period += per
         total_ever += ever
         mark = "▲" if per > 0 else ("▼" if per < 0 else "•")
-        on_top = (f" + {trades.amount(abs(kept))} профит"
+        on_top = (f" + {trades.amount(abs(kept), cur)} профит"
                   if now_view and abs(kept) >= 0.01 else "")
-        lines.append(f"{mark} <b>{html.escape(label)}</b> · {trades.amount(my, whole=True)}{on_top}\n"
-                     f"<i>период {trades.amount(per, signed=True)} · "
-                     f"всего {trades.amount(ever, signed=True)}</i>")
+        lines.append(f"{mark} <b>{html.escape(label)}</b> · {trades.amount(my, cur, whole=True)}{on_top}\n"
+                     f"<i>период {trades.amount(per, cur, signed=True)} · "
+                     f"всего {trades.amount(ever, cur, signed=True)}</i>")
 
     # помесячная история — в отчёте за всё время: в карточке счёта она есть,
     # а в сводке кабинета обрывалась, хотя данные те же
@@ -1278,7 +1280,7 @@ def build_all(name: str, owner=None, cabinet: str = None) -> str:
                 # перезапись превращала «За всё время» в «Август»
                 month_name = trades.MONTHS.get(int(key[5:7]), key)
                 mark = " <i>(идёт)</i>" if key == now_key else ""
-                rows_m.append(f"<b>{trades.amount(got['net'], signed=True)}</b> · "
+                rows_m.append(f"<b>{trades.amount(got['net'], cur, signed=True)}</b> · "
                               f"{got['trades']} сд · <i>{month_name}</i>{mark}")
             months = "\n\n📦 <b>По месяцам</b>\n" + trades.quote(rows_m)
 
@@ -1293,13 +1295,13 @@ def build_all(name: str, owner=None, cabinet: str = None) -> str:
     # Профит — величина «на сейчас», а не результат периода отчёта, поэтому
     # показываем его независимо от выбранного periода (как на дашборде) —
     # иначе за неделю/месяц «на стратегии» тихо показывал только капитал
-    split = (f"\n<i>капитал {trades.amount(total_my)} · "
-             f"профит {trades.amount(total_kept, signed=True)}</i>"
+    split = (f"\n<i>капитал {trades.amount(total_my, cur)} · "
+             f"профит {trades.amount(total_kept, cur, signed=True)}</i>"
              if abs(total_kept) >= 0.01 else "")
     on_strategy = total_my + total_kept
     head = (f"👤 <b>{html.escape(where)}</b>\n"
             f"💎 <b>{trades.amount(on_strategy, cur, whole=True)}</b> на стратегии{split}\n"
-            f"◆ <i>всего заработано {trades.amount(total_ever, signed=True)}</i>")
+            f"◆ <i>всего заработано {trades.amount(total_ever, cur, signed=True)}</i>")
     table = trades.quote(lines)
     # пустая суббота — не поломка: рынок закрыт, и «+0.00» без пояснения пугает
     if (not total_period and since.date() == until.date()

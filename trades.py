@@ -1165,7 +1165,7 @@ def fmt_money_moves(cur: str, limit: int = 60) -> str:
                 icon, what = "🔄", "реинвест с профита в стратегию"
             else:
                 icon, what = "⬅️", "депозит на стратегию"
-            lines.append(f"{r['time']:%d.%m %H:%M} · {icon} <b>{amount(own, signed=True)}</b>"
+            lines.append(f"{r['time']:%d.%m %H:%M} · {icon} <b>{amount(own, cur, signed=True)}</b>"
                          f"\n<i>{what}</i>")
         head = []
         if put_in:
@@ -1193,7 +1193,7 @@ def fmt_head(cur: str) -> str:
     # и месяц с одним взносом давал сотни процентов
     roi = f" ({pct(grew)})" if cap else ""
     return (f"💎 <b>{amount(cap, cur, whole=True)}</b>\n"
-            f"◆ всего <b>{amount(earned, signed=True)}</b>{roi}")
+            f"◆ всего <b>{amount(earned, cur, signed=True)}</b>{roi}")
 
 
 def fmt_deals(title: str, rows: list[dict], cur: str, limit: int = 50) -> str:
@@ -1307,7 +1307,7 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
             out = [f"🕒 <b>{when}</b>", "♻️ <b>Реинвест: профит → капитал</b>", THIN,
                    f"<b>{money(own)}{sign(cur)}</b>",
                    "🔁 Списано из профита и в тот же момент добавлено в капитал"]
-            out.append(f"💰 Капитал: было {amount(was)} → стало "
+            out.append(f"💰 Капитал: было {amount(was, cur)} → стало "
                        f"<b>{amount(became, cur)}</b>")
             return "\n".join(out)
 
@@ -1342,7 +1342,7 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
             out = [f"🕒 <b>{when}</b>", head, THIN, f"<b>{money(own)}{sign(cur)}</b>", where]
             if note:
                 out.append(note)
-            out.append(f"💰 Капитал: было {amount(was)} → стало "
+            out.append(f"💰 Капитал: было {amount(was, cur)} → стало "
                        f"<b>{amount(became, cur)}</b>")
             return "\n".join(out)
 
