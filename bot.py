@@ -493,9 +493,15 @@ def settings_menu(owner, db=None) -> tuple[str, InlineKeyboardMarkup]:
     demo_acc = accounts.by_name(DEMO_NAME, owner)
     if demo_acc:
         shown = demo_acc.get("enabled", True)
-        rows.append([InlineKeyboardButton(
+        row = [InlineKeyboardButton(
             text=("👁 Демо-счёт: показан" if shown else "🙈 Демо-счёт: скрыт"),
-            callback_data="cfg:demo:toggle")])
+            callback_data="cfg:demo:toggle")]
+        if shown:     # уведомления по скрытому счёту всё равно не идут — молчит опрос
+            trades_on = (demo_acc.get("notify") or {}).get("trades", True)
+            row.append(InlineKeyboardButton(
+                text=("🔔 Сделки" if trades_on else "🔕 Сделки"),
+                callback_data="cfg:demo:notify"))
+        rows.append(row)
 
     rows.append([InlineKeyboardButton(text="＋ Счёт", callback_data="add"),
                  InlineKeyboardButton(text="👥 Гости", callback_data="cfg:guests")])
@@ -2117,6 +2123,15 @@ async def main():
             return
         value = accounts.toggle(DEMO_NAME, cb.from_user.id, "enabled")
         await cb.answer("Показан на дашборде" if value else "Скрыт — можно включить обратно")
+        await swap(cb, *settings_menu(cb.from_user.id, db))
+
+    @dp.callback_query(F.data == "cfg:demo:notify")
+    async def cfg_demo_notify(cb: CallbackQuery):
+        if not accounts.by_name(DEMO_NAME, cb.from_user.id):
+            await cb.answer()
+            return
+        value = accounts.toggle(DEMO_NAME, cb.from_user.id, "trades")
+        await cb.answer("Буду сообщать о сделках" if value else "Про сделки молчу")
         await swap(cb, *settings_menu(cb.from_user.id, db))
 
     @dp.callback_query(F.data == "cfg:bcast")
