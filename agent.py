@@ -822,6 +822,7 @@ def collect(acc: dict) -> dict:
         "equity": info.equity,
         "currency": info.currency,
         "server": info.server,
+        "holder": getattr(info, "name", "") or "",
         "deals": [{**d, "time": d["time"].isoformat()} for d in deals],
         "command_done": done,       # сервер снимет команду после выполнения
         "host": socket.gethostname(),

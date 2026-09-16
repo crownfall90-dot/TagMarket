@@ -115,6 +115,10 @@ async def api_errors(request, handler):
         response.headers["Cache-Control"] = "no-store"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=()"
     return response
 
 
@@ -232,7 +236,13 @@ async def add_account(request):
     login = int(data["login"])
     if login <= 0 or login > 2**63 - 1:
         raise ValueError("login")
-    server = bounded_text(data, "server", 96, True)
+    # The terminal is the source of truth for broker server and account name.
+    # Keep an optional deployment default only for the first login handshake;
+    # agent_sync replaces it with the values reported by MT5.
+    server = os.getenv("MT5_SERVER", "").strip()
+    if not server:
+        known = next((a.get("server") for a in accounts.load() if a.get("server")), "")
+        server = known or "TMFinancials-Server"
     # Existing history must not become visible merely by guessing a login.
     with locked(accounts.PATH):
         if any(int(a["login"]) == login for a in accounts.load()):

@@ -26,6 +26,7 @@ import accounts
 import partner  # формат событий и дедуп общие с ботом, но без зависимости от MT5
 import store
 import coordination
+from account_lock import locked
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -455,6 +456,24 @@ async def agent_sync(request):
     store.save_state(db, login, data.get("balance", 0.0), data.get("equity", 0.0),
                      data.get("currency", ""), data.get("server", ""),
                      data.get("capital_hist"))
+    reported_server = str(data.get("server") or "").strip()
+    reported_holder = str(data.get("holder") or "").strip()
+    if reported_server or reported_holder:
+        # MT5 is authoritative for broker server and account owner label.
+        # Update every legitimate owner copy atomically; a shared copy must
+        # never drift from the physical account it represents.
+        with locked(accounts.PATH):
+            all_accounts = accounts._read()
+            changed = False
+            for acc in all_accounts:
+                if int(acc.get("login", -1)) != login:
+                    continue
+                if reported_server and acc.get("server") != reported_server:
+                    acc["server"] = reported_server; changed = True
+                if reported_holder and acc.get("holder") != reported_holder:
+                    acc["holder"] = reported_holder; changed = True
+            if changed:
+                accounts.save(all_accounts)
     if data.get("command_done"):        # агент выполнил команду — снимаем её
         store.clear_command(db, login)
 
@@ -504,7 +523,9 @@ async def agent_claim(request):
 async def main():
     ensure_token()
     import aiohttp
-    app = web.Application()
+    # Telegram initData, webhook payloads and broadcasts are small; reject
+    # unexpectedly large bodies before they reach JSON/form parsers.
+    app = web.Application(client_max_size=2 * 1024 * 1024)
     app["db"] = partner.open_db()
     # Telegram недоступен с сервера напрямую (Москва) — тот же прокси, что у бота.
     # Без него вебхуки исправно приходили, а сообщения молча не доставлялись
@@ -538,6 +559,7 @@ async def main():
         await asyncio.Event().wait()
     finally:
         await app["tg"].close()
+        await runner.cleanup()
 
 
 if __name__ == "__main__":
