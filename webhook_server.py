@@ -15,6 +15,7 @@
 
 import asyncio
 import logging
+import math
 import os
 import secrets
 from datetime import datetime, timezone
@@ -95,6 +96,13 @@ async def handle(request: web.Request, kind: str, fmt) -> web.Response:
         # Telegram с этого сервера отвечает медленно, а портал ждёт ответа
         # считанные секунды и по таймауту шлёт событие заново — поэтому
         # подтверждаем сразу, а сообщение отправляем следом
+        recipient = os.getenv("FOUNDER_ID") or os.getenv("TELEGRAM_CHAT_ID", "")
+        if recipient:
+            title = "Новая регистрация" if kind == "registration" else "Пополнение"
+            detail = partner.who(row) if kind == "registration" else \
+                f"{partner.whose(row)[0]} · {partner.money(row)}"
+            partner.record_notification(db, recipient, f"hook:{kind}:{partner.row_id(row)}",
+                                        kind, title, detail)
         fire(notify(request.app, fmt(row)))
         _remember_wallet_income(db, kind, row)
     log.info("вебхук %s: %s", kind, row.get("customer_no", row.get("tx_id", "?")))
@@ -422,23 +430,90 @@ async def agent_machines_status(request):
                              "active_machine": partner.kv_get(db, "active_machine")})
 
 
-def _valid_deal(d: dict) -> bool:
-    """Сделка годна к записи: время реально парсится.
-
-    Без этой проверки битая строка (обрыв связи на середине, старая версия
-    агента) тихо ложится в deals, а датой давится не запись, а КАЖДОЕ чтение
-    истории потом — store.fetch() падает ValueError на datetime.fromisoformat,
-    а capital()/_profit_on_account() эту ошибку глотают и молча возвращают
-    0 вместо честного сбоя. Итог — капитал завышен, и никто не узнает.
-    """
-    t = d.get("time")
-    if isinstance(t, datetime):
-        return True
+def _sync_number(value, name: str, *, nonnegative: bool = False) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"{name}: number required")
     try:
-        datetime.fromisoformat(str(t))
-        return True
-    except (TypeError, ValueError):
-        return False
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name}: number required") from exc
+    if not math.isfinite(number) or abs(number) > 1e15 or (nonnegative and number < 0):
+        raise ValueError(f"{name}: out of range")
+    return number
+
+
+def _sync_text(value, name: str, limit: int) -> str:
+    if not isinstance(value, str) or len(value) > limit or "\x00" in value:
+        raise ValueError(f"{name}: invalid text")
+    return value
+
+
+def _sync_flag(value, name: str) -> bool:
+    if type(value) is bool:
+        return value
+    if type(value) is int and value in (0, 1):
+        return bool(value)
+    raise ValueError(f"{name}: boolean required")
+
+
+def _sync_payload(data: dict) -> tuple[int, dict, list[dict], bool]:
+    """Validate the whole packet before touching state, deals or commands."""
+    if not isinstance(data, dict):
+        raise ValueError("object required")
+    login = data.get("login")
+    if type(login) not in (int, str) or not str(login).isdigit() or not 0 < int(login) < 2**63:
+        raise ValueError("login: positive integer required")
+    login = int(login)
+    state = {
+        "balance": _sync_number(data.get("balance"), "balance"),
+        "equity": _sync_number(data.get("equity"), "equity"),
+        "currency": _sync_text(data.get("currency"), "currency", 16),
+        "server": _sync_text(data.get("server"), "server", 128),
+        "capital_hist": None if data.get("capital_hist") is None else
+            _sync_number(data["capital_hist"], "capital_hist"),
+    }
+    if not state["currency"].strip() or not state["server"].strip():
+        raise ValueError("currency/server: required")
+    command_done = _sync_flag(data.get("command_done", False), "command_done")
+    incoming = data.get("deals")
+    if not isinstance(incoming, list) or len(incoming) > 50000:
+        raise ValueError("deals: invalid list")
+    deals = []
+    tickets = set()
+    for index, row in enumerate(incoming):
+        label = f"deals[{index}]"
+        if not isinstance(row, dict):
+            raise ValueError(f"{label}: object required")
+        ticket = row.get("ticket")
+        if type(ticket) not in (int, str) or not str(ticket).isdigit() or not 0 < int(ticket) < 2**63:
+            raise ValueError(f"{label}.ticket: positive integer required")
+        ticket = int(ticket)
+        if ticket in tickets:
+            raise ValueError(f"{label}.ticket: duplicate in packet")
+        tickets.add(ticket)
+        raw_time = row.get("time")
+        if not isinstance(raw_time, str):
+            raise ValueError(f"{label}.time: ISO timestamp required")
+        try:
+            when = datetime.fromisoformat(raw_time)
+        except ValueError as exc:
+            raise ValueError(f"{label}.time: invalid timestamp") from exc
+        if when.tzinfo is not None or not 2000 <= when.year <= 2100:
+            raise ValueError(f"{label}.time: UTC naive timestamp required")
+        deal = {"ticket": ticket, "time": when.isoformat()}
+        for field, limit in (("symbol", 64), ("side", 8), ("comment", 1024)):
+            deal[field] = _sync_text(row.get(field), f"{label}.{field}", limit)
+        if deal["side"] not in ("", "BUY", "SELL"):
+            raise ValueError(f"{label}.side: invalid value")
+        for field in ("volume", "price", "profit", "swap", "commission", "net"):
+            deal[field] = _sync_number(row.get(field), f"{label}.{field}",
+                                       nonnegative=field in ("volume", "price"))
+        for field in ("is_balance", "is_closing", "is_opening"):
+            deal[field] = _sync_flag(row.get(field), f"{label}.{field}")
+        if sum(deal[field] for field in ("is_balance", "is_closing", "is_opening")) > 1:
+            raise ValueError(f"{label}: contradictory flags")
+        deals.append(deal)
+    return login, state, deals, command_done
 
 
 async def agent_sync(request):
@@ -446,16 +521,19 @@ async def agent_sync(request):
     check_token(request)
     try:
         data = await request.json()
-        login = int(data["login"])
-    except (ValueError, TypeError, KeyError) as e:
+        if not isinstance(data, dict):
+            raise ValueError("object required")
+    except (ValueError, TypeError, KeyError, OverflowError) as e:
         raise web.HTTPBadRequest(text=f"bad payload: {e}")
     db = request.app["trades"]
     if not coordination.permits(request.app["db"], data.get("host"), data.get("session")):
         raise web.HTTPConflict(text="polling lease lost")
+    try:
+        login, state, deals, command_done = _sync_payload(data)
+    except (ValueError, TypeError, KeyError, OverflowError) as e:
+        raise web.HTTPBadRequest(text=f"bad payload: {e}")
 
-    store.save_state(db, login, data.get("balance", 0.0), data.get("equity", 0.0),
-                     data.get("currency", ""), data.get("server", ""),
-                     data.get("capital_hist"))
+    new = store.save_sync(db, login, state, deals, command_done)
     reported_server = str(data.get("server") or "").strip()
     reported_holder = str(data.get("holder") or "").strip()
     if reported_server or reported_holder:
@@ -474,15 +552,6 @@ async def agent_sync(request):
                     acc["holder"] = reported_holder; changed = True
             if changed:
                 accounts.save(all_accounts)
-    if data.get("command_done"):        # агент выполнил команду — снимаем её
-        store.clear_command(db, login)
-
-    deals = data.get("deals", [])
-    good = [d for d in deals if _valid_deal(d)]
-    if len(good) != len(deals):
-        log.error("счёт %s: %d сделок с нечитаемым временем отброшено", login,
-                  len(deals) - len(good))
-    new = store.save_deals(db, login, good)
     if new:
         log.info("счёт %s: %d новых сделок", login, new)
 

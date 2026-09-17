@@ -10,6 +10,7 @@ import logging
 import logging.handlers
 import math
 import os
+import re
 import secrets
 import sqlite3
 import sys
@@ -1410,6 +1411,9 @@ async def poll_portal(session, bot: Bot, db, chat_id: str) -> int:
             continue
         if _repeat_of_recent(db, row):
             continue
+        partner.record_notification(db, FOUNDER or chat_id, "portal:" + partner.row_id(row),
+                                    "portal", str(row.get("title") or "Событие кабинета"),
+                                    str(row.get("body") or ""))
         await send(bot, chat_id, partner.fmt_portal(row), DASHBOARD_BTN)
         sent += 1
         await asyncio.sleep(0.05)
@@ -1524,6 +1528,11 @@ async def poll_mt5(bot: Bot, db) -> int:
                 kv_set(db, key, row["ticket"])
                 continue
             text = f"{tag}\n{trades.THIN}\n{body}"
+            partner.record_notification(db, owner,
+                                        f"trade:{acc['login']}:{row['ticket']}", kind,
+                                        f"{title} · " + {"trades": "Сделка", "deposits": "Пополнение",
+                                                         "withdrawals": "Вывод"}[kind],
+                                        html.unescape(re.sub(r"<[^>]+>", "", body)))
             try:
                 await send(bot, owner, text, DASHBOARD_BTN)
             except Exception as e:
@@ -1899,7 +1908,7 @@ async def main():
         login = int(cb.data.split(":", 1)[1])
         acc = next((a for a in accounts.load(cb.from_user.id)
                     if int(a["login"]) == login), None)
-        if not acc:
+        if not acc or acc.get("demo") or acc.get("shared_by"):
             await cb.answer("Счёт не найден", show_alert=True)
             return
         await cb.answer("Отправляю команду…")

@@ -124,7 +124,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                     "cabinet":"CU1", "holder":"Test"}
         accounts.add(self.acc)
         store.save_state(self.tdb, 123, 2400, 2400, "USD", "Demo", 100)
-        self.app = web.Application()
+        self.app = web.Application(client_max_size=22 * 1024 * 1024)
         self.app["db"], self.app["trades"] = self.db, self.tdb
         miniapp.setup(self.app)
         self.app.router.add_post("/agent/sync", webhook_server.agent_sync)
@@ -177,6 +177,70 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(calls[1][0:2], ("message", "2"))
             repeat = await self.call("POST", "/api/broadcast", data=form("broadcast-test-1"))
             self.assertEqual(repeat.status, 409)
+
+    async def test_short_photo_caption_is_delivered_and_saved_in_inbox(self):
+        partner.kv_set(self.db, "guest:2", "1")
+        sent = []
+
+        class Session:
+            def __init__(self, **kwargs): pass
+            async def close(self): pass
+
+        class Sender:
+            def __init__(self, *args, **kwargs): pass
+            async def send_photo(self, recipient, media, **kwargs):
+                sent.append((recipient, kwargs.get("caption")))
+
+        form = FormData()
+        form.add_field("target", "2")
+        form.add_field("text", "<b>Привет</b> с картинкой")
+        form.add_field("request_id", "broadcast-short-photo")
+        form.add_field("media", io.BytesIO(b"\x89PNG\r\n\x1a\n" + b"x" * 100),
+                       filename="news.png", content_type="image/png")
+        with patch.object(miniapp.logic, "AiohttpSession", Session), patch.object(miniapp.logic, "Bot", Sender):
+            response = await self.call("POST", "/api/broadcast", data=form)
+        self.assertEqual(response.status, 200, await response.text())
+        self.assertEqual(sent, [("2", "<b>Привет</b> с картинкой")])
+        inbox = await (await self.call("GET", "/api/notifications", uid=2)).json()
+        self.assertEqual(inbox["unread"], 1)
+        self.assertEqual(inbox["items"][0]["body"], "Привет с картинкой")
+
+    async def test_notifications_are_private_deduplicated_and_readable(self):
+        self.assertTrue(partner.record_notification(self.db, 1, "trade:123:1", "trades", "SONIC", "+12 $"))
+        self.assertFalse(partner.record_notification(self.db, 1, "trade:123:1", "trades", "SONIC", "+12 $"))
+        partner.record_notification(self.db, 2, "trade:456:1", "trades", "OTHER", "+99 $")
+        own = await (await self.call("GET", "/api/notifications", uid=1)).json()
+        self.assertEqual(own["unread"], 1)
+        self.assertEqual([i["title"] for i in own["items"]], ["SONIC"])
+        foreign = partner.notifications_for(self.db, 2)["items"][0]["id"]
+        r = await self.call("POST", "/api/notifications", uid=1,
+                            json={"action":"read","ids":[foreign]})
+        self.assertEqual((await r.json())["unread"], 1)
+        own_id = own["items"][0]["id"]
+        r = await self.call("POST", "/api/notifications", uid=1,
+                            json={"action":"read","ids":[own_id]})
+        self.assertEqual((await r.json())["unread"], 0)
+        self.assertEqual(partner.notifications_for(self.db, 2)["unread"], 1)
+
+    async def test_oversize_photo_is_rejected_before_any_send(self):
+        partner.kv_set(self.db, "guest:2", "1")
+        form = FormData()
+        form.add_field("target", "2")
+        form.add_field("text", "Картинка")
+        form.add_field("request_id", "broadcast-large-photo")
+        form.add_field("media", io.BytesIO(b"\x89PNG\r\n\x1a\n" + b"x" * (10 * 1024 * 1024)),
+                       filename="large.png", content_type="image/png")
+        response = await self.call("POST", "/api/broadcast", data=form)
+        self.assertEqual(response.status, 400)
+        self.assertIn("Фото до 10 МБ", (await response.json())["error"])
+        self.assertIsNone(partner.kv_get(self.db, "mini_broadcast:broadcast-large-photo"))
+
+    async def test_approximate_wallet_is_not_exposed_as_balance(self):
+        data = await (await self.call("GET", "/api/bootstrap")).json()
+        self.assertNotIn("wallets", data)
+        response = await self.call("POST", "/api/actions",
+                                   json={"action":"wallet_reset","cabinet":"CU1"})
+        self.assertEqual(response.status, 403)
 
     async def test_no_auth_no_demo_backdoor(self):
         for path in ("/api/bootstrap", "/api/bootstrap?preview=1", "/api/accounts/123/report"):
@@ -310,6 +374,52 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                                    json={"login":123,"balance":0,"host":"reserve","session":"session-b"})
         self.assertEqual(r.status,409)
         self.assertEqual(store.get_state(self.tdb,123)["balance"],2400)
+
+    async def test_sync_rejects_entire_invalid_packet_without_acking_command(self):
+        coordination.claim(self.db, "main", "session-a", "primary")
+        store.set_command(self.tdb, 123, "restart_terminal")
+        deal = {"ticket": 701, "time": "2026-09-17T09:00:00", "symbol": "XAUUSD",
+                "side": "BUY", "volume": .1, "price": 3000, "profit": 12,
+                "swap": 0, "commission": 0, "net": 12, "is_balance": False,
+                "is_closing": True, "is_opening": False, "comment": ""}
+        packet = {"login":123, "balance":2500, "equity":2500, "currency":"USD",
+                  "server":"Demo", "capital_hist":100, "deals":[deal],
+                  "command_done":True, "host":"main", "session":"session-a"}
+        for broken in ({**deal, "ticket":None}, {**deal, "ticket":702, "net":"NaN"},
+                       {**deal, "ticket":702, "time":"bad"},
+                       {**deal, "ticket":702, "is_closing":True, "is_opening":True}):
+            r = await self.client.post("/agent/sync", headers={"X-Token":"agent-test"},
+                                       json={**packet, "deals":[deal, broken]})
+            self.assertEqual(r.status, 400, await r.text())
+            self.assertEqual(store.get_state(self.tdb,123)["balance"], 2400)
+            self.assertEqual(store.last_ticket(self.tdb,123), 0)
+            self.assertEqual(store.get_command(self.tdb,123), "restart_terminal")
+
+        r = await self.client.post("/agent/sync", headers={"X-Token":"agent-test"}, json=packet)
+        self.assertEqual(r.status, 200, await r.text())
+        self.assertEqual((await r.json())["new"], 1)
+        self.assertEqual(store.get_state(self.tdb,123)["balance"], 2500)
+        self.assertEqual(store.last_ticket(self.tdb,123), 701)
+        self.assertIsNone(store.get_command(self.tdb,123))
+
+    async def test_sync_rolls_back_state_and_ack_if_database_insert_fails(self):
+        coordination.claim(self.db, "main", "session-a", "primary")
+        store.set_command(self.tdb, 123, "restart_terminal")
+        self.tdb.execute("CREATE TRIGGER reject_sync BEFORE INSERT ON deals "
+                         "BEGIN SELECT RAISE(ABORT, 'test insert failure'); END")
+        self.tdb.commit()
+        deal = {"ticket":702,"time":"2026-09-17T09:00:00","symbol":"XAUUSD",
+                "side":"BUY","volume":.1,"price":3000,"profit":12,"swap":0,
+                "commission":0,"net":12,"is_balance":False,"is_closing":True,
+                "is_opening":False,"comment":""}
+        r = await self.client.post("/agent/sync", headers={"X-Token":"agent-test"},
+            json={"login":123,"balance":2600,"equity":2600,"currency":"USD",
+                  "server":"Demo","deals":[deal],"command_done":True,
+                  "host":"main","session":"session-a"})
+        self.assertEqual(r.status, 500)
+        self.assertEqual(store.get_state(self.tdb,123)["balance"], 2400)
+        self.assertEqual(store.last_ticket(self.tdb,123), 0)
+        self.assertEqual(store.get_command(self.tdb,123), "restart_terminal")
 
     async def test_legacy_and_non_owner_agents_cannot_read_polling_work(self):
         coordination.claim(self.db,"main","session-a","primary")

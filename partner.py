@@ -9,6 +9,7 @@ import html
 import json
 import os
 import sqlite3
+from datetime import datetime, timezone
 
 THIN = "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
 DB = os.getenv("STATE_DB", os.path.join("data", "state.db"))
@@ -273,8 +274,65 @@ def open_db(path: str = None):
     db.execute("PRAGMA busy_timeout=10000")
     db.execute("CREATE TABLE IF NOT EXISTS seen (kind TEXT, id TEXT, PRIMARY KEY (kind, id))")
     db.execute("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT)")
+    db.execute("""CREATE TABLE IF NOT EXISTS notifications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT NOT NULL,
+        event_key TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        title TEXT NOT NULL,
+        body TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        read_at TEXT,
+        UNIQUE(user_id, event_key)
+    )""")
+    db.execute("CREATE INDEX IF NOT EXISTS notifications_user_time ON notifications(user_id, id DESC)")
     db.commit()
     return db
+
+
+def record_notification(db, user_id, event_key, kind, title, body) -> bool:
+    """Persist a user-visible event once, across bot/webhook retries."""
+    if not str(user_id).lstrip("-").isdigit() or not event_key:
+        raise ValueError("invalid notification recipient or key")
+    now = datetime.now(timezone.utc).isoformat()
+    cur = db.execute("INSERT OR IGNORE INTO notifications "
+                     "(user_id,event_key,kind,title,body,created_at) VALUES (?,?,?,?,?,?)",
+                     (str(user_id), str(event_key)[:180], str(kind)[:32],
+                      str(title)[:160], str(body)[:1200], now))
+    if cur.rowcount:
+        # Keep a bounded personal history while preserving the latest events.
+        db.execute("DELETE FROM notifications WHERE user_id=? AND id NOT IN "
+                   "(SELECT id FROM notifications WHERE user_id=? ORDER BY id DESC LIMIT 200)",
+                   (str(user_id), str(user_id)))
+    db.commit()
+    return bool(cur.rowcount)
+
+
+def notifications_for(db, user_id, limit=50) -> dict:
+    uid = str(user_id)
+    rows = db.execute("SELECT id,kind,title,body,created_at,read_at FROM notifications "
+                      "WHERE user_id=? ORDER BY id DESC LIMIT ?", (uid, limit)).fetchall()
+    unread = db.execute("SELECT COUNT(*) FROM notifications WHERE user_id=? AND read_at IS NULL",
+                        (uid,)).fetchone()[0]
+    return {"items": [dict(zip(("id","kind","title","body","created_at","read_at"), row))
+                      for row in rows], "unread": unread}
+
+
+def read_notifications(db, user_id, ids=None) -> int:
+    uid = str(user_id)
+    now = datetime.now(timezone.utc).isoformat()
+    if ids is None:
+        cur = db.execute("UPDATE notifications SET read_at=? WHERE user_id=? AND read_at IS NULL",
+                         (now, uid))
+    else:
+        safe = [int(x) for x in ids if type(x) is int and x > 0][:50]
+        if not safe:
+            return 0
+        cur = db.execute("UPDATE notifications SET read_at=? WHERE user_id=? "
+                         f"AND id IN ({','.join('?' * len(safe))}) AND read_at IS NULL",
+                         (now, uid, *safe))
+    db.commit()
+    return cur.rowcount
 
 
 def kv_get(db, key, default=None):

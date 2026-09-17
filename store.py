@@ -123,7 +123,7 @@ FIELDS = ("ticket", "time", "symbol", "side", "volume", "price", "profit", "swap
           "commission", "net", "is_balance", "is_closing", "is_opening", "comment")
 
 
-def save_deals(db, login: int, deals: list[dict]) -> int:
+def save_deals(db, login: int, deals: list[dict], *, commit: bool = True) -> int:
     """Сохраняет сделки. Возвращает, сколько из них новых."""
     new = 0
     for d in deals:
@@ -135,12 +135,13 @@ def save_deals(db, login: int, deals: list[dict]) -> int:
             f"INSERT OR IGNORE INTO deals (login, {', '.join(FIELDS)}) "
             f"VALUES ({', '.join('?' * (len(FIELDS) + 1))})", row)
         new += cur.rowcount
-    db.commit()
+    if commit:
+        db.commit()
     return new
 
 
 def save_state(db, login: int, balance: float, equity: float, currency: str,
-               server: str, capital_hist: float = None) -> None:
+               server: str, capital_hist: float = None, *, commit: bool = True) -> None:
     db.execute(
         "INSERT INTO state (login, balance, equity, currency, server, synced, capital_hist) "
         "VALUES (?, ?, ?, ?, ?, ?, ?) "
@@ -149,7 +150,8 @@ def save_state(db, login: int, balance: float, equity: float, currency: str,
         # капитал агент считает по всей истории; если не смог — держим прежний
         "capital_hist=COALESCE(excluded.capital_hist, state.capital_hist)",
         (int(login), balance, equity, currency, server, utcnow().isoformat(), capital_hist))
-    db.commit()
+    if commit:
+        db.commit()
 
 
 def get_state(db, login: int) -> dict | None:
@@ -168,9 +170,22 @@ def get_command(db, login: int) -> str | None:
     return row["cmd"] if row else None
 
 
-def clear_command(db, login: int) -> None:
+def clear_command(db, login: int, *, commit: bool = True) -> None:
     db.execute("DELETE FROM commands WHERE login=?", (int(login),))
-    db.commit()
+    if commit:
+        db.commit()
+
+
+def save_sync(db, login: int, state: dict, deals: list[dict], command_done: bool) -> int:
+    """Apply one agent packet atomically, including command acknowledgement."""
+    with db:
+        save_state(db, login, state["balance"], state["equity"],
+                   state["currency"], state["server"], state["capital_hist"],
+                   commit=False)
+        new = save_deals(db, login, deals, commit=False)
+        if command_done:
+            clear_command(db, login, commit=False)
+    return new
 
 
 def last_ticket(db, login: int) -> int:

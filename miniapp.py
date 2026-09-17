@@ -214,13 +214,25 @@ async def bootstrap(request):
         bucket = totals.setdefault(t["cur"], {"capital": 0, "pnl": 0, "month": 0, "kept": 0})
         for key, source in (("capital", "now"), ("pnl", "pnl"), ("month", "month_net"), ("kept", "kept")):
             bucket[key] += t[source]
-    wallets = [{"cabinet": cab, "name": accounts.label(cab, uid),
-                "amount": partner.wallet_balance(db, cab)[0]} for cab in accounts.cabinets(uid)
-               if cab != accounts.NO_CABINET]
     return web.json_response({"user": {"id": user["id"], "name": user.get("first_name", "Инвестор")},
-        "accounts": items, "totals": totals, "wallets": wallets,
+        "accounts": items, "totals": totals,
         "founder": logic.is_founder(uid), "update_alerts": logic.update_alerts_on(db),
         "server_time": logic.utcnow().isoformat() + "Z", "refresh_seconds": 15})
+
+
+async def notifications(request):
+    uid, _ = authorize(request)
+    db = request.app["db"]
+    if request.method == "POST":
+        data = await request.json()
+        if not isinstance(data, dict) or data.get("action") != "read":
+            raise ValueError("action")
+        ids = data.get("ids")
+        if ids is not None and (not isinstance(ids, list) or len(ids) > 50 or
+                                any(type(x) is not int or x <= 0 for x in ids)):
+            raise ValueError("ids")
+        partner.read_notifications(db, uid, ids)
+    return web.json_response(partner.notifications_for(db, uid))
 
 
 async def report(request):
@@ -456,11 +468,6 @@ async def action(request):
             raise web.HTTPForbidden(text="Общий терминал недоступен для управления гостю")
         store.set_command(request.app["trades"], acc["login"], "restart_terminal")
         partner.kv_set(db, f"restart_asked:{uid}", "1")
-    elif kind == "wallet_reset":
-        cabinet = str(data["cabinet"])
-        if not any(a.get("cabinet") == cabinet and not a.get("shared_by") and not a.get("demo") for a in accounts.load(uid)):
-            raise web.HTTPForbidden(text="Нет доступа к кошельку")
-        partner.wallet_reset(db, cabinet)
     elif kind == "update_alerts" and logic.is_founder(uid):
         if type(data.get("value")) is not bool:
             raise ValueError("value")
@@ -511,13 +518,13 @@ async def broadcast(request):
                 suffix, media_kind = formats[media_type]
                 media_path = Path(tempfile.gettempdir()) / f"tagmarkets-broadcast-{uuid.uuid4().hex}{suffix}"
                 size = 0
+                max_media_size = (10 if media_kind == "photo" else 20) * 1024 * 1024
                 header = b""
                 with media_path.open("wb") as dst:
                     while chunk := await part.read_chunk(64 * 1024):
                         size += len(chunk)
-                        if size > 20 * 1024 * 1024:
-                            raise web.HTTPRequestEntityTooLarge(max_size=20 * 1024 * 1024,
-                                                               actual_size=size)
+                        if size > max_media_size:
+                            raise web.HTTPBadRequest(text="Фото до 10 МБ, видео до 20 МБ")
                         if len(header) < 16:
                             header = (header + chunk)[:16]
                         dst.write(chunk)
@@ -569,6 +576,9 @@ async def broadcast(request):
                                                 parse_mode=ParseMode.HTML, supports_streaming=True)
                     if body and (not media_kind or caption is None):
                         await sender.send_message(recipient, body, parse_mode=ParseMode.HTML)
+                    partner.record_notification(db, recipient, f"broadcast:{key}", "message",
+                                                "Сообщение Tag Markets",
+                                                plain_report(body) or ("Фото" if media_kind == "photo" else "Видео"))
                     ok += 1
                 except Exception:
                     failed += 1
@@ -590,7 +600,8 @@ async def static(request):
     response = web.FileResponse(STATIC / name)
     response.headers["Cache-Control"] = "no-cache"
     response.headers["Content-Security-Policy"] = ("default-src 'self'; script-src 'self' https://telegram.org; "
-        "style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; object-src 'none'")
+        "style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; "
+        "connect-src 'self'; base-uri 'none'; object-src 'none'")
     return response
 
 
@@ -621,6 +632,8 @@ def setup(app):
     app.router.add_get("/app/", static)
     app.router.add_get("/app/{file}", static)
     app.router.add_get("/api/bootstrap", bootstrap)
+    app.router.add_get("/api/notifications", notifications)
+    app.router.add_post("/api/notifications", notifications)
     app.router.add_get("/api/accounts/{login}/report", report)
     app.router.add_post("/api/accounts", add_account)
     app.router.add_patch("/api/accounts/{login}", change_account)

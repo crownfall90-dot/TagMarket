@@ -68,37 +68,6 @@
         }
       },
       {
-        "login": 10003,
-        "name": "SONIC 2",
-        "strategy": "SONIC 2",
-        "holder": "Виктория Орлова",
-        "cabinet": "CUDEMO2",
-        "server": "TMFinancials-Server",
-        "enabled": true,
-        "notify": {
-          "all": true,
-          "trades": true,
-          "deposits": true,
-          "withdrawals": true
-        },
-        "demo": false,
-        "shared": false,
-        "base": null,
-        "base_at": null,
-        "synced": "2026-09-16T11:15:00",
-        "status": "fresh",
-        "totals": {
-          "now": 2840,
-          "pnl": 463.5,
-          "kept": 208.57500000000002,
-          "month_pct": 6.552816901408451,
-          "month_net": 186.1,
-          "month_trades": 68,
-          "cur": "USD",
-          "roi": 16.32
-        }
-      },
-      {
         "login": 90001,
         "name": "Копитрейдинг · 45k$",
         "strategy": "Копитрейдинг · 45k$",
@@ -132,19 +101,12 @@
     ],
     "totals": {
       "USD": {
-        "capital": 20520.5,
-        "pnl": 3764.82,
-        "month": 1182.9,
-        "kept": 1694.17
+        "capital": 17680.5,
+        "pnl": 3301.32,
+        "month": 996.8,
+        "kept": 1485.594
       }
     },
-    "wallets": [
-      {
-        "cabinet": "CUDEMO1",
-        "name": "Александр Миронов",
-        "amount": 186.42
-      }
-    ],
     "founder": true,
     "update_alerts": true,
     "server_time": "2026-09-16T11:15:00Z",
@@ -176,7 +138,7 @@
         "symbol": "XAUUSD.f",
         "side": "BUY",
         "net_income": 12.86,
-        "pct_capital": 0.1030,
+        "pct_capital": 0.103,
         "volume": 0.024,
         "is_balance": false,
         "comment": ""
