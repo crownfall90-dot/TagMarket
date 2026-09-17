@@ -209,7 +209,7 @@ async def bootstrap(request):
     totals = {}
     for a in items:
         t = a["totals"]
-        if a["demo"] or not a["enabled"] or not t:
+        if a["demo"] or not t:
             continue
         bucket = totals.setdefault(t["cur"], {"capital": 0, "pnl": 0, "month": 0, "kept": 0})
         for key, source in (("capital", "now"), ("pnl", "pnl"), ("month", "month_net"), ("kept", "kept")):
@@ -374,7 +374,7 @@ async def people(request):
     db = request.app["db"]
     guests = [{"id": guest, "name": name, "since": logic.when_joined(db, guest),
                "accounts": [{"login": a["login"], "name": a["name"]} for a in accounts.load(guest)
-                            if a.get("shared_by") == uid or any(int(s["login"]) == int(a["login"]) for s in accounts.load(uid))]}
+                            if a.get("shared_by") == uid]}
               for guest, name in logic.guests_of(db, uid)]
     username = os.getenv("TELEGRAM_BOT_USERNAME", "tagmarketgold_bot")
     invites = [{"token": token, "url": logic.invite_link(username, token),
@@ -423,10 +423,13 @@ async def guest_action(request):
         raise web.HTTPForbidden(text="Нет доступа к этому гостю")
     data = await request.json()
     if data.get("action") == "revoke":
-        logic.wipe_user(db, guest)
+        try:
+            logic.revoke_guest(db, uid, guest)
+        except ValueError as error:
+            raise web.HTTPConflict(text=str(error)) from error
     elif data.get("action") == "take":
         acc = owned(uid, data["login"])
-        accounts.remove_login(acc["login"], guest)
+        accounts.remove_login(acc["login"], guest, shared_by=uid)
     else:
         raise ValueError("action")
     return web.json_response({"ok": True})
@@ -596,7 +599,8 @@ async def app_redirect(request):
 
 
 def setup(app):
-    # Recover provenance for older shared copies before exposing mutation APIs.
+    # Legacy copies lack provenance. Matching only a login is unsafe: an
+    # independently added account may use that number with another password.
     with locked(accounts.PATH):
         accs = accounts._read()
         changed = False
@@ -604,8 +608,11 @@ def setup(app):
             parent = partner.kv_get(app["db"], f"guest_by:{acc['owner']}")
             if not acc.get("shared_by") and parent and any(
                     str(src["owner"]) == str(parent) and src["login"] == acc["login"]
-                    and src["server"] == acc["server"] for src in accs):
+                    and src["server"] == acc["server"]
+                    and src.get("password") == acc.get("password")
+                    and src.get("cabinet") == acc.get("cabinet") for src in accs):
                 acc["shared_by"] = str(parent)
+                acc["shared_origin"] = "inferred"
                 changed = True
         if changed:
             accounts.save(accs)

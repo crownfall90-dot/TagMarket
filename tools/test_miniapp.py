@@ -265,6 +265,45 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         r = await self.call("POST","/api/actions",uid=2,json={"action":"restart","login":123})
         self.assertEqual(r.status,403)
 
+    async def test_revoking_guest_preserves_their_personal_accounts(self):
+        partner.kv_set(self.db, "guest:2", "1")
+        partner.kv_set(self.db, "guest_by:2", "1")
+        accounts.share([123], 1, 2)
+        accounts.add({**self.acc, "owner":"2", "login":789, "name":"My account",
+                      "strategy":"My account"})
+        response = await self.call("POST", "/api/guests/2", json={"action":"revoke"})
+        self.assertEqual(response.status, 200)
+        self.assertEqual([a["login"] for a in accounts.load(2)], [789])
+        self.assertIsNone(partner.kv_get(self.db, "guest_by:2"))
+        self.assertEqual(partner.kv_get(self.db, "guest:2"), "1")
+        self.assertEqual((await self.call("GET", "/api/bootstrap", uid=2)).status, 200)
+
+    async def test_inviter_cannot_take_guest_owned_account_with_same_login(self):
+        partner.kv_set(self.db, "guest:2", "1")
+        partner.kv_set(self.db, "guest_by:2", "1")
+        accounts.add({**self.acc, "owner":"2", "name":"Independently added",
+                      "password":"different-investor-password"})
+        after_restart = web.Application()
+        after_restart["db"] = self.db
+        miniapp.setup(after_restart)
+        self.assertIsNone(accounts.load(2)[0].get("shared_by"))
+        response = await self.call("POST", "/api/guests/2", json={"action":"take", "login":123})
+        self.assertEqual(response.status, 200)
+        self.assertEqual(accounts.load(2)[0]["name"], "Independently added")
+
+    async def test_ambiguous_legacy_copy_needs_review_before_revoke(self):
+        partner.kv_set(self.db, "guest:2", "1")
+        partner.kv_set(self.db, "guest_by:2", "1")
+        accounts.add({**self.acc, "owner":"2", "name":"Old copy"})
+        after_restart = web.Application()
+        after_restart["db"] = self.db
+        miniapp.setup(after_restart)
+        self.assertEqual(accounts.load(2)[0].get("shared_origin"), "inferred")
+        response = await self.call("POST", "/api/guests/2", json={"action":"revoke"})
+        self.assertEqual(response.status, 409)
+        self.assertEqual(len(accounts.load(2)), 1)
+        self.assertEqual(partner.kv_get(self.db, "guest_by:2"), "1")
+
     async def test_fenced_sync_does_not_mutate_data(self):
         coordination.claim(self.db,"main","session-a","primary")
         r = await self.client.post("/agent/sync",headers={"X-Token":"agent-test"},
@@ -297,6 +336,13 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         accounts.update("SONIC",1,enabled=False)
         r = await self.client.get("/agent/accounts",headers={"X-Token":"agent-test"})
         self.assertEqual(len(await r.json()),1)
+
+    async def test_paused_account_stays_in_personal_capital(self):
+        before = await (await self.call("GET", "/api/bootstrap")).json()
+        accounts.update("SONIC", 1, enabled=False)
+        after = await (await self.call("GET", "/api/bootstrap")).json()
+        self.assertEqual(after["totals"], before["totals"])
+        self.assertFalse(after["accounts"][0]["enabled"])
 
     async def test_invalid_patch_is_not_partially_applied(self):
         r = await self.call("PATCH","/api/accounts/123",json={"name":"Changed","base":"NaN"})

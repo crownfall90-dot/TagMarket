@@ -643,6 +643,20 @@ def wipe_user(db, uid) -> dict:
     return {"accounts": removed, "invites": killed}
 
 
+def revoke_guest(db, inviter, guest) -> int:
+    """Sever this invitation without deleting accounts the guest added personally."""
+    if str(kv_get(db, f"guest_by:{guest}")) != str(inviter):
+        raise ValueError("пользователь не приглашён вами")
+    if any(a.get("shared_by") == str(inviter) and a.get("shared_origin") == "inferred"
+           for a in accounts.load(guest)):
+        raise ValueError("старые копии счетов требуют проверки владельцем сервиса")
+    removed = accounts.unshare(inviter, guest)
+    kv_del(db, f"guest_by:{guest}")
+    kv_del(db, f"guest_since:{guest}")
+    log.info("приглашение %s -> %s отозвано: общих счетов %d", inviter, guest, removed)
+    return removed
+
+
 def invite_menu(owner, picked: list[str]) -> tuple[str, InlineKeyboardMarkup]:
     """Выбор счетов, которые получит перешедший по ссылке."""
     rows = [[InlineKeyboardButton(
@@ -973,9 +987,11 @@ def guest_view(db, owner, uid, expand_take: bool = False) -> tuple[str, InlineKe
     who = kv_get(db, f"guest_name:{uid}") or str(uid)
     since = when_joined(db, uid)
 
-    # у гостя копии — сопоставляем по номеру счёта: имя копии он мог сменить
+    # Забираем только явно выданные копии; совпавший номер личного счёта
+    # не даёт пригласившему право на его удаление.
     mine = {int(a["login"]): a for a in accounts.load(owner)}
-    his = [a for a in accounts.load(uid) if int(a["login"]) in mine]
+    his = [a for a in accounts.load(uid)
+           if a.get("shared_by") == str(owner) and int(a["login"]) in mine]
 
     # группируем по владельцу: забрать можно как одну стратегию, так и весь
     # аккаунт человека целиком — по одному счёту это было бы муторно
@@ -2278,7 +2294,7 @@ async def main():
         if not any(int(a["login"]) == int(login) for a in accounts.load(cb.from_user.id)):
             await cb.answer("Этот счёт не твой", show_alert=True)
             return
-        gone = accounts.remove_login(login, uid)
+        gone = accounts.remove_login(login, uid, shared_by=cb.from_user.id)
         await cb.answer(f"Забрал: {gone}" if gone else "У него уже нет этого счёта")
         if gone:
             log.info("владелец %s забрал счёт %s у гостя %s", cb.from_user.id, login, uid)
@@ -2299,7 +2315,8 @@ async def main():
             return
         # забираем все счета этого владельца — только те, что мои
         logins = [int(a["login"]) for a in accounts.in_cabinet(cb.from_user.id, cabinet)]
-        gone = [name for login in logins if (name := accounts.remove_login(login, uid))]
+        gone = [name for login in logins
+                if (name := accounts.remove_login(login, uid, shared_by=cb.from_user.id))]
         await cb.answer(f"Забрано счетов: {len(gone)}" if gone else "Забирать нечего")
         if gone:
             log.info("владелец %s забрал аккаунт %s (%d счетов) у гостя %s",
@@ -2320,17 +2337,21 @@ async def main():
             await cb.answer("Это не твой гость", show_alert=True)   # чужих не трогаем
             return
         who = kv_get(db, f"guest_name:{uid}") or uid
-        gone = wipe_user(db, uid)
+        try:
+            removed = revoke_guest(db, cb.from_user.id, uid)
+        except ValueError as error:
+            await cb.answer(str(error), show_alert=True)
+            return
         await cb.answer(f"{who}: доступ закрыт")
         try:    # человек должен понимать, почему бот замолчал
             await send(bot, int(uid),
-                       "🚪 <b>Доступ к боту закрыт</b>\n" + trades.THIN +
-                       "\nВладелец счетов убрал тебя. Данные и копии счетов стёрты.\n"
-                       "<i>Вернуться можно по новому приглашению.</i>", NO_BUTTONS)
+                       "🚪 <b>Доступ к счетам отозван</b>\n" + trades.THIN +
+                       "\nПригласивший закрыл доступ к своим счетам. "
+                       "Ваши собственные счета и настройки сохранены.", NO_BUTTONS)
         except Exception as e:
-            log.warning("не уведомил гостя %s об отключении: %s", uid, e)
-        log.info("гость %s убран владельцем %s (счетов %d)", uid, cb.from_user.id,
-                 gone["accounts"])
+            log.warning("не уведомил гостя %s об отзыве: %s", uid, e)
+        log.info("гость %s убран владельцем %s (общих счетов %d)", uid, cb.from_user.id,
+                 removed)
         await swap(cb, *guests_view(db, cb.from_user.id))
 
     @dp.callback_query(F.data == "cfg:invites")

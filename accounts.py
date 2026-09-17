@@ -228,23 +228,25 @@ def remove(name: str, owner) -> bool:
 
 
 @transaction
-def remove_login(login, owner) -> str:
+def remove_login(login, owner, shared_by=None) -> str:
     """Удалить счёт по номеру. Возвращает имя удалённого или пустую строку.
 
     По номеру, а не по имени: у получателя копия могла быть переименована, и
     забрать её обратно по нашему названию не вышло бы.
     """
     data = _read()
-    target = next((a for a in data
-                   if int(a["login"]) == int(login) and str(a["owner"]) == str(owner)), None)
+    def matches(a):
+        return (int(a["login"]) == int(login) and str(a["owner"]) == str(owner)
+                and (shared_by is None or (str(a.get("shared_by", "")) == str(shared_by)
+                     and a.get("shared_origin") != "inferred")))
+
+    target = next((a for a in data if matches(a)), None)
     if target and target.get("demo"):
         return ""       # демо-счёт можно только скрыть (enabled), не удалить
-    left = [a for a in data
-            if not (int(a["login"]) == int(login) and str(a["owner"]) == str(owner))]
+    left = [a for a in data if not matches(a)]
     if len(left) == len(data):
         return ""
-    gone = next(a["name"] for a in data
-                if int(a["login"]) == int(login) and str(a["owner"]) == str(owner))
+    gone = target["name"]
     save(left)
     return gone
 
@@ -258,6 +260,18 @@ def purge(owner) -> int:
     """
     data = _read()
     left = [a for a in data if str(a["owner"]) != str(owner)]
+    if len(left) != len(data):
+        save(left)
+    return len(data) - len(left)
+
+
+@transaction
+def unshare(from_owner, to_owner) -> int:
+    """Revoke only copies explicitly shared by from_owner with to_owner."""
+    data = _read()
+    left = [a for a in data if not (str(a["owner"]) == str(to_owner)
+            and str(a.get("shared_by", "")) == str(from_owner)
+            and a.get("shared_origin") != "inferred")]
     if len(left) != len(data):
         save(left)
     return len(data) - len(left)
@@ -365,6 +379,7 @@ def share(logins: list, from_owner, to_owner) -> list[str]:
             continue
         copy = dict(src)
         copy["shared_by"] = str(from_owner)
+        copy["shared_origin"] = "explicit"
         copy["owner"] = int(to_owner)
         # у получателя может быть свой счёт с таким же названием
         taken = {a["name"] for a in data if str(a["owner"]) == str(to_owner)}
