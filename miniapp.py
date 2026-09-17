@@ -468,8 +468,9 @@ async def people(request):
     uid, _ = authorize(request)
     db = request.app["db"]
     guests = [{"id": guest, "name": name, "since": logic.when_joined(db, guest),
-               "accounts": [{"login": a["login"], "name": a["name"]} for a in accounts.load(guest)
-                            if a.get("shared_by") == uid]}
+               "accounts": [{"login": a["login"], "name": a.get("strategy") or a["name"],
+                             "shared": a.get("shared_by") == uid}
+                            for a in accounts.load(guest) if not a.get("demo")]}
               for guest, name in logic.guests_of(db, uid)]
     username = os.getenv("TELEGRAM_BOT_USERNAME", "tagmarketgold_bot")
     invites = [{"token": token, "url": logic.invite_link(username, token),
