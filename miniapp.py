@@ -13,6 +13,7 @@ import os
 import time
 import calendar
 import logging
+import sqlite3
 import tempfile
 import uuid
 from collections import OrderedDict
@@ -162,6 +163,11 @@ async def api_errors(request, handler):
         if "/api/" not in request.path:
             raise
         response = web.json_response({"error": "Некорректные данные запроса"}, status=400)
+    except (sqlite3.OperationalError, sqlite3.IntegrityError) as exc:
+        if "/api/" not in request.path:
+            raise
+        logging.getLogger("miniapp").warning("Temporary database failure on %s: %s", request.path, exc)
+        response = web.json_response({"error": "Данные временно заняты. Повторите запрос через несколько секунд"}, status=503)
     except Exception:
         if "/api/" not in request.path:
             raise
