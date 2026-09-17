@@ -1110,7 +1110,7 @@ def fmt_archive(cur: str, since: datetime = None, until: datetime = None) -> str
     # бессмысленные сотни процентов
     cap = capital()
     now = clock().strftime("%Y-%m")
-    nets = [net_of_fee(mine(m["gross"] + m["platform"])) for m in rows]
+    nets = [net_of_fee(mine((m["gross"] or 0) + (m["platform"] or 0))) for m in rows]
     wv = widest([f"{v:+.2f}" for v in nets])
     wp = widest([pct(v / cap * 100) for v in nets]) if cap else 0
     lines = []
@@ -1124,7 +1124,7 @@ def fmt_archive(cur: str, since: datetime = None, until: datetime = None) -> str
         # и за 21 день это разная активность
         work = workdays(int(m["month"][:4]), int(m["month"][5:7]), today)
         lines.append(f"<b>{col(f'{net:+.2f}', wv)}</b>{share} · "
-                     f"{m['trades']} сд за {work} дн · <i>{name}{year}</i>{mark}")
+                      f"{m['trades'] or 0} сд за {work} дн · <i>{name}{year}</i>{mark}")
 
     return ("\n📦 <b>По месяцам</b>  <i>чистыми, % к балансу, сделок за будние дни</i>\n"
             + quote(lines))

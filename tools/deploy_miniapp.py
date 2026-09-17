@@ -19,7 +19,7 @@ ROOT = Path("/opt/tagmarkets")
 FILES = {"accounts.py", "account_lock.py", "agent.py", "bot.py", "coordination.py",
          "ibportal.py", "miniapp.py", "partner.py", "store.py", "trades.py", "webhook_server.py",
          "requirements.txt", "README.md", "MINIAPP.md", "todo.md", "web/index.html",
-         "web/app.js", "web/style.css", "web/preview.json", "tools/selfcheck.py",
+         "web/app.js", "web/style.css", "web/brand.svg", "web/preview.json", "tools/selfcheck.py",
          "tools/test_miniapp.py", "tools/deploy_miniapp.py"}
 SERVICES = ["tagmarkets-bot", "tagmarkets-webhook"]
 

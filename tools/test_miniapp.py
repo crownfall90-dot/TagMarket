@@ -314,6 +314,39 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         r = await self.call("GET","/api/accounts/123/report?period=month&offset=50")
         self.assertEqual(len((await r.json())["deals"]),10)
 
+    async def test_overview_report_combines_accounts_and_excludes_demo(self):
+        accounts.add({**self.acc, "login": 456, "name": "NEO", "strategy": "NEO"})
+        accounts.add({**self.acc, "login": 789, "name": "Demo", "strategy": "Demo", "demo": True})
+        store.save_state(self.tdb, 456, 4800, 4800, "USD", "Demo", 200)
+        store.save_state(self.tdb, 789, 240000, 240000, "USD", "Demo", 10000)
+        now = datetime.utcnow()
+        for login, amount in ((123, 10), (456, 20), (789, 1000)):
+            store.save_deals(self.tdb, login, [{"ticket": login, "time": now,
+                "symbol": "XAUUSD", "side": "buy", "net": amount, "profit": amount,
+                "swap": 0, "commission": 0, "volume": .1, "is_closing": True,
+                "is_opening": False, "is_balance": False}])
+        r = await self.call("GET", "/api/overview/report?period=month&currency=USD")
+        self.assertEqual(r.status, 200, await r.text())
+        data = await r.json()
+        self.assertEqual(data["accounts"], 2)
+        self.assertEqual(data["summary"]["count"], 2)
+        self.assertAlmostEqual(data["summary"]["net_income"], 21)
+        self.assertAlmostEqual(sum(point["value"] for point in data["chart"]), 21)
+
+    async def test_all_time_report_accepts_nullable_archive_counts(self):
+        self.tdb.execute("INSERT INTO months (login, month, trades, gross, platform, wins, losses, growth) "
+                         "VALUES (123, '2026-07', 2, 10, NULL, NULL, NULL, 1.0)")
+        self.tdb.commit()
+        r = await self.call("GET", "/api/accounts/123/report?period=all")
+        self.assertEqual(r.status, 200, await r.text())
+        data = await r.json()
+        self.assertEqual(data["summary"]["count"], 2)
+        self.assertEqual(data["summary"]["wins"], 0)
+        self.assertAlmostEqual(data["summary"]["net_income"], 7)
+        r = await self.call("GET", "/api/overview/report?period=all&currency=USD")
+        self.assertEqual(r.status, 200, await r.text())
+        self.assertAlmostEqual((await r.json())["summary"]["net_income"], 7)
+
     async def test_invites_shared_accounts_and_revoke(self):
         r = await self.call("POST","/api/invites",json={"logins":[123]})
         self.assertEqual(r.status,200)

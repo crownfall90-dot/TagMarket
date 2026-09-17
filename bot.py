@@ -16,7 +16,7 @@ import sqlite3
 import sys
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta, timezone
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import aiohttp
 from aiogram import Bot, Dispatcher, F
@@ -57,6 +57,20 @@ def utcnow() -> datetime:
     наивные значения — с ними и сравниваем, поэтому зону сразу отбрасываем.
     """
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def partner_registration_url() -> str:
+    """Owner-provided IB Portal referral; never substitute a broker's generic signup URL."""
+    value = os.getenv("PARTNER_REGISTRATION_URL", "").strip()
+    parts = urlsplit(value)
+    if parts.scheme != "https" or parts.netloc != "exfusion.ibportal.io" or parts.path != "/auth/register":
+        return ""
+    return value
+
+
+def onboarding_status(db, uid) -> dict:
+    return {step: kv_get(db, f"onboard:{uid}:{step}") == "1"
+            for step in ("registered", "verified", "broker_account")}
 
 log = logging.getLogger("tagbot")
 
@@ -744,6 +758,34 @@ def invite_list(db, owner) -> list[tuple[str, dict]]:
 
 def invite_link(username: str, token: str) -> str:
     return f"https://t.me/{username}?start={token}"
+
+
+def onboarding_message(db, uid) -> str:
+    done = onboarding_status(db, uid)
+    steps = [
+        ("registered", "Регистрация в партнёрском портале и подтверждение почты"),
+        ("verified", "Регистрация Tag Markets через портал и проверка личности"),
+        ("broker_account", "Торговый счёт и доступ MT5"),
+    ]
+    lines = [f"{'✓' if done[key] else '○'} {i}. {label}"
+             for i, (key, label) in enumerate(steps, 1)]
+    lines.append("○ 4. Подключение счёта в приложении")
+    return ("<b>Добро пожаловать в Tag Markets</b>\n" + trades.THIN +
+            "\nЧтобы начать со своей стратегией, пройдите шаги по порядку:\n\n" +
+            "\n".join(lines) +
+            "\n\nВ Mini App есть понятная инструкция и отметки пройденных шагов. "
+            "После подключения счёта здесь появятся ваши сделки и результат.")
+
+
+def onboarding_buttons(mini_url: str) -> InlineKeyboardMarkup:
+    rows = []
+    registration = partner_registration_url()
+    if registration:
+        rows.append([InlineKeyboardButton(text="1 · Начать регистрацию", url=registration)])
+    if mini_url.startswith("https://"):
+        rows.append([InlineKeyboardButton(text="Открыть Mini App", web_app=WebAppInfo(url=mini_url))])
+    rows.append([InlineKeyboardButton(text="Посмотреть доступные счета", callback_data="dash")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def by_login(owner, login) -> dict:
@@ -1828,18 +1870,27 @@ async def main():
     @dp.message(Command("start", "help"))
     async def start(msg: Message, command: CommandObject = None):
         token = (command.args or "").strip() if command else ""
+        invited = False
         if token:
-            await accept_invite(msg, token)
+            invited = await accept_invite(msg, token)
         ensure_demo_account(msg.from_user.id)   # подстраховка, если бэкфил при старте не застал
+        if invited:
+            return
+        personal = any(not a.get("demo") and not a.get("shared_by")
+                       for a in accounts.load(msg.from_user.id))
+        if not personal and kv_get(db, f"guest:{msg.from_user.id}") == "1":
+            await send(bot, msg.chat.id, onboarding_message(db, msg.from_user.id),
+                       onboarding_buttons(mini_url), track=False)
+            return
         text, kb = dashboard(msg.from_user.id)
         await send(bot, msg.chat.id, text, kb, track=False)
 
-    async def accept_invite(msg: Message, token: str) -> None:
+    async def accept_invite(msg: Message, token: str) -> bool:
         """Принять приглашение: открыть доступ и скопировать счета из ссылки."""
         uid = msg.from_user.id
         verdict, inv = invite_check(db, uid, token, allowed)
         if verdict == "own":
-            return                          # это своя же ссылка — просто открыть бота
+            return False                          # это своя же ссылка — просто открыть бота
         if verdict == "bad":
             await send(bot, msg.chat.id, "🔗 Ссылка недействительна.")
             return
@@ -1874,8 +1925,8 @@ async def main():
         wanted = invite_logins(inv)
         added = accounts.share(wanted, inv["owner"], uid) if wanted else []
 
-        what = ("Доступны счета: <b>" + html.escape(", ".join(added)) + "</b>" if added
-                else "Счета пока не добавлены — заведи свой в настройках.")
+        what = ("Доступны счета для наблюдения: <b>" + html.escape(", ".join(added)) + "</b>" if added
+                else "Своего торгового счёта пока нет.")
         # свой демо-текст показываем только тому, кому завели прямо сейчас —
         # у уже зарегистрированных (verdict == "known") он не всплывёт заново
         got_demo = ensure_demo_account(uid)
@@ -1883,10 +1934,9 @@ async def main():
                      "сразу видно сделки и статистику по крупной сумме в реальном "
                      "времени. Удалить нельзя, скрыть можно в настройках."
                      if got_demo else "")
-        own_note = ("\n\n💼 Заведи и свой счёт в настройках — тогда бот будет "
-                    "следить и за твоими сделками." if added else "")
         await send(bot, msg.chat.id,
-                   f"✅ <b>Приглашение принято</b>\n{trades.THIN}\n{what}{demo_note}{own_note}")
+                   f"✅ <b>Приглашение принято</b>\n{trades.THIN}\n{what}{demo_note}\n\n"
+                   + onboarding_message(db, uid), onboarding_buttons(mini_url), track=False)
 
         # ссылка сгорела — сразу выпускаем следующую с теми же счетами, чтобы
         # приглашать дальше можно было не заходя в настройки
@@ -1902,6 +1952,7 @@ async def main():
                          f"<code>{link}</code>")
         except Exception as e:
             log.warning("не уведомил владельца ссылки: %s", e)
+        return True
 
     @dp.callback_query(F.data.startswith("restart:"))
     async def restart_terminal(cb: CallbackQuery):
@@ -1910,7 +1961,7 @@ async def main():
                     if int(a["login"]) == login), None)
         if not acc or acc.get("demo") or acc.get("shared_by"):
             await cb.answer("Счёт не найден", show_alert=True)
-            return
+            return False
         await cb.answer("Отправляю команду…")
         # проверяем, выходил ли агент на связь недавно — иначе команду принять некому
         import store as _store
@@ -2073,10 +2124,10 @@ async def main():
         acc = accounts.by_name(name, me)
         if not acc or acc.get("demo") or acc.get("shared_by"):
             await msg.answer("Капитал этого счёта недоступен для изменения.")
-            return
+            return False
         if not math.isfinite(amount) or not 0 <= amount <= 1e12:
             await msg.answer("Нужна конечная неотрицательная сумма.")
-            return
+            return False
         accounts.update(name, me, base=amount, base_at=trades.clock().isoformat())
         text, kb = account_menu(name, me)
         await send(bot, msg.chat.id,

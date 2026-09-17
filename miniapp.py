@@ -16,7 +16,7 @@ import logging
 import tempfile
 import uuid
 from collections import OrderedDict
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qsl
 from account_lock import locked
@@ -214,8 +214,11 @@ async def bootstrap(request):
         bucket = totals.setdefault(t["cur"], {"capital": 0, "pnl": 0, "month": 0, "kept": 0})
         for key, source in (("capital", "now"), ("pnl", "pnl"), ("month", "month_net"), ("kept", "kept")):
             bucket[key] += t[source]
+    own_accounts = [a for a in items if not a["demo"] and not a.get("shared")]
     return web.json_response({"user": {"id": user["id"], "name": user.get("first_name", "Инвестор")},
         "accounts": items, "totals": totals,
+        "onboarding": {"needed": not own_accounts,
+                        "registration_url": logic.partner_registration_url()},
         "founder": logic.is_founder(uid), "update_alerts": logic.update_alerts_on(db),
         "server_time": logic.utcnow().isoformat() + "Z", "refresh_seconds": 15})
 
@@ -235,49 +238,98 @@ async def notifications(request):
     return web.json_response(partner.notifications_for(db, uid))
 
 
+def report_period(query):
+    period = query.get("period", "month")
+    if period == "custom":
+        since = datetime.combine(date.fromisoformat(query["from"]), datetime.min.time())
+        until = datetime.combine(date.fromisoformat(query["to"]), datetime.max.time())
+        if since > until:
+            raise ValueError("invalid period")
+        return "Выбранный период", since, until
+    if period not in ("today", "yesterday", "week", "lastweek", "month", "lastmonth", "all"):
+        raise ValueError("invalid period")
+    title, since, until, _ = logic.period(period)
+    return title, since, until
+
+
+def report_archive(since, until):
+    archived = trades.archive(since, until)
+    for month in archived:
+        start = datetime.fromisoformat(month["month"] + "-01")
+        end = start.replace(day=calendar.monthrange(start.year, start.month)[1],
+                            hour=23, minute=59, second=59, microsecond=999999)
+        if start < since or end > until:
+            raise web.HTTPUnprocessableEntity(
+                text="Детали этого периода уже свёрнуты. Выберите весь месяц или историю по месяцам")
+    return archived
+
+
+async def overview_report(request):
+    uid, _ = authorize(request)
+    title, since, until = report_period(request.query)
+    currency = request.query.get("currency", "USD").upper()
+    if not 3 <= len(currency) <= 5 or not currency.isalpha():
+        raise ValueError("currency")
+    db = request.app["trades"]
+    chart = {}
+    total = count = account_count = archived_count = pending_count = 0
+    for acc in accounts.dedup(accounts.load(uid)):
+        if acc.get("demo"):
+            continue
+        state = store.get_state(db, acc["login"])
+        if not state:
+            pending_count += 1
+            continue
+        if state["currency"].upper() != currency:
+            continue
+        trades.use(acc)
+        rows = trades.fetch(since, until)
+        archived = report_archive(since, until)
+        summary = trades.summary(rows)
+        total += trades.net_of_fee(trades.mine(
+            summary["total"] + sum((m["gross"] or 0) + (m["platform"] or 0) for m in archived)))
+        count += summary["count"] + sum(m["trades"] or 0 for m in archived)
+        account_count += 1
+        archived_count += len(archived)
+        for row in rows:
+            if row["is_closing"] or (row["is_balance"] and not trades.is_transfer(row)
+                                      and not trades.is_perf_fee(row)):
+                day = row["time"].strftime("%Y-%m-%d")
+                chart[day] = chart.get(day, 0) + trades.net_of_fee(trades.mine(row["net"]))
+        for month in archived:
+            last_day = calendar.monthrange(*map(int, month["month"].split("-")))[1]
+            day = f'{month["month"]}-{last_day:02d}'
+            chart[day] = chart.get(day, 0) + trades.net_of_fee(trades.mine(
+                (month["gross"] or 0) + (month["platform"] or 0)))
+    return web.json_response({"title": title, "summary": {"count": count, "net_income": total},
+        "currency": currency, "chart": [{"day": k, "value": v} for k, v in sorted(chart.items())],
+        "archived": bool(archived_count), "accounts": account_count, "pending_accounts": pending_count})
+
+
 async def report(request):
     uid, _ = authorize(request)
     acc = owned(uid, request.match_info["login"])
     if not store.get_state(request.app["trades"], acc["login"]):
         return web.json_response({"pending": True, "deals": [], "months": [], "chart": []})
     trades.use(acc)
-    period = request.query.get("period", "month")
-    if period == "custom":
-        since = datetime.fromisoformat(request.query["from"])
-        until = datetime.fromisoformat(request.query["to"]) + timedelta(days=1) - timedelta(microseconds=1)
-        if since.tzinfo or until.tzinfo or since > until:
-            raise ValueError("invalid period")
-        title = "Выбранный период"
-    else:
-        if period not in ("today", "yesterday", "week", "lastweek", "month", "lastmonth", "all"):
-            raise ValueError("invalid period")
-        title, since, until, _ = logic.period(period)
+    title, since, until = report_period(request.query)
     rows = trades.fetch(since, until)
     summary = trades.summary(rows)
-    archived = trades.archive(since, until)
-    partial_archive = False
-    for month in archived:
-        start = datetime.fromisoformat(month["month"] + "-01")
-        end = start.replace(day=calendar.monthrange(start.year, start.month)[1],
-                            hour=23, minute=59, second=59, microsecond=999999)
-        if start < since or end > until:
-            partial_archive = True
-    # A monthly rollup cannot answer an exact partial-month query.
-    if partial_archive:
-        raise web.HTTPUnprocessableEntity(text="Детали этого периода уже свёрнуты. Выберите весь месяц или историю по месяцам")
-    total = summary["total"] + sum(m["gross"] + m["platform"] for m in archived)
+    archived = report_archive(since, until)
+    total = summary["total"] + sum((m["gross"] or 0) + (m["platform"] or 0) for m in archived)
     summary["net_income"] = trades.net_of_fee(trades.mine(total))
-    summary["count"] += sum(m["trades"] for m in archived)
-    summary["wins"] += sum(m["wins"] for m in archived)
+    summary["count"] += sum(m["trades"] or 0 for m in archived)
+    summary["wins"] += sum(m["wins"] or 0 for m in archived)
     chart = {}
     for row in rows:
-        if row["is_closing"]:
+        if row["is_closing"] or (row["is_balance"] and not trades.is_transfer(row)
+                                  and not trades.is_perf_fee(row)):
             day = row["time"].strftime("%Y-%m-%d")
             chart[day] = chart.get(day, 0) + trades.net_of_fee(trades.mine(row["net"]))
     for month in archived:
         last_day = calendar.monthrange(*map(int, month["month"].split("-")))[1]
         day = f'{month["month"]}-{last_day:02d}'
-        chart[day] = chart.get(day, 0) + trades.net_of_fee(trades.mine(month["gross"] + month["platform"]))
+        chart[day] = chart.get(day, 0) + trades.net_of_fee(trades.mine((month["gross"] or 0) + (month["platform"] or 0)))
     offset = max(0, int(request.query.get("offset", 0)))
     kind = request.query.get("kind", "trades")
     filtered = [r for r in rows if r["is_balance"]] if kind == "moves" else [r for r in rows if r["is_closing"]]
@@ -291,8 +343,8 @@ async def report(request):
         capital_then = trades.capital_at(row["time"], flows) if not row["is_balance"] else 0
         deals.append({**row, "time": row["time"].isoformat() + "Z", "net_income": net_income,
                       "pct_capital": round(net_income / capital_then * 100, 4) if capital_then > 0 else None})
-    months = [{"month": m["month"], "count": m["trades"],
-               "net": trades.net_of_fee(trades.mine(m["gross"] + m["platform"]))} for m in trades.monthly(120)]
+    months = [{"month": m["month"], "count": m["trades"] or 0,
+                "net": trades.net_of_fee(trades.mine((m["gross"] or 0) + (m["platform"] or 0)))} for m in trades.monthly(120)]
     return web.json_response({"title": title, "summary": summary, "currency": trades.currency(),
         "deals": deals, "has_more": offset + 50 < len(filtered), "offset": offset,
         "chart": [{"day": k, "value": v} for k, v in sorted(chart.items())],
@@ -595,7 +647,7 @@ async def broadcast(request):
 
 async def static(request):
     name = request.match_info.get("file", "index.html") or "index.html"
-    if name not in ("index.html", "app.js", "style.css", "preview.json"):
+    if name not in ("index.html", "app.js", "style.css", "brand.svg", "preview.json"):
         raise web.HTTPNotFound()
     response = web.FileResponse(STATIC / name)
     response.headers["Cache-Control"] = "no-cache"
@@ -634,6 +686,7 @@ def setup(app):
     app.router.add_get("/api/bootstrap", bootstrap)
     app.router.add_get("/api/notifications", notifications)
     app.router.add_post("/api/notifications", notifications)
+    app.router.add_get("/api/overview/report", overview_report)
     app.router.add_get("/api/accounts/{login}/report", report)
     app.router.add_post("/api/accounts", add_account)
     app.router.add_patch("/api/accounts/{login}", change_account)
