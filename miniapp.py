@@ -52,9 +52,14 @@ def plain_report(markup):
     return "".join(parser.parts)
 
 
+def telegram_length(value):
+    """Telegram caption/message limits count UTF-16 code units, not Python characters."""
+    return len(value.encode("utf-16-le")) // 2
+
+
 class _BroadcastHTML(HTMLParser):
     """Keep only Telegram HTML formatting supported by the broadcast editor."""
-    ALLOWED = {"b", "strong", "i", "em", "u", "s", "code", "pre", "blockquote", "a"}
+    ALLOWED = {"b", "strong", "i", "em", "u", "s", "code", "pre", "blockquote"}
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
@@ -64,26 +69,25 @@ class _BroadcastHTML(HTMLParser):
     def handle_starttag(self, tag, attrs):
         tag = {"strong": "b", "em": "i"}.get(tag, tag)
         if tag not in self.ALLOWED:
-            self.stack.append(None)
             return
-        if tag == "a":
-            href = dict(attrs).get("href", "")
-            if not href.startswith(("https://", "http://")):
-                self.stack.append(None)
-                return
-            self.parts.append(f'<a href="{html.escape(href, quote=True)}">')
-        else:
-            self.parts.append(f"<{tag}>")
+        self.parts.append(f"<{tag}>")
         self.stack.append(tag)
 
     def handle_endtag(self, tag):
         tag = {"strong": "b", "em": "i"}.get(tag, tag)
-        opened = self.stack.pop() if self.stack else None
-        if opened == tag:
-            self.parts.append(f"</{tag}>")
+        if tag in self.stack:
+            while self.stack:
+                opened = self.stack.pop()
+                self.parts.append(f"</{opened}>")
+                if opened == tag:
+                    break
 
     def handle_data(self, data):
         self.parts.append(html.escape(data))
+
+    def finish(self):
+        while self.stack:
+            self.parts.append(f"</{self.stack.pop()}>")
 
 
 def sanitize_broadcast_html(value, limit=4096):
@@ -93,6 +97,7 @@ def sanitize_broadcast_html(value, limit=4096):
     parser = _BroadcastHTML()
     parser.feed(value)
     parser.close()
+    parser.finish()
     result = "".join(parser.parts).strip()
     if len(result) > limit:
         raise ValueError("text")
@@ -232,7 +237,7 @@ async def report(request):
             raise ValueError("invalid period")
         title = "Выбранный период"
     else:
-        if period not in ("today", "yesterday", "week", "lastweek", "month", "all"):
+        if period not in ("today", "yesterday", "week", "lastweek", "month", "lastmonth", "all"):
             raise ValueError("invalid period")
         title, since, until, _ = logic.period(period)
     rows = trades.fetch(since, until)
@@ -257,17 +262,26 @@ async def report(request):
         if row["is_closing"]:
             day = row["time"].strftime("%Y-%m-%d")
             chart[day] = chart.get(day, 0) + trades.net_of_fee(trades.mine(row["net"]))
+    for month in archived:
+        last_day = calendar.monthrange(*map(int, month["month"].split("-")))[1]
+        day = f'{month["month"]}-{last_day:02d}'
+        chart[day] = chart.get(day, 0) + trades.net_of_fee(trades.mine(month["gross"] + month["platform"]))
     offset = max(0, int(request.query.get("offset", 0)))
     kind = request.query.get("kind", "trades")
     filtered = [r for r in rows if r["is_balance"]] if kind == "moves" else [r for r in rows if r["is_closing"]]
     filtered.sort(key=lambda x: (x["time"], x["ticket"]), reverse=True)
-    deals = [{**r, "time": r["time"].isoformat() + "Z",
-              "net_income": trades.own_amount(r) if r["is_balance"] else trades.net_of_fee(trades.mine(r["net"]))}
-             for r in filtered[offset:offset + 50]]
+    page = filtered[offset:offset + 50]
+    flows = (trades.fetch(min(r["time"] for r in page), logic.utcnow() + timedelta(days=1))
+             if page and kind != "moves" else [])
+    deals = []
+    for row in page:
+        net_income = trades.own_amount(row) if row["is_balance"] else trades.net_of_fee(trades.mine(row["net"]))
+        capital_then = trades.capital_at(row["time"], flows) if not row["is_balance"] else 0
+        deals.append({**row, "time": row["time"].isoformat() + "Z", "net_income": net_income,
+                      "pct_capital": round(net_income / capital_then * 100, 4) if capital_then > 0 else None})
     months = [{"month": m["month"], "count": m["trades"],
                "net": trades.net_of_fee(trades.mine(m["gross"] + m["platform"]))} for m in trades.monthly(120)]
-    base_for_pct = float(acc.get("base") or (store.get_state(request.app["trades"], acc["login"]) or {}).get("balance") or 0)
-    return web.json_response({"title": title, "summary": summary, "currency": trades.currency(), "capital_base": base_for_pct,
+    return web.json_response({"title": title, "summary": summary, "currency": trades.currency(),
         "deals": deals, "has_more": offset + 50 < len(filtered), "offset": offset,
         "chart": [{"day": k, "value": v} for k, v in sorted(chart.items())],
         "months": months, "archived": bool(archived),
@@ -375,7 +389,7 @@ async def cabinet_report(request):
     if cabinet not in accounts.cabinets(uid):
         raise web.HTTPNotFound(text="Кабинет не найден")
     period = request.query.get("period", "month")
-    if period not in ("today", "yesterday", "week", "lastweek", "month", "all"):
+    if period not in ("today", "yesterday", "week", "lastweek", "month", "lastmonth", "all"):
         raise ValueError("period")
     return web.json_response({"report": plain_report(logic.build_all(period, uid, cabinet))})
 
@@ -476,78 +490,94 @@ async def broadcast(request):
         raise web.HTTPForbidden(text="Только для основателя")
     media_path = None
     media_kind = None
-    if request.content_type.startswith("multipart/"):
-        data = {}
-        reader = await request.multipart()
-        async for part in reader:
-            if part.name == "media":
-                if part.content_type not in ("image/jpeg", "image/png", "image/webp", "video/mp4", "video/quicktime"):
-                    raise web.HTTPBadRequest(text="Разрешены JPG, PNG, WEBP, MP4 и MOV")
-                suffix = ".mp4" if part.content_type.startswith("video/") else ".img"
+    try:
+        if request.content_type.startswith("multipart/"):
+            data = {}
+            reader = await request.multipart()
+            async for part in reader:
+                if part.name != "media":
+                    data[part.name] = (await part.text()).strip()
+                    continue
+                if media_path:
+                    raise web.HTTPBadRequest(text="Можно приложить только один файл")
+                formats = {"image/jpeg": (".jpg", "photo"),
+                           "image/png": (".png", "photo"), "video/mp4": (".mp4", "video")}
+                media_type = part.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+                if media_type not in formats:
+                    raise web.HTTPBadRequest(text="Разрешены JPG, PNG и MP4")
+                suffix, media_kind = formats[media_type]
                 media_path = Path(tempfile.gettempdir()) / f"tagmarkets-broadcast-{uuid.uuid4().hex}{suffix}"
                 size = 0
+                header = b""
                 with media_path.open("wb") as dst:
                     while chunk := await part.read_chunk(64 * 1024):
                         size += len(chunk)
                         if size > 20 * 1024 * 1024:
-                            media_path.unlink(missing_ok=True)
                             raise web.HTTPRequestEntityTooLarge(max_size=20 * 1024 * 1024,
                                                                actual_size=size)
+                        if len(header) < 16:
+                            header = (header + chunk)[:16]
                         dst.write(chunk)
-                media_kind = "video" if part.content_type.startswith("video/") else "photo"
-            else:
-                data[part.name] = (await part.text()).strip()
-    else:
-        data = await request.json()
-    try:
-        body = sanitize_broadcast_html(data.get("text", ""))
-    except ValueError:
-        if media_path:
-            media_path.unlink(missing_ok=True)
-        raise web.HTTPBadRequest(text="Текст слишком длинный")
-    if not body and not media_path:
-        raise web.HTTPBadRequest(text="Добавьте текст или медиафайл")
-    target = str(data.get("target", "all"))
-    db = request.app["db"]
-    known = {u for u, _ in logic.all_guests(db)}
-    if target != "all" and target not in known:
-        raise web.HTTPNotFound(text="Получатель не найден")
-    key = bounded_text(data, "request_id", 64, True)
-    # Persist before sending: repeated browser submissions must not duplicate a broadcast.
-    db.execute("BEGIN IMMEDIATE")
-    try:
-        if partner.kv_get(db, f"mini_broadcast:{key}"):
+                valid = (suffix == ".jpg" and header.startswith(b"\xff\xd8\xff") or
+                         suffix == ".png" and header.startswith(b"\x89PNG\r\n\x1a\n") or
+                         suffix == ".mp4" and header[4:8] == b"ftyp")
+                if not valid:
+                    raise web.HTTPBadRequest(text="Формат файла не совпадает с содержимым")
+        else:
+            data = await request.json()
+        try:
+            body = sanitize_broadcast_html(data.get("text", ""))
+        except ValueError:
+            raise web.HTTPBadRequest(text="Текст слишком длинный")
+        if telegram_length(plain_report(body)) > 4096:
+            raise web.HTTPBadRequest(text="Текст превышает лимит Telegram")
+        if not body and not media_path:
+            raise web.HTTPBadRequest(text="Добавьте текст или медиафайл")
+        target = str(data.get("target", "all"))
+        db = request.app["db"]
+        known = {u for u, _ in logic.all_guests(db)}
+        if target != "all" and target not in known:
+            raise web.HTTPNotFound(text="Получатель не найден")
+        key = bounded_text(data, "request_id", 64, True)
+        # Persist before sending: repeated browser submissions must not duplicate a broadcast.
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            if partner.kv_get(db, f"mini_broadcast:{key}"):
+                raise web.HTTPConflict(text="Эта рассылка уже была запущена. Повторная отправка отклонена")
+            db.execute("INSERT INTO kv VALUES (?,?)", (f"mini_broadcast:{key}", "started"))
+            db.commit()
+        except Exception:
             db.rollback()
-            raise web.HTTPConflict(text="Эта рассылка уже была запущена. Повторная отправка отклонена")
-        db.execute("INSERT INTO kv VALUES (?,?)", (f"mini_broadcast:{key}", "started"))
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
-    ok = failed = 0
-    session = logic.AiohttpSession(proxy=os.getenv("TELEGRAM_PROXY", "").split(",")[0].strip() or None)
-    sender = logic.Bot(os.environ["TELEGRAM_BOT_TOKEN"], session=session)
-    try:
-        for recipient in sorted(known if target == "all" else {target}):
-            try:
-                if media_kind == "photo":
-                    await sender.send_photo(recipient, FSInputFile(media_path), caption=body or None,
-                                            parse_mode=ParseMode.HTML)
-                elif media_kind == "video":
-                    await sender.send_video(recipient, FSInputFile(media_path), caption=body or None,
-                                            parse_mode=ParseMode.HTML, supports_streaming=True)
-                else:
-                    await sender.send_message(recipient, body, parse_mode=ParseMode.HTML)
-                ok += 1
-            except Exception:
-                failed += 1
+            raise
+        ok = failed = 0
+        session = logic.AiohttpSession(proxy=os.getenv("TELEGRAM_PROXY", "").split(",")[0].strip() or None)
+        sender = logic.Bot(os.environ["TELEGRAM_BOT_TOKEN"], session=session)
+        try:
+            # Telegram limits media captions to 1024 characters. Longer messages
+            # follow the attachment as a separate formatted message.
+            caption = body if telegram_length(plain_report(body)) <= 1000 else None
+            for recipient in sorted(known if target == "all" else {target}):
+                try:
+                    if media_kind == "photo":
+                        await sender.send_photo(recipient, FSInputFile(media_path), caption=caption,
+                                                parse_mode=ParseMode.HTML)
+                    elif media_kind == "video":
+                        await sender.send_video(recipient, FSInputFile(media_path), caption=caption,
+                                                parse_mode=ParseMode.HTML, supports_streaming=True)
+                    if body and (not media_kind or caption is None):
+                        await sender.send_message(recipient, body, parse_mode=ParseMode.HTML)
+                    ok += 1
+                except Exception:
+                    failed += 1
+                    logging.exception("miniapp broadcast failed for recipient %s", recipient)
+        finally:
+            await session.close()
+        result = {"sent": ok, "failed": failed}
+        partner.kv_set(db, f"mini_broadcast:{key}", json.dumps(result))
+        return web.json_response(result)
     finally:
-        await session.close()
         if media_path:
             media_path.unlink(missing_ok=True)
-    result = {"sent": ok, "failed": failed}
-    partner.kv_set(db, f"mini_broadcast:{key}", json.dumps(result))
-    return web.json_response(result)
 
 
 async def static(request):

@@ -2,13 +2,15 @@
 import asyncio
 import hashlib
 import hmac
+import io
 import json
 import os
 import sys
 import tempfile
 import time
 import unittest
-from datetime import datetime
+from unittest.mock import patch
+from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -19,7 +21,7 @@ os.environ.update(TRADES_SOURCE="store", TELEGRAM_BOT_TOKEN="test-token",
                   TRADES_DB=str(Path(_root.name) / "trades.db"),
                   ACCOUNTS_FILE=str(Path(_root.name) / "accounts.json"),
                   ALLOWED_USERS="", FOUNDER_ID="1")
-from aiohttp import web
+from aiohttp import FormData, web
 from aiohttp.test_utils import TestClient, TestServer
 import accounts
 import coordination
@@ -83,6 +85,31 @@ class AuthTests(unittest.TestCase):
                 miniapp.validate_init_data(raw, "test-token")
 
 
+class BroadcastFormatTests(unittest.TestCase):
+    def test_editor_html_is_canonical_and_untrusted_markup_is_escaped(self):
+        self.assertEqual(miniapp.sanitize_broadcast_html(
+            '<b>Заголовок <i>текст</b> после</i><script>alert(1)</script>'),
+            '<b>Заголовок <i>текст</i></b> послеalert(1)')
+        self.assertEqual(miniapp.sanitize_broadcast_html('<a href="https://bad.example">текст</a>'),
+                         'текст')
+        self.assertEqual(miniapp.sanitize_broadcast_html('<b>открыто'), '<b>открыто</b>')
+
+    def test_previous_month_is_complete_calendar_month(self):
+        title, first, last, _ = miniapp.logic.period('lastmonth')
+        self.assertEqual(title, 'Прошлый месяц')
+        self.assertEqual(first.day, 1)
+        self.assertEqual((last + timedelta(microseconds=1)).day, 1)
+        self.assertLess(first, last)
+
+    def test_previous_week_includes_weekend(self):
+        _, first, last, _ = miniapp.logic.period('lastweek')
+        self.assertEqual(first.weekday(), 0)
+        self.assertEqual(last.weekday(), 6)
+
+    def test_telegram_counts_emoji_as_two_caption_units(self):
+        self.assertEqual(miniapp.telegram_length("😀" * 600), 1200)
+
+
 class ApiTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -117,6 +144,39 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def call(self, method, path, uid=1, **kwargs):
         return await self.client.request(method, path, headers={"X-Telegram-Init-Data":signed(uid)}, **kwargs)
+
+    async def test_formatted_media_broadcast_and_duplicate_request(self):
+        partner.kv_set(self.db, "guest:2", "1")
+        calls = []
+
+        class Session:
+            def __init__(self, **kwargs): pass
+            async def close(self): pass
+
+        class Sender:
+            def __init__(self, *args, **kwargs): pass
+            async def send_photo(self, recipient, media, **kwargs):
+                calls.append(("photo", recipient, kwargs.get("caption"), Path(media.path).exists()))
+            async def send_message(self, recipient, text, **kwargs):
+                calls.append(("message", recipient, text))
+
+        def form(request_id):
+            data = FormData()
+            data.add_field("target", "2")
+            data.add_field("text", "<b>Новости</b> " + "Т" * 1100)
+            data.add_field("request_id", request_id)
+            data.add_field("media", io.BytesIO(b"\x89PNG\r\n\x1a\n" + b"x" * 100),
+                           filename="news.png", content_type="image/png")
+            return data
+
+        with patch.object(miniapp.logic, "AiohttpSession", Session), patch.object(miniapp.logic, "Bot", Sender):
+            response = await self.call("POST", "/api/broadcast", data=form("broadcast-test-1"))
+            self.assertEqual(response.status, 200)
+            self.assertEqual((await response.json())["sent"], 1)
+            self.assertEqual(calls[0], ("photo", "2", None, True))
+            self.assertEqual(calls[1][0:2], ("message", "2"))
+            repeat = await self.call("POST", "/api/broadcast", data=form("broadcast-test-1"))
+            self.assertEqual(repeat.status, 409)
 
     async def test_no_auth_no_demo_backdoor(self):
         for path in ("/api/bootstrap", "/api/bootstrap?preview=1", "/api/accounts/123/report"):
@@ -186,6 +246,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(data["has_more"])
         self.assertEqual(data["summary"]["count"],60)
         self.assertAlmostEqual(data["summary"]["net_income"],42)
+        self.assertAlmostEqual(data["deals"][0]["pct_capital"], 0.7179)
         r = await self.call("GET","/api/accounts/123/report?period=month&offset=50")
         self.assertEqual(len((await r.json())["deals"]),10)
 

@@ -179,13 +179,18 @@ def period(name: str) -> tuple[str, datetime, datetime, str]:
                f"{a:%d.%m} — {today:%d.%m.%Y}"
     if name == "lastweek":
         a = today - timedelta(days=today.weekday() + 7)  # понедельник прошлой недели
-        b = a + timedelta(days=4)                        # по пятницу
+        b = a + timedelta(days=6)                        # полный календарный интервал
         return "Прошлая неделя", datetime.combine(a, time.min), datetime.combine(b, time.max), \
                f"{a:%d.%m} — {b:%d.%m.%Y}"
     if name == "month":
         a = today.replace(day=1)
         return "Этот месяц", datetime.combine(a, time.min), datetime.combine(today, time.max), \
                f"{a:%d.%m} — {today:%d.%m.%Y}"
+    if name == "lastmonth":
+        b = today.replace(day=1) - timedelta(days=1)
+        a = b.replace(day=1)
+        return "Прошлый месяц", datetime.combine(a, time.min), datetime.combine(b, time.max), \
+               f"{a:%d.%m} — {b:%d.%m.%Y}"
     if name == "all":
         return "За всё время", datetime(2000, 1, 1), datetime.combine(today, time.max), \
                "вся история счёта"

@@ -158,7 +158,6 @@
       "wins": 54
     },
     "currency": "USD",
-    "capital_base": 12480.50,
     "deals": [
       {
         "ticket": 700000,
@@ -166,6 +165,7 @@
         "symbol": "XAUUSD.f",
         "side": "SELL",
         "net_income": 18.42,
+        "pct_capital": 0.1476,
         "volume": 0.024,
         "is_balance": false,
         "comment": ""
@@ -176,6 +176,7 @@
         "symbol": "XAUUSD.f",
         "side": "BUY",
         "net_income": 12.86,
+        "pct_capital": 0.1030,
         "volume": 0.024,
         "is_balance": false,
         "comment": ""
@@ -186,6 +187,7 @@
         "symbol": "XAUUSD.f",
         "side": "SELL",
         "net_income": -4.32,
+        "pct_capital": -0.0346,
         "volume": 0.024,
         "is_balance": false,
         "comment": ""
@@ -196,6 +198,7 @@
         "symbol": "XAUUSD.f",
         "side": "BUY",
         "net_income": 24.1,
+        "pct_capital": 0.1931,
         "volume": 0.024,
         "is_balance": false,
         "comment": ""
@@ -206,6 +209,7 @@
         "symbol": "XAUUSD.f",
         "side": "SELL",
         "net_income": 8.54,
+        "pct_capital": 0.0684,
         "volume": 0.024,
         "is_balance": false,
         "comment": ""
@@ -216,6 +220,7 @@
         "symbol": "XAUUSD.f",
         "side": "BUY",
         "net_income": 16.78,
+        "pct_capital": 0.1344,
         "volume": 0.024,
         "is_balance": false,
         "comment": ""
@@ -226,6 +231,7 @@
         "symbol": "XAUUSD.f",
         "side": "SELL",
         "net_income": 9.64,
+        "pct_capital": 0.0772,
         "volume": 0.024,
         "is_balance": false,
         "comment": ""
@@ -236,6 +242,7 @@
         "symbol": "XAUUSD.f",
         "side": "BUY",
         "net_income": 11.27,
+        "pct_capital": 0.0903,
         "volume": 0.024,
         "is_balance": false,
         "comment": ""
