@@ -60,6 +60,7 @@ def main():
             shutil.copy2(src, target)
     settings = dotenv_values(ROOT / ".env")
     stopped = False
+    migrated_accounts = False
     try:
         run("systemctl", "stop", *SERVICES)
         stopped = True
@@ -82,6 +83,8 @@ def main():
             target = ROOT / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(stage / name, target)
+        migrated_accounts = True
+        run(python, "-c", "from dotenv import load_dotenv; load_dotenv('.env'); import accounts; accounts.migrate_passwords()", cwd=ROOT)
         set_key(str(ROOT / ".env"), "MINI_APP_URL", "https://crownfail.shop/tagmarkets/app/")
         run("systemctl", "start", "tagmarkets-webhook", "tagmarkets-bot")
         port = int(settings.get("WEBHOOK_PORT") or 8443)
@@ -111,9 +114,15 @@ def main():
             for source in backup.rglob("*"):
                 if source.is_file() and source.relative_to(backup).as_posix() in FILES | {".env"}:
                     shutil.copy2(source, ROOT / source.relative_to(backup))
+            if migrated_accounts and (backup / "accounts-before.json").is_file():
+                shutil.copy2(backup / "accounts-before.json", acc_path)
             run("systemctl", "restart", *SERVICES)
             print("Deployment rolled back; user databases were preserved", flush=True)
         raise
+    try:
+        run(python, "-c", "from dotenv import load_dotenv; load_dotenv('.env'); import accounts; from pathlib import Path; [accounts.encrypt_snapshot(str(p)) for p in Path('backup').glob('*/accounts-before.json')]", cwd=ROOT, capture_output=True)
+    except subprocess.CalledProcessError:
+        print("Warning: historical account backups still need credential migration", flush=True)
     print("Deployed. Backup:", backup)
     print("URL: https://crownfail.shop/tagmarkets/app/")
 

@@ -536,7 +536,7 @@ async def agent_sync(request):
 
     try:
         new = store.save_sync(db, login, state, deals, command_done)
-    except sqlite3.OperationalError as exc:
+    except sqlite3.DatabaseError as exc:
         log.warning("temporary database failure during sync for %s: %s", login, exc)
         raise web.HTTPServiceUnavailable(text="database temporarily busy")
     reported_server = str(data.get("server") or "").strip()

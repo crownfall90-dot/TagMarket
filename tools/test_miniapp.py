@@ -115,6 +115,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.tmp = tempfile.TemporaryDirectory()
         accounts.PATH = str(Path(self.tmp.name) / "accounts.json")
         self.db = partner.open_db(str(Path(self.tmp.name) / "state.db"))
+        partner.kv_set(self.db, "partner_link:1", "https://exfusion.ibportal.io/auth/register?e=test-link&a=1")
         self.tdb = store.open_db(str(Path(self.tmp.name) / "trades.db"))
         trades._db = self.tdb
         miniapp.logic.DEMO_ON = False
@@ -258,6 +259,15 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await other.json())["accounts"], [])
         self.assertEqual(response.headers["Cache-Control"], "no-store")
 
+    async def test_mt5_password_encrypted_at_rest_and_legacy_migration(self):
+        path = Path(accounts.PATH)
+        self.assertNotIn("never-in-api", path.read_text(encoding="utf-8"))
+        self.assertEqual(accounts.load(1)[0]["password"], "never-in-api")
+        path.write_text(json.dumps([self.acc]), encoding="utf-8")
+        self.assertTrue(accounts.migrate_passwords())
+        self.assertNotIn("never-in-api", path.read_text(encoding="utf-8"))
+        self.assertEqual(accounts.load(1)[0]["password"], "never-in-api")
+
     async def test_cross_user_and_privilege_checks(self):
         for method,path,body in [("GET","/api/accounts/123/report",None),
                                   ("PATCH","/api/accounts/123",{"enabled":False}),
@@ -348,6 +358,11 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual((await r.json())["summary"]["net_income"], 7)
 
     async def test_invites_shared_accounts_and_revoke(self):
+        partner.kv_set(self.db, "partner_link:1", "")
+        denied = await self.call("POST", "/api/invites", json={"logins": [123]})
+        self.assertEqual(denied.status, 428)
+        self.assertEqual(miniapp.logic.invite_list(self.db, 1), [])
+        partner.kv_set(self.db, "partner_link:1", "https://exfusion.ibportal.io/auth/register?e=test-link&a=1")
         r = await self.call("POST","/api/invites",json={"logins":[123]})
         self.assertEqual(r.status,200)
         token = (await r.json())["url"].split("start=")[1]
@@ -449,7 +464,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             json={"login":123,"balance":2600,"equity":2600,"currency":"USD",
                   "server":"Demo","deals":[deal],"command_done":True,
                   "host":"main","session":"session-a"})
-        self.assertEqual(r.status, 500)
+        self.assertEqual(r.status, 503)
         self.assertEqual(store.get_state(self.tdb,123)["balance"], 2400)
         self.assertEqual(store.last_ticket(self.tdb,123), 0)
         self.assertEqual(store.get_command(self.tdb,123), "restart_terminal")
@@ -491,6 +506,16 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         r = await self.call("PATCH","/api/accounts/123",json={"name":"Changed","base":"NaN"})
         self.assertEqual(r.status,400)
         self.assertEqual(accounts.load(1)[0]["name"],"SONIC")
+
+    async def test_invested_override_changes_capital_and_can_be_reset(self):
+        response = await self.call("PATCH", "/api/accounts/123", json={"base": 120})
+        self.assertEqual(response.status, 200, await response.text())
+        data = await (await self.call("GET", "/api/bootstrap")).json()
+        self.assertAlmostEqual(data["totals"]["USD"]["capital"], 120)
+        response = await self.call("PATCH", "/api/accounts/123", json={"base": None})
+        self.assertEqual(response.status, 200, await response.text())
+        data = await (await self.call("GET", "/api/bootstrap")).json()
+        self.assertAlmostEqual(data["totals"]["USD"]["capital"], 100)
 
     async def test_bot_cannot_claim_known_history_by_guessing_login(self):
         result = await miniapp.logic.finish_add(None, 2, 2, {"name":"Wrong","login":123,

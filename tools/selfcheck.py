@@ -187,9 +187,12 @@ trades.retained = lambda: 39.40                 # она же чистыми (д
 try:
     assert abs(trades.invested() - 2539.40) < 0.01, trades.invested()
     assert abs(trades.capital() - 2500.0) < 0.01, trades.capital()
-    # пополнение на 30$ (на счёте +720) поднимает баланс, а с ним и капитал
+    # Ручной Invested имеет приоритет до поступления движения в историю.
     _Acc.balance = 60039.40 + 720.0
+    assert abs(trades.capital() - 2500.0) < 0.01, trades.capital()
+    trades._capital_moves = lambda since: 30.0
     assert abs(trades.capital() - 2530.0) < 0.01, trades.capital()
+    trades._capital_moves = lambda since: 0.0
     _Acc.balance = 60039.40
     # пополнение/реинвест меняет капитал: было → стало
     dep = {"is_balance": True, "is_opening": False, "is_closing": False,

@@ -239,7 +239,8 @@ async def bootstrap(request):
     return web.json_response({"user": {"id": user["id"], "name": user.get("first_name", "Инвестор")},
         "accounts": items, "totals": totals,
         "onboarding": {"needed": not own_accounts,
-                        "registration_url": logic.partner_registration_url(),
+                        "registration_url": logic.partner_link(db, partner.kv_get(db, f"guest_by:{uid}"))
+                                            or logic.partner_registration_url(),
                         "partner_url": logic.partner_link(request.app["db"], uid)},
         "founder": logic.is_founder(uid), "update_alerts": logic.update_alerts_on(db),
         "server_time": logic.utcnow().isoformat() + "Z", "refresh_seconds": 15})
@@ -459,10 +460,13 @@ def _change_account(uid, login, method, data, db=None):
         if "base" in data:
             if acc.get("demo") or acc.get("shared_by"):
                 raise web.HTTPForbidden(text="Капитал этого счёта доступен только для чтения")
-            value = float(data["base"])
-            if not math.isfinite(value) or not 0 <= value <= 1e12:
-                raise ValueError("base")
-            changes.update(base=value, base_at=trades.clock().isoformat())
+            if data["base"] is None:
+                changes.update(base=None, base_at=None)
+            else:
+                value = float(data["base"])
+                if not math.isfinite(value) or not 0 <= value <= 1e12:
+                    raise ValueError("base")
+                changes.update(base=value, base_at=trades.clock().isoformat())
         if "name" in data:
             acc["name"] = accounts.rename(acc["name"], uid, data["name"])
         if changes:
@@ -513,6 +517,8 @@ async def invite(request):
         acc = owned(uid, login)
         if acc.get("demo") or acc.get("shared_by"):
             raise web.HTTPForbidden(text="Делиться можно только собственными счетами")
+    if not logic.partner_link(db, uid):
+        raise web.HTTPPreconditionRequired(text="Сначала сохраните свою ссылку из раздела Partner в IB Portal")
     token = logic.invite_new(db, uid, logins)
     return web.json_response({"url": logic.invite_link(os.getenv("TELEGRAM_BOT_USERNAME", "tagmarketgold_bot"), token),
                               "partner_url": logic.partner_link(db, uid)})

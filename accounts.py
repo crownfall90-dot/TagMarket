@@ -19,6 +19,7 @@
 
 import json
 import os
+from cryptography.fernet import Fernet, InvalidToken
 from account_lock import transaction
 
 PATH = os.getenv("ACCOUNTS_FILE", os.path.join("data", "accounts.json"))
@@ -33,7 +34,38 @@ def _read() -> list[dict]:
     if not os.path.exists(PATH):
         return []
     with open(PATH, encoding="utf-8") as f:
-        return json.load(f)
+        data = json.load(f)
+    for acc in data:
+        password = acc.get("password")
+        if isinstance(password, str) and password.startswith("enc:v1:"):
+            try:
+                acc["password"] = _cipher(create=False).decrypt(password[7:].encode()).decode()
+            except (InvalidToken, UnicodeError, ValueError) as exc:
+                raise ValueError("Не удалось расшифровать пароль MT5: проверьте ключ accounts.json.key") from exc
+    return data
+
+
+def _cipher(create=True):
+    key_path = os.getenv("ACCOUNTS_KEY_FILE") or PATH + ".key"
+    try:
+        with open(key_path, "rb") as handle:
+            key = handle.read().strip()
+    except FileNotFoundError:
+        if not create:
+            raise ValueError("Отсутствует ключ шифрования MT5")
+        key = Fernet.generate_key()
+        os.makedirs(os.path.dirname(os.path.abspath(key_path)), exist_ok=True)
+        try:
+            fd = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            with open(key_path, "rb") as handle:
+                key = handle.read().strip()
+        else:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(key + b"\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+    return Fernet(key)
 
 
 def load(owner=None) -> list[dict]:
@@ -184,9 +216,17 @@ def save(data: list[dict]) -> None:
     JSON — а в нём пароли и привязки всех счетов, восстанавливать неоткуда.
     Переименование внутри одной папки атомарно: либо старый файл, либо новый.
     """
+    cipher = _cipher() if any(a.get("password") for a in data) else None
+    stored = []
+    for acc in data:
+        row = dict(acc)
+        password = row.get("password")
+        if password and not password.startswith("enc:v1:"):
+            row["password"] = "enc:v1:" + cipher.encrypt(password.encode()).decode()
+        stored.append(row)
     tmp = f"{PATH}.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+        json.dump(stored, f, ensure_ascii=False, indent=2)
         f.flush()
         os.fsync(f.fileno())    # иначе при отключении питания останется пустой файл
     os.replace(tmp, PATH)
@@ -194,6 +234,47 @@ def save(data: list[dict]) -> None:
         os.chmod(PATH, 0o600)
     except OSError:
         pass
+
+
+@transaction
+def migrate_passwords() -> bool:
+    """Encrypt pre-existing cleartext credentials while services are stopped."""
+    if not os.path.exists(PATH):
+        return False
+    with open(PATH, encoding="utf-8") as handle:
+        raw = json.load(handle)
+    if not any(a.get("password") and not str(a["password"]).startswith("enc:v1:") for a in raw):
+        _read()  # Verify the key is still available before reporting success.
+        return False
+    save(_read())
+    return True
+
+
+def encrypt_snapshot(path: str) -> bool:
+    """Remove plaintext MT5 passwords from an older deployment backup."""
+    with open(path, encoding="utf-8") as handle:
+        rows = json.load(handle)
+    if not isinstance(rows, list) or not any(
+        isinstance(row, dict) and row.get("password") and
+        not str(row["password"]).startswith("enc:v1:") for row in rows
+    ):
+        return False
+    cipher = _cipher()
+    stored = []
+    for row in rows:
+        copy = dict(row)
+        password = copy.get("password")
+        if password and not str(password).startswith("enc:v1:"):
+            copy["password"] = "enc:v1:" + cipher.encrypt(str(password).encode()).decode()
+        stored.append(copy)
+    tmp = path + ".encrypted.tmp"
+    with open(tmp, "w", encoding="utf-8") as handle:
+        json.dump(stored, handle, ensure_ascii=False, indent=2)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+    return True
 
 
 @transaction

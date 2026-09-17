@@ -691,7 +691,8 @@ def invite_menu(owner, picked: list[str]) -> tuple[str, InlineKeyboardMarkup]:
     """Выбор счетов, которые получит перешедший по ссылке."""
     rows = [[InlineKeyboardButton(
         text=f"{'☑️' if int(a['login']) in picked else '⬜'} {a['name']}",
-        callback_data=f"cfg:invpick:{a['login']}")] for a in accounts.load(owner)]
+        callback_data=f"cfg:invpick:{a['login']}")] for a in accounts.load(owner)
+            if not a.get("demo") and not a.get("shared_by")]
     rows.append([InlineKeyboardButton(text="🔗 Создать ссылку", callback_data="cfg:invmake")])
     rows.append([InlineKeyboardButton(text="◀️ Отмена", callback_data="cfg")])
     text = ("<b>🔗 Приглашение по ссылке</b>\n" + trades.THIN +
@@ -795,9 +796,10 @@ def onboarding_message(db, uid) -> str:
             "После подключения счёта здесь появятся ваши сделки и результат." + referral)
 
 
-def onboarding_buttons(mini_url: str) -> InlineKeyboardMarkup:
+def onboarding_buttons(mini_url: str, db=None, uid=None) -> InlineKeyboardMarkup:
     rows = []
-    registration = partner_registration_url()
+    inviter = kv_get(db, f"guest_by:{uid}") if db is not None and uid is not None else None
+    registration = (partner_link(db, inviter) if inviter else "") or partner_registration_url()
     if registration:
         rows.append([InlineKeyboardButton(text="1 · Начать регистрацию", url=registration)])
     if mini_url.startswith("https://"):
@@ -1901,7 +1903,7 @@ async def main():
                        for a in accounts.load(msg.from_user.id))
         if not personal and kv_get(db, f"guest:{msg.from_user.id}") == "1":
             await send(bot, msg.chat.id, onboarding_message(db, msg.from_user.id),
-                       onboarding_buttons(mini_url), track=False)
+                       onboarding_buttons(mini_url, db, msg.from_user.id), track=False)
             return
         text, kb = dashboard(msg.from_user.id)
         await send(bot, msg.chat.id, text, kb, track=False)
@@ -1953,7 +1955,7 @@ async def main():
                      "Уведомления по нему настраиваются отдельно.")
         await send(bot, msg.chat.id,
                    f"✅ <b>Приглашение принято</b>\n{trades.THIN}\n{what}{demo_note}\n\n"
-                   + onboarding_message(db, uid), onboarding_buttons(mini_url), track=False)
+                   + onboarding_message(db, uid), onboarding_buttons(mini_url, db, uid), track=False)
 
         # ссылка сгорела — сразу выпускаем следующую с теми же счетами, чтобы
         # приглашать дальше можно было не заходя в настройки
@@ -2455,6 +2457,15 @@ async def main():
     @dp.callback_query(F.data == "cfg:inv")
     async def cfg_invite_ask(cb: CallbackQuery, state: FSMContext):
         await cb.answer()
+        if not partner_link(db, cb.from_user.id):
+            await state.set_state(PartnerLink.value)
+            await state.update_data(resume_invite=True)
+            await cb.message.answer(
+                "Сначала сохрани свою партнёрскую ссылку. Открой "
+                "<a href=\"https://exfusion.ibportal.io\">IB Portal</a>, найди блок "
+                "<b>Partner</b> внизу справа, скопируй ссылку и отправь её сюда. "
+                "После сохранения продолжим приглашение.", reply_markup=CANCEL)
+            return
         await state.set_state(Invite.pick)
         await state.update_data(picked=[])
         await swap(cb, *invite_menu(cb.from_user.id, []))
@@ -2463,6 +2474,7 @@ async def main():
     async def cfg_partner_ask(cb: CallbackQuery, state: FSMContext):
         await cb.answer()
         saved = partner_link(db, cb.from_user.id)
+        await state.clear()
         await state.set_state(PartnerLink.value)
         await cb.message.answer(
             "🌐 <b>Твоя партнёрская ссылка</b>\n" + trades.THIN +
@@ -2478,14 +2490,25 @@ async def main():
         if not valid_partner_link(value):
             await msg.answer("Нужна персональная ссылка из блока Partner на exfusion.ibportal.io. Проверь ссылку и отправь её ещё раз.", reply_markup=CANCEL)
             return
+        resume = (await state.get_data()).get("resume_invite", False)
         kv_set(db, f"partner_link:{msg.from_user.id}", value)
         await state.clear()
-        await msg.answer("✅ Партнёрская ссылка сохранена. Она останется в твоём профиле для будущих приглашений.", reply_markup=menu("today", owner=msg.from_user.id))
+        if resume:
+            await state.set_state(Invite.pick)
+            await state.update_data(picked=[])
+            text, keyboard = invite_menu(msg.from_user.id, [])
+            await msg.answer("✅ Ссылка сохранена. Теперь выбери счета для приглашения.\n\n" + text, reply_markup=keyboard)
+        else:
+            await msg.answer("✅ Партнёрская ссылка сохранена. Она останется в твоём профиле для будущих приглашений.", reply_markup=menu("today", owner=msg.from_user.id))
 
     @dp.callback_query(F.data.startswith("cfg:invpick:"), Invite.pick)
     async def cfg_invite_pick(cb: CallbackQuery, state: FSMContext):
-        await cb.answer()
         login = int(cb.data.split(":", 2)[2])
+        source = by_login(cb.from_user.id, login)
+        if not source or source.get("demo") or source.get("shared_by"):
+            await cb.answer("Этот счёт нельзя передать по приглашению", show_alert=True)
+            return
+        await cb.answer()
         picked = (await state.get_data()).get("picked", [])
         picked = [p for p in picked if p != login] if login in picked else picked + [login]
         await state.update_data(picked=picked)
@@ -2494,7 +2517,17 @@ async def main():
     @dp.callback_query(F.data == "cfg:invmake", Invite.pick)
     async def cfg_invite_make(cb: CallbackQuery, state: FSMContext):
         await cb.answer()
+        if not partner_link(db, cb.from_user.id):
+            await state.set_state(PartnerLink.value)
+            await state.update_data(resume_invite=True)
+            await cb.message.answer("Сначала отправь свою ссылку из блока Partner в IB Portal.", reply_markup=CANCEL)
+            return
         picked = (await state.get_data()).get("picked", [])
+        if any(not (source := by_login(cb.from_user.id, login)) or
+               source.get("demo") or source.get("shared_by") for login in picked):
+            await state.clear()
+            await cb.message.answer("Список счетов изменился. Начни приглашение заново.")
+            return
         await state.clear()
         token = invite_new(db, cb.from_user.id, picked)
         me = await bot.me()
