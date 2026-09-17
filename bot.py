@@ -818,11 +818,11 @@ def invite_logins(inv: dict, owner=None) -> list[int]:
     с именами понимаем на лету, чтобы не ломать уже разосланные.
     """
     if inv.get("logins") is not None:
-        return [int(x) for x in inv["logins"]]
+        return [int(x) for x in inv["logins"] if int(x) != int(DEMO_LOGIN or 0)]
     out = []
     for name in inv.get("accounts") or []:
         acc = accounts.by_name(name, owner if owner is not None else inv["owner"])
-        if acc:
+        if acc and not acc.get("demo"):
             out.append(int(acc["login"]))
     return out
 
@@ -1895,7 +1895,6 @@ async def main():
         invited = False
         if token:
             invited = await accept_invite(msg, token)
-        ensure_demo_account(msg.from_user.id)   # подстраховка, если бэкфил при старте не застал
         if invited:
             return
         personal = any(not a.get("demo") and not a.get("shared_by")
@@ -1949,13 +1948,9 @@ async def main():
 
         what = ("Доступны счета для наблюдения: <b>" + html.escape(", ".join(added)) + "</b>" if added
                 else "Своего торгового счёта пока нет.")
-        # свой демо-текст показываем только тому, кому завели прямо сейчас —
-        # у уже зарегистрированных (verdict == "known") он не всплывёт заново
-        got_demo = ensure_demo_account(uid)
-        demo_note = ("\n\n👁 <b>Подключён демо-счёт «Копитрейдинг · 45k$»</b> — "
-                     "сразу видно сделки и статистику по крупной сумме в реальном "
-                     "времени. Удалить нельзя, скрыть можно в настройках."
-                     if got_demo else "")
+        demo_note = ("\n\n👁 <b>Доступен общий счёт копитрейдинга · 45k$</b> — "
+                     "он доступен для просмотра, но не добавляется в ваш личный кабинет. "
+                     "Уведомления по нему настраиваются отдельно.")
         await send(bot, msg.chat.id,
                    f"✅ <b>Приглашение принято</b>\n{trades.THIN}\n{what}{demo_note}\n\n"
                    + onboarding_message(db, uid), onboarding_buttons(mini_url), track=False)
@@ -2981,3 +2976,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+

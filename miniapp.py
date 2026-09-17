@@ -181,6 +181,10 @@ async def api_errors(request, handler):
 def owned(uid, login):
     acc = next((a for a in accounts.load(uid) if int(a["login"]) == int(login)), None)
     if not acc:
+        # The public copy-trading account is read-only shared data. It is
+        # visible to every cabinet without creating a personal account row.
+        acc = next((a for a in accounts.load() if a.get("demo") and int(a["login"]) == int(login)), None)
+    if not acc:
         raise web.HTTPNotFound(text="Счёт не найден")
     return acc
 
@@ -203,8 +207,19 @@ def public_account(acc, db):
 async def bootstrap(request):
     uid, user = authorize(request)
     db = request.app["db"]
-    logic.ensure_demo_account(uid)
     items = [public_account(a, request.app["trades"]) for a in accounts.dedup(accounts.load(uid))]
+    # Show the single public copy-trading account without cloning it into
+    # every invited user's personal cabinet.
+    if logic.DEMO_ON and not any(a.get("demo") for a in items):
+        source = next((a for a in accounts.load() if a.get("demo") and int(a.get("login", 0)) == int(logic.DEMO_LOGIN)), None)
+        if source:
+            demo_view = public_account(source, request.app["trades"])
+            demo_view["enabled"] = logic.kv_get(db, f"public_demo:{uid}:enabled") != "0"
+            saved_notify = logic.kv_get(db, f"public_demo:{uid}:notify")
+            if saved_notify:
+                try: demo_view["notify"] = {**(demo_view.get("notify") or {}), **json.loads(saved_notify)}
+                except (TypeError, ValueError, json.JSONDecodeError): pass
+            items.append(demo_view)
     # Never combine currencies or include demonstration capital in personal totals.
     totals = {}
     for a in items:
@@ -394,11 +409,26 @@ async def change_account(request):
     uid, _ = authorize(request)
     data = await request.json() if request.method != "DELETE" else {}
     with locked(accounts.PATH):
-        return _change_account(uid, request.match_info["login"], request.method, data)
+        return _change_account(uid, request.match_info["login"], request.method, data, request.app["db"])
 
 
-def _change_account(uid, login, method, data):
+def _change_account(uid, login, method, data, db=None):
     acc = owned(uid, login)
+    public_demo = acc.get("demo") and not any(int(a.get("login", 0)) == int(login) and str(a.get("owner")) == str(uid) for a in accounts.load(uid))
+    if public_demo:
+        if method == "DELETE":
+            raise web.HTTPForbidden(text="Публичный счёт нельзя удалить")
+        if set(data) - {"enabled", "notify"}:
+            raise ValueError("unknown field")
+        if "enabled" in data:
+            if type(data["enabled"]) is not bool: raise ValueError("enabled")
+            logic.kv_set(db, f"public_demo:{uid}:enabled", "1" if data["enabled"] else "0")
+        if "notify" in data:
+            values = data["notify"]
+            if not isinstance(values, dict) or set(values) - {"all", *accounts.NOTIFY_KINDS} or any(type(v) is not bool for v in values.values()):
+                raise ValueError("notify")
+            logic.kv_set(db, f"public_demo:{uid}:notify", json.dumps(values))
+        return web.json_response({"ok": True})
     if method == "DELETE":
         if acc.get("demo"):
             raise web.HTTPForbidden(text="Демо-счёт можно скрыть, но нельзя удалить")
