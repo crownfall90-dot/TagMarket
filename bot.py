@@ -1052,7 +1052,7 @@ def guest_view(db, owner, uid, expand_take: bool = False) -> tuple[str, InlineKe
     # не даёт пригласившему право на его удаление.
     mine = {int(a["login"]): a for a in accounts.load(owner)}
     his = [a for a in accounts.load(uid)
-           if a.get("shared_by") == str(owner) and int(a["login"]) in mine]
+           if a.get("shared_by") == str(owner) and not a.get("demo") and int(a["login"]) in mine]
 
     # группируем по владельцу: забрать можно как одну стратегию, так и весь
     # аккаунт человека целиком — по одному счёту это было бы муторно

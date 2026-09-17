@@ -323,12 +323,12 @@ def capital() -> float:
     бы на устаревший base и показал бы капитал, которого уже нет на счёте.
     """
     a = account()
+    if a is not None and _multiplier:
+        return (a.balance - _profit_on_account()) / _multiplier
+
     if _base is not None:
         extra = _capital_moves(_base_at) if _base_at else 0.0
         return _base + extra
-
-    if a is not None and _multiplier:
-        return (a.balance - _profit_on_account()) / _multiplier
 
     # Капитал, сложенный из всей истории счёта: живые сделки плюс свёрнутые
     # месяцы. Прибыль в него не попадает.
