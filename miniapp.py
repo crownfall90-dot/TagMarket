@@ -218,7 +218,8 @@ async def bootstrap(request):
     return web.json_response({"user": {"id": user["id"], "name": user.get("first_name", "Инвестор")},
         "accounts": items, "totals": totals,
         "onboarding": {"needed": not own_accounts,
-                        "registration_url": logic.partner_registration_url()},
+                        "registration_url": logic.partner_registration_url(),
+                        "partner_url": logic.partner_link(request.app["db"], uid)},
         "founder": logic.is_founder(uid), "update_alerts": logic.update_alerts_on(db),
         "server_time": logic.utcnow().isoformat() + "Z", "refresh_seconds": 15})
 
@@ -476,7 +477,22 @@ async def invite(request):
         if acc.get("demo") or acc.get("shared_by"):
             raise web.HTTPForbidden(text="Делиться можно только собственными счетами")
     token = logic.invite_new(db, uid, logins)
-    return web.json_response({"url": logic.invite_link(os.getenv("TELEGRAM_BOT_USERNAME", "tagmarketgold_bot"), token)})
+    return web.json_response({"url": logic.invite_link(os.getenv("TELEGRAM_BOT_USERNAME", "tagmarketgold_bot"), token),
+                              "partner_url": logic.partner_link(db, uid)})
+
+
+async def partner_profile(request):
+    uid, _ = authorize(request)
+    db = request.app["db"]
+    if request.method == "GET":
+        return web.json_response({"url": logic.partner_link(db, uid),
+                                  "portal": "https://exfusion.ibportal.io"})
+    data = await request.json()
+    value = str(data.get("url", "")).strip()
+    if not logic.valid_partner_link(value):
+        raise ValueError("partner url")
+    partner.kv_set(db, f"partner_link:{uid}", value)
+    return web.json_response({"ok": True, "url": value})
 
 
 async def guest_action(request):
@@ -694,6 +710,8 @@ def setup(app):
     app.router.add_get("/api/people", people)
     app.router.add_get("/api/cabinets/{cabinet}/report", cabinet_report)
     app.router.add_post("/api/invites", invite)
+    app.router.add_get("/api/profile/partner-link", partner_profile)
+    app.router.add_put("/api/profile/partner-link", partner_profile)
     app.router.add_delete("/api/invites/{token}", invite)
     app.router.add_post("/api/guests/{guest}", guest_action)
     app.router.add_get("/api/guests/{guest}", guest_detail)

@@ -68,6 +68,20 @@ def partner_registration_url() -> str:
     return value
 
 
+def partner_link(db, uid) -> str:
+    value = (kv_get(db, f"partner_link:{uid}") or "").strip()
+    parts = urlsplit(value)
+    if parts.scheme == "https" and parts.netloc == "exfusion.ibportal.io" and parts.path == "/auth/register":
+        return value
+    return ""
+
+
+def valid_partner_link(value: str) -> bool:
+    parts = urlsplit((value or "").strip())
+    return (parts.scheme == "https" and parts.netloc == "exfusion.ibportal.io"
+            and parts.path == "/auth/register" and bool(parts.query) and len(value) <= 1024)
+
+
 def onboarding_status(db, uid) -> dict:
     return {step: kv_get(db, f"onboard:{uid}:{step}") == "1"
             for step in ("registered", "verified", "broker_account")}
@@ -528,6 +542,7 @@ def settings_menu(owner, db=None) -> tuple[str, InlineKeyboardMarkup]:
                  InlineKeyboardButton(text="👥 Гости", callback_data="cfg:guests")])
     rows.append([InlineKeyboardButton(text="🔗 Пригласить", callback_data="cfg:inv"),
                  InlineKeyboardButton(text="📋 Мои ссылки", callback_data="cfg:invites")])
+    rows.append([InlineKeyboardButton(text="🌐 Моя партнёрская ссылка", callback_data="cfg:partner")])
     if is_founder(owner) and db is not None:
         upd_on = update_alerts_on(db)
         rows.append([InlineKeyboardButton(
@@ -770,11 +785,14 @@ def onboarding_message(db, uid) -> str:
     lines = [f"{'✓' if done[key] else '○'} {i}. {label}"
              for i, (key, label) in enumerate(steps, 1)]
     lines.append("○ 4. Подключение счёта в приложении")
+    saved = partner_link(db, uid)
+    referral = ("\n\n<b>Твоя партнёрская ссылка сохранена.</b> Ты сможешь использовать её "
+                "для своих будущих приглашений." if saved else "")
     return ("<b>Добро пожаловать в Tag Markets</b>\n" + trades.THIN +
             "\nЧтобы начать со своей стратегией, пройдите шаги по порядку:\n\n" +
             "\n".join(lines) +
             "\n\nВ Mini App есть понятная инструкция и отметки пройденных шагов. "
-            "После подключения счёта здесь появятся ваши сделки и результат.")
+            "После подключения счёта здесь появятся ваши сделки и результат." + referral)
 
 
 def onboarding_buttons(mini_url: str) -> InlineKeyboardMarkup:
@@ -1614,6 +1632,10 @@ class Invite(StatesGroup):
     pick = State()
 
 
+class PartnerLink(StatesGroup):
+    value = State()
+
+
 class Broadcast(StatesGroup):
     text = State()
 
@@ -2441,6 +2463,29 @@ async def main():
         await state.set_state(Invite.pick)
         await state.update_data(picked=[])
         await swap(cb, *invite_menu(cb.from_user.id, []))
+
+    @dp.callback_query(F.data == "cfg:partner")
+    async def cfg_partner_ask(cb: CallbackQuery, state: FSMContext):
+        await cb.answer()
+        saved = partner_link(db, cb.from_user.id)
+        await state.set_state(PartnerLink.value)
+        await cb.message.answer(
+            "🌐 <b>Твоя партнёрская ссылка</b>\n" + trades.THIN +
+            "\nОткрой <a href=\"https://exfusion.ibportal.io\">IB Portal</a>, "
+            "внизу справа открой блок <b>Partner</b>, скопируй свою ссылку и отправь её сюда.\n\n" +
+            (f"Сейчас сохранена:\n<code>{html.escape(saved)}</code>\n\n" if saved else "") +
+            "Она сохранится за тобой и будет использоваться для будущих приглашений.",
+            reply_markup=CANCEL)
+
+    @dp.message(PartnerLink.value)
+    async def cfg_partner_save(msg: Message, state: FSMContext):
+        value = (msg.text or "").strip()
+        if not valid_partner_link(value):
+            await msg.answer("Нужна персональная ссылка из блока Partner на exfusion.ibportal.io. Проверь ссылку и отправь её ещё раз.", reply_markup=CANCEL)
+            return
+        kv_set(db, f"partner_link:{msg.from_user.id}", value)
+        await state.clear()
+        await msg.answer("✅ Партнёрская ссылка сохранена. Она останется в твоём профиле для будущих приглашений.", reply_markup=menu("today", owner=msg.from_user.id))
 
     @dp.callback_query(F.data.startswith("cfg:invpick:"), Invite.pick)
     async def cfg_invite_pick(cb: CallbackQuery, state: FSMContext):
