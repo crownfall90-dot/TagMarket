@@ -185,14 +185,18 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                            filename="news.png", content_type="image/png")
             return data
 
-        with patch.object(miniapp.logic, "AiohttpSession", Session), patch.object(miniapp.logic, "Bot", Sender):
+        with patch.object(miniapp.logic, "AiohttpSession", Session), \
+                patch.object(miniapp.logic, "Bot", Sender), \
+                patch.object(miniapp.logic, "works", return_value=True):
             response = await self.call("POST", "/api/broadcast", data=form("broadcast-test-1"))
             self.assertEqual(response.status, 200)
             self.assertEqual((await response.json())["sent"], 1)
             self.assertEqual(calls[0], ("photo", "2", None, True))
             self.assertEqual(calls[1][0:2], ("message", "2"))
             repeat = await self.call("POST", "/api/broadcast", data=form("broadcast-test-1"))
-            self.assertEqual(repeat.status, 409)
+            self.assertEqual(repeat.status, 200)
+            self.assertEqual((await repeat.json())["sent"], 1)
+            self.assertEqual(len(calls), 2)
 
     async def test_short_photo_caption_is_delivered_and_saved_in_inbox(self):
         partner.kv_set(self.db, "guest:2", "1")
@@ -213,13 +217,69 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         form.add_field("request_id", "broadcast-short-photo")
         form.add_field("media", io.BytesIO(b"\x89PNG\r\n\x1a\n" + b"x" * 100),
                        filename="news.png", content_type="image/png")
-        with patch.object(miniapp.logic, "AiohttpSession", Session), patch.object(miniapp.logic, "Bot", Sender):
+        with patch.object(miniapp.logic, "AiohttpSession", Session), \
+                patch.object(miniapp.logic, "Bot", Sender), \
+                patch.object(miniapp.logic, "works", return_value=True):
             response = await self.call("POST", "/api/broadcast", data=form)
         self.assertEqual(response.status, 200, await response.text())
         self.assertEqual(sent, [("2", "<b>Привет</b> с картинкой")])
         inbox = await (await self.call("GET", "/api/notifications", uid=2)).json()
         self.assertEqual(inbox["unread"], 1)
         self.assertEqual(inbox["items"][0]["body"], "Привет с картинкой")
+
+    async def test_broadcast_checks_telegram_before_claiming_request(self):
+        partner.kv_set(self.db, "guest:2", "1")
+        data = FormData()
+        data.add_field("target", "2")
+        data.add_field("text", "Проверка")
+        data.add_field("request_id", "broadcast-offline")
+        with patch.object(miniapp.logic, "works", return_value=False):
+            response = await self.call("POST", "/api/broadcast", data=data)
+        self.assertEqual(response.status, 503)
+        self.assertIsNone(partner.kv_get(self.db, "mini_broadcast:broadcast-offline"))
+
+    async def test_broadcast_retry_skips_delivered_media_and_recipient(self):
+        partner.kv_set(self.db, "guest:2", "1")
+        partner.kv_set(self.db, "guest:3", "1")
+        calls = []
+        fail_once = True
+
+        class Session:
+            def __init__(self, **kwargs): pass
+            async def close(self): pass
+
+        class Sender:
+            def __init__(self, *args, **kwargs): pass
+            async def send_photo(self, recipient, media, **kwargs):
+                calls.append(("photo", recipient))
+            async def send_message(self, recipient, body, **kwargs):
+                nonlocal fail_once
+                calls.append(("message", recipient))
+                if recipient == "3" and fail_once:
+                    fail_once = False
+                    raise RuntimeError("temporary proxy failure")
+
+        def form():
+            data = FormData()
+            data.add_field("target", "all")
+            data.add_field("text", "Т" * 1100)
+            data.add_field("request_id", "broadcast-retry")
+            # Some mobile WebViews omit Content-Type; the signature is sufficient.
+            data.add_field("media", io.BytesIO(b"\x89PNG\r\n\x1a\n" + b"x" * 100),
+                           filename="news.png", content_type="application/octet-stream")
+            return data
+
+        with patch.object(miniapp.logic, "AiohttpSession", Session), \
+                patch.object(miniapp.logic, "Bot", Sender), \
+                patch.object(miniapp.logic, "works", return_value=True):
+            first = await self.call("POST", "/api/broadcast", data=form())
+            self.assertEqual(await first.json(), {"sent": 1, "failed": 1})
+            retry = await self.call("POST", "/api/broadcast", data=form())
+        self.assertEqual(await retry.json(), {"sent": 2, "failed": 0})
+        self.assertEqual(calls.count(("photo", "2")), 1)
+        self.assertEqual(calls.count(("photo", "3")), 1)
+        self.assertEqual(calls.count(("message", "2")), 1)
+        self.assertEqual(calls.count(("message", "3")), 2)
 
     async def test_notifications_are_private_deduplicated_and_readable(self):
         self.assertTrue(partner.record_notification(self.db, 1, "trade:123:1", "trades", "SONIC", "+12 $"))
@@ -338,6 +398,23 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(data["deals"][0]["pct_capital"], 0.7179)
         r = await self.call("GET","/api/accounts/123/report?period=month&offset=50")
         self.assertEqual(len((await r.json())["deals"]),10)
+
+    async def test_trade_insights_separate_current_and_previous_week(self):
+        previous = miniapp.logic.period("lastweek")[1] + timedelta(days=1)
+        current = datetime.utcnow()
+        deals = [{"ticket": index, "time": moment, "symbol": "XAUUSD", "side": "buy",
+                  "net": amount, "profit": amount, "swap": 0, "commission": 0,
+                  "volume": .1, "is_closing": True, "is_opening": False,
+                  "is_balance": False}
+                 for index, moment, amount in ((1, previous, 10), (2, current, 20))]
+        store.save_deals(self.tdb, 123, deals)
+        response = await self.call("GET", "/api/accounts/123/report?period=all")
+        self.assertEqual(response.status, 200, await response.text())
+        data = await response.json()
+        self.assertEqual(data["insights"]["week"]["count"], 1)
+        self.assertEqual(data["insights"]["lastweek"]["count"], 1)
+        self.assertEqual(data["insights"]["all"]["count"], 2)
+        self.assertEqual(data["day_totals"][current.date().isoformat()]["count"], 1)
 
     async def test_overview_report_combines_accounts_and_excludes_demo(self):
         accounts.add({**self.acc, "login": 456, "name": "NEO", "strategy": "NEO"})

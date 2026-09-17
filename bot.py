@@ -803,7 +803,7 @@ def onboarding_message(db, uid) -> str:
 def onboarding_buttons(mini_url: str, db=None, uid=None) -> InlineKeyboardMarkup:
     rows = []
     inviter = kv_get(db, f"guest_by:{uid}") if db is not None and uid is not None else None
-    registration = (partner_link(db, inviter) if inviter else "") or partner_registration_url()
+    registration = partner_link(db, inviter) if inviter else partner_registration_url()
     if registration:
         rows.append([InlineKeyboardButton(text="1 · Начать регистрацию", url=registration)])
     if mini_url.startswith("https://"):
@@ -1828,7 +1828,7 @@ async def main():
     if mini_url.startswith("https://"):
         try:
             await bot.set_chat_menu_button(menu_button=MenuButtonWebApp(
-                text="Открыть приложение", web_app=WebAppInfo(url=mini_url)))
+                text="TagMarket", web_app=WebAppInfo(url=mini_url)))
         except Exception:
             log.exception("не обновил кнопку Mini App; продолжаю работу бота")
     db = open_db()

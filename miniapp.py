@@ -36,6 +36,7 @@ import trades
 STATIC = Path(__file__).parent / "web"
 MAX_AUTH_AGE = 86400
 _rates = OrderedDict()
+_broadcast_active = set()
 
 
 def plain_report(markup):
@@ -236,11 +237,13 @@ async def bootstrap(request):
         for key, source in (("capital", "now"), ("pnl", "pnl"), ("month", "month_net"), ("kept", "kept")):
             bucket[key] += t[source]
     own_accounts = [a for a in items if not a["demo"] and not a.get("shared")]
+    inviter = partner.kv_get(db, f"guest_by:{uid}")
+    registration_url = (logic.partner_link(db, inviter) if inviter else logic.partner_registration_url())
     return web.json_response({"user": {"id": user["id"], "name": user.get("first_name", "Инвестор")},
         "accounts": items, "totals": totals,
         "onboarding": {"needed": not own_accounts,
-                        "registration_url": logic.partner_link(db, partner.kv_get(db, f"guest_by:{uid}"))
-                                            or logic.partner_registration_url(),
+                        "registration_url": registration_url,
+                        "progress": logic.onboarding_status(db, uid),
                         "partner_url": logic.partner_link(request.app["db"], uid)},
         "founder": logic.is_founder(uid), "update_alerts": logic.update_alerts_on(db),
         "server_time": logic.utcnow().isoformat() + "Z", "refresh_seconds": 15})
@@ -259,6 +262,26 @@ async def notifications(request):
             raise ValueError("ids")
         partner.read_notifications(db, uid, ids)
     return web.json_response(partner.notifications_for(db, uid))
+
+
+async def onboarding_progress(request):
+    uid, _ = authorize(request)
+    data = await request.json()
+    steps = ("registered", "verified", "broker_account")
+    step = data.get("step") if isinstance(data, dict) else None
+    if step not in steps or type(data.get("done")) is not bool:
+        raise web.HTTPBadRequest(text="Некорректный шаг")
+    db = request.app["db"]
+    progress = logic.onboarding_status(db, uid)
+    index = steps.index(step)
+    if data["done"] and index and not progress[steps[index - 1]]:
+        raise web.HTTPConflict(text="Сначала завершите предыдущий шаг")
+    if not data["done"]:
+        for later in steps[index:]:
+            partner.kv_set(db, f"onboard:{uid}:{later}", "0")
+    else:
+        partner.kv_set(db, f"onboard:{uid}:{step}", "1")
+    return web.json_response({"progress": logic.onboarding_status(db, uid)})
 
 
 def report_period(query):
@@ -368,8 +391,35 @@ async def report(request):
                       "pct_capital": round(net_income / capital_then * 100, 4) if capital_then > 0 else None})
     months = [{"month": m["month"], "count": m["trades"] or 0,
                 "net": trades.net_of_fee(trades.mine((m["gross"] or 0) + (m["platform"] or 0)))} for m in trades.monthly(120)]
+    starts = {key: logic.period(key)[1] for key in ("week", "lastweek", "month")}
+    recent = trades.fetch(min(starts.values()), logic.utcnow() + timedelta(days=1))
+    insights = {}
+    for key in ("week", "lastweek", "month"):
+        _, first, last, _ = logic.period(key)
+        try:
+            old = report_archive(first, last)
+        except web.HTTPUnprocessableEntity:
+            insights[key] = {"available": False}
+            continue
+        selected = [r for r in recent if first <= r["time"] <= last]
+        summary_for_period = trades.summary(selected)
+        amount = summary_for_period["total"] + sum((m["gross"] or 0) + (m["platform"] or 0) for m in old)
+        insights[key] = {"available": True, "count": summary_for_period["count"] +
+                         sum(m["trades"] or 0 for m in old),
+                         "net": trades.net_of_fee(trades.mine(amount))}
+    insights["all"] = {"available": True, "count": sum(m["count"] for m in months),
+                       "net": sum(m["net"] for m in months)}
+    by_day = {}
+    for row in rows:
+        by_day.setdefault(row["time"].strftime("%Y-%m-%d"), []).append(row)
+    day_totals = {}
+    for day, day_rows in by_day.items():
+        day_summary = trades.summary(day_rows)
+        day_totals[day] = {"count": day_summary["count"],
+                           "net": trades.net_of_fee(trades.mine(day_summary["total"]))}
     return web.json_response({"title": title, "summary": summary, "currency": trades.currency(),
         "deals": deals, "has_more": offset + 50 < len(filtered), "offset": offset,
+        "insights": insights, "day_totals": day_totals,
         "chart": [{"day": k, "value": v} for k, v in sorted(chart.items())],
         "months": months, "archived": bool(archived),
         "report": plain_report(trades.fmt_report(title, rows, trades.currency(), since=since, until=until))})
@@ -396,19 +446,21 @@ async def add_account(request):
         known = next((a.get("server") for a in accounts.load() if a.get("server")), "")
         server = known or "TMFinancials-Server"
     # Existing history must not become visible merely by guessing a login.
-    with locked(accounts.PATH):
-        if any(int(a["login"]) == login for a in accounts.load()):
-            raise web.HTTPConflict(text="Счёт уже подключён. Попросите владельца прислать приглашение")
-        # Also deny abandoned history until independent credentials verification exists.
-        if store.get_state(request.app["trades"], login):
-            raise web.HTTPConflict(text="Для повторного подключения этого счёта обратитесь к владельцу бота")
-        accounts.add({"owner": uid, "login": login, "server": server,
-            "name": bounded_text(data, "name", 48, True),
-            "strategy": bounded_text(data, "name", 48, True),
-            "holder": bounded_text(data, "holder", 96),
-            "cabinet": bounded_text(data, "cabinet", 32),
-            "password": bounded_text(data, "password", 128, True),
-            "multiplier": logic.DEFAULT_MULTIPLIER})
+    # accounts.add() already performs an atomic transaction.  Do not wrap it
+    # in another file lock: the old nested lock could leave the dialog hanging
+    # forever on Windows/Linux when a user submitted the form.
+    if any(int(a["login"]) == login for a in accounts.load()):
+        raise web.HTTPConflict(text="Счёт уже подключён. Попросите владельца прислать приглашение")
+    # Also deny abandoned history until independent credentials verification exists.
+    if store.get_state(request.app["trades"], login):
+        raise web.HTTPConflict(text="Для повторного подключения этого счёта обратитесь к владельцу бота")
+    accounts.add({"owner": uid, "login": login, "server": server,
+        "name": bounded_text(data, "name", 48, True),
+        "strategy": bounded_text(data, "name", 48, True),
+        "holder": bounded_text(data, "holder", 96),
+        "cabinet": bounded_text(data, "cabinet", 32),
+        "password": bounded_text(data, "password", 128, True),
+        "multiplier": logic.DEFAULT_MULTIPLIER})
     return web.json_response({"ok": True, "pending": True}, status=201)
 
 
@@ -611,6 +663,7 @@ async def broadcast(request):
         raise web.HTTPForbidden(text="Только для основателя")
     media_path = None
     media_kind = None
+    media_digest = ""
     try:
         if request.content_type.startswith("multipart/"):
             data = {}
@@ -621,31 +674,40 @@ async def broadcast(request):
                     continue
                 if media_path:
                     raise web.HTTPBadRequest(text="Можно приложить только один файл")
-                formats = {"image/jpeg": (".jpg", "photo"),
-                           "image/png": (".png", "photo"), "video/mp4": (".mp4", "video")}
-                media_type = part.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
-                if media_type not in formats:
-                    raise web.HTTPBadRequest(text="Разрешены JPG, PNG и MP4")
-                suffix, media_kind = formats[media_type]
-                media_path = Path(tempfile.gettempdir()) / f"tagmarkets-broadcast-{uuid.uuid4().hex}{suffix}"
+                media_path = Path(tempfile.gettempdir()) / f"tagmarkets-broadcast-{uuid.uuid4().hex}.upload"
                 size = 0
-                max_media_size = (10 if media_kind == "photo" else 20) * 1024 * 1024
+                digest = hashlib.sha256()
                 header = b""
-                with media_path.open("wb") as dst:
+                with os.fdopen(os.open(media_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as dst:
                     while chunk := await part.read_chunk(64 * 1024):
                         size += len(chunk)
-                        if size > max_media_size:
+                        if size > 20 * 1024 * 1024:
                             raise web.HTTPBadRequest(text="Фото до 10 МБ, видео до 20 МБ")
                         if len(header) < 16:
                             header = (header + chunk)[:16]
+                        digest.update(chunk)
                         dst.write(chunk)
-                valid = (suffix == ".jpg" and header.startswith(b"\xff\xd8\xff") or
-                         suffix == ".png" and header.startswith(b"\x89PNG\r\n\x1a\n") or
-                         suffix == ".mp4" and header[4:8] == b"ftyp")
-                if not valid:
-                    raise web.HTTPBadRequest(text="Формат файла не совпадает с содержимым")
+                if header.startswith(b"\xff\xd8\xff"):
+                    suffix, media_kind = ".jpg", "photo"
+                elif header.startswith(b"\x89PNG\r\n\x1a\n"):
+                    suffix, media_kind = ".png", "photo"
+                elif header[4:8] == b"ftyp":
+                    suffix, media_kind = ".mp4", "video"
+                else:
+                    raise web.HTTPBadRequest(text="Разрешены JPG, PNG и MP4")
+                if media_kind == "photo" and size > 10 * 1024 * 1024:
+                    raise web.HTTPBadRequest(text="Фото до 10 МБ, видео до 20 МБ")
+                named_path = media_path.with_suffix(suffix)
+                media_path.rename(named_path)
+                media_path = named_path
+                media_digest = digest.hexdigest()
         else:
-            data = await request.json()
+            if request.content_type == "application/json":
+                data = await request.json()
+            else:
+                # aiohttp FormData without a file is urlencoded, so accept it
+                # just like multipart submissions from the web form.
+                data = {k: v for k, v in (await request.post()).items()}
         try:
             body = sanitize_broadcast_html(data.get("text", ""))
         except ValueError:
@@ -659,45 +721,79 @@ async def broadcast(request):
         known = {u for u, _ in logic.all_guests(db)}
         if target != "all" and target not in known:
             raise web.HTTPNotFound(text="Получатель не найден")
+        if not known:
+            raise web.HTTPBadRequest(text="Пока нет получателей")
         key = bounded_text(data, "request_id", 64, True)
-        # Persist before sending: repeated browser submissions must not duplicate a broadcast.
-        db.execute("BEGIN IMMEDIATE")
-        try:
-            if partner.kv_get(db, f"mini_broadcast:{key}"):
-                raise web.HTTPConflict(text="Эта рассылка уже была запущена. Повторная отправка отклонена")
-            db.execute("INSERT INTO kv VALUES (?,?)", (f"mini_broadcast:{key}", "started"))
-            db.commit()
-        except Exception:
-            db.rollback()
-            raise
-        ok = failed = 0
-        session = logic.AiohttpSession(proxy=os.getenv("TELEGRAM_PROXY", "").split(",")[0].strip() or None)
-        sender = logic.Bot(os.environ["TELEGRAM_BOT_TOKEN"], session=session)
+        fingerprint = hashlib.sha256(json.dumps(
+            [target, body, media_kind, media_digest], ensure_ascii=False).encode()).hexdigest()
+        token = os.environ["TELEGRAM_BOT_TOKEN"]
+        proxies = [p.strip() for p in os.getenv("TELEGRAM_PROXY", "").split(",") if p.strip()] or [""]
+        proxy = None
+        for candidate in proxies:
+            if await logic.works(token, candidate):
+                proxy = candidate
+                break
+        if proxy is None:
+            raise web.HTTPServiceUnavailable(text="Telegram сейчас недоступен. Сообщение не отправлено — попробуйте позже")
+        if key in _broadcast_active:
+            raise web.HTTPConflict(text="Эта рассылка уже выполняется")
+        campaign_key = f"mini_broadcast:{key}"
+        raw = partner.kv_get(db, campaign_key)
+        if raw:
+            try:
+                campaign = json.loads(raw)
+            except (ValueError, TypeError):
+                raise web.HTTPConflict(text="Старая попытка требует нового сообщения")
+            if not isinstance(campaign, dict) or campaign.get("fingerprint") != fingerprint:
+                raise web.HTTPConflict(text="Содержимое повторной отправки отличается от исходного")
+        else:
+            campaign = {"fingerprint": fingerprint,
+                        "recipients": {recipient: "pending" for recipient in
+                                       sorted(known if target == "all" else {target})}}
+            partner.kv_set(db, campaign_key, json.dumps(campaign))
+        session = logic.AiohttpSession(proxy=proxy or None)
+        sender = logic.Bot(token, session=session)
+        _broadcast_active.add(key)
         try:
             # Telegram limits media captions to 1024 characters. Longer messages
             # follow the attachment as a separate formatted message.
             caption = body if telegram_length(plain_report(body)) <= 1000 else None
-            for recipient in sorted(known if target == "all" else {target}):
+            for recipient, status in campaign["recipients"].items():
+                if status == "sent":
+                    continue
                 try:
-                    if media_kind == "photo":
-                        await sender.send_photo(recipient, FSInputFile(media_path), caption=caption,
-                                                parse_mode=ParseMode.HTML)
-                    elif media_kind == "video":
-                        await sender.send_video(recipient, FSInputFile(media_path), caption=caption,
-                                                parse_mode=ParseMode.HTML, supports_streaming=True)
+                    if status != "media_sent":
+                        if media_kind == "photo":
+                            await sender.send_photo(recipient, FSInputFile(media_path), caption=caption,
+                                                    parse_mode=ParseMode.HTML)
+                        elif media_kind == "video":
+                            await sender.send_video(recipient, FSInputFile(media_path), caption=caption,
+                                                    parse_mode=ParseMode.HTML, supports_streaming=True)
+                        if media_kind:
+                            campaign["recipients"][recipient] = "media_sent"
+                            partner.kv_set(db, campaign_key, json.dumps(campaign))
                     if body and (not media_kind or caption is None):
                         await sender.send_message(recipient, body, parse_mode=ParseMode.HTML)
-                    partner.record_notification(db, recipient, f"broadcast:{key}", "message",
-                                                "Сообщение Tag Markets",
-                                                plain_report(body) or ("Фото" if media_kind == "photo" else "Видео"))
-                    ok += 1
+                    campaign["recipients"][recipient] = "sent"
+                    partner.kv_set(db, campaign_key, json.dumps(campaign))
+                    try:
+                        partner.record_notification(db, recipient, f"broadcast:{key}", "message",
+                                                    "Сообщение Tag Markets",
+                                                    plain_report(body) or ("Фото" if media_kind == "photo" else "Видео"))
+                    except sqlite3.DatabaseError:
+                        logging.exception("broadcast delivered but inbox save failed for %s", recipient)
                 except Exception:
-                    failed += 1
                     logging.exception("miniapp broadcast failed for recipient %s", recipient)
+                    if campaign["recipients"][recipient] != "media_sent":
+                        campaign["recipients"][recipient] = "failed"
+                        partner.kv_set(db, campaign_key, json.dumps(campaign))
         finally:
-            await session.close()
-        result = {"sent": ok, "failed": failed}
-        partner.kv_set(db, f"mini_broadcast:{key}", json.dumps(result))
+            try:
+                await session.close()
+            finally:
+                _broadcast_active.discard(key)
+        result = {"sent": sum(s == "sent" for s in campaign["recipients"].values()),
+                  "failed": sum(s != "sent" for s in campaign["recipients"].values())}
         return web.json_response(result)
     finally:
         if media_path:
@@ -745,6 +841,7 @@ def setup(app):
     app.router.add_get("/api/bootstrap", bootstrap)
     app.router.add_get("/api/notifications", notifications)
     app.router.add_post("/api/notifications", notifications)
+    app.router.add_post("/api/onboarding", onboarding_progress)
     app.router.add_get("/api/overview/report", overview_report)
     app.router.add_get("/api/accounts/{login}/report", report)
     app.router.add_post("/api/accounts", add_account)
