@@ -2,7 +2,7 @@
 const $ = (s, root = document) => root.querySelector(s);
 const tg = window.Telegram?.WebApp;
 const preview = new URLSearchParams(location.search).get('preview') === '1';
-const state = {data:null, people:null, admin:null, report:null, reportError:'', notifications:{items:[],unread:0}, view:'overview', login:null, period:'month', kind:'trades', offset:0, from:'', to:'', busy:false, currency:null};
+const state = {data:null, people:null, admin:null, report:null, reportError:'', notifications:{items:[],unread:0}, view:'overview', login:null, period:'today', kind:'trades', offset:0, from:'', to:'', busy:false, currency:null};
 let generation = 0, refreshTimer, toastTimer, notificationsStarted = false, lastNotificationId = 0;
 const paths = {overview:'M3 10l9-7 9 7v10H3z M9 20v-7h6v7',accounts:'M3 7h18v14H3z M3 7V4h14v3 M16 12h5v5h-5z',deals:'M4 5h16 M4 12h16 M4 19h16 M8 2v6 M16 9v6 M9 16v6',people:'M16 21v-3a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v3 M9 10a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M17 3a4 4 0 0 1 0 8 M22 21v-3a4 4 0 0 0-3-4',settings:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M12 2v3 M12 19v3 M2 12h3 M19 12h3 M5 5l2 2 M17 17l2 2 M5 19l2-2 M17 7l2-2',plus:'M12 5v14 M5 12h14',arrow:'M5 12h14 M14 7l5 5-5 5',up:'M7 17 17 7 M7 7h10v10',down:'M7 7l10 10 M7 17h10V7',refresh:'M20 7A8 8 0 0 0 6 5L3 8 M3 3v5h5 M4 17a8 8 0 0 0 14 2l3-3 M21 21v-5h-5',sun:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M12 1v2 M12 21v2 M1 12h2 M21 12h2 M4 4l2 2 M18 18l2 2 M4 20l2-2 M18 6l2-2',chevron:'M9 5l7 7-7 7',chart:'M3 19h18 M4 15l5-5 5 3 6-9',check:'m5 12 4 4L19 6',clock:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 7v5l3 2',link:'M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-2 2 M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l2-2',back:'M19 12H5 M10 7l-5 5 5 5',shield:'M12 2l9 4v6c0 5-9 10-9 10S3 17 3 12V6z M8 12l3 3 5-6',copy:'M8 8h13v13H8z M16 8V3H3v13h5'};
 paths.bell='M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9 M10 21h4';
@@ -29,7 +29,7 @@ function button(action,text,style='secondary',ico='',attrs=''){return `<button c
 function broadcastPreview(text){return esc(text).replace(/&lt;(\/?)(b|i|code|blockquote)&gt;/g,'<$1$2>');}
 function fileSize(bytes){return `${number(bytes/1024/1024)} МБ`;}
 const tabs=[['overview','Обзор'],['accounts','Счета'],['deals','Сделки'],['people','Гости'],['settings','Настройки']];
-const periods=[['today','Сегодня'],['yesterday','Вчера'],['week','Неделя'],['lastweek','Пр. неделя'],['month','Месяц'],['lastmonth','Пр. месяц'],['all','Всё время'],['custom','Выбрать даты']];
+const periods=[['today','Сегодня'],['yesterday','Вчера'],['week','Неделя'],['lastweek','Пр. неделя'],['month','Месяц'],['all','Всё время'],['custom','Выбрать даты']];
 function nav(){const html=tabs.map(([id,label])=>`<a href="#${id}" aria-label="${label}" class="${state.view===id?'active':''}" ${state.view===id?'aria-current="page"':''}>${icon(id)}<span>${label}</span></a>`).join('');$('#desktop-nav').innerHTML=html;$('#mobile-nav').innerHTML=html;$('#crumb').textContent=tabs.find(([id])=>id===state.view)?.[1]||'Счёт';}
 function header(title,subtitle,action=''){return `<div class="page-head"><div><div class="eyebrow">Ваш капитал в движении</div><h1>${esc(title)}</h1><p>${esc(subtitle)}</p></div>${action}</div>`;}
 function empty(title,text,action=''){return `<div class="empty">${icon('chart')}<h2>${esc(title)}</h2><p>${esc(text)}</p>${action}</div>`;}
