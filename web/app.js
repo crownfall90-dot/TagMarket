@@ -109,7 +109,7 @@ document.addEventListener('click',async event=>{const el=event.target.closest('[
  else if(action==='notifications')await openNotifications();
  else if(action==='shortcut')await addShortcut();
  else if(action==='theme')switchTheme();
- else if(action==='period'){state.period=el.dataset.value;state.offset=0;state.report=null;state.reportError='';if(state.period==='custom')render();else await refresh();}
+ else if(action==='period'){if(state.period===el.dataset.value)return;state.period=el.dataset.value;state.offset=0;state.report=null;state.reportError='';if(state.period==='custom')render();else await refresh();}
  else if(action==='kind'){state.kind=el.dataset.value;state.offset=0;await refresh();}
  else if(action==='next'||action==='prev'){state.offset=Math.max(0,state.offset+(action==='next'?50:-50));await refresh();}
  else if(action==='apply-period'){state.from=$('#from-date').value;state.to=$('#to-date').value;if(!state.from||!state.to||state.from>state.to)throw new Error('Укажите корректные даты начала и конца');await refresh();}
