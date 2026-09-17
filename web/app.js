@@ -29,7 +29,7 @@ function button(action,text,style='secondary',ico='',attrs=''){return `<button c
 function broadcastPreview(text){return esc(text).replace(/&lt;(\/?)(b|i|code|blockquote)&gt;/g,'<$1$2>');}
 function fileSize(bytes){return `${number(bytes/1024/1024)} МБ`;}
 const tabs=[['overview','Обзор'],['accounts','Счета'],['deals','Сделки'],['people','Гости'],['settings','Настройки']];
-const periods=[['today','Сегодня'],['yesterday','Вчера'],['week','Неделя'],['lastweek','Пр. неделя'],['month','Месяц'],['all','Всё время'],['custom','Выбрать даты']];
+const periods=[['today','Сегодня'],['yesterday','Вчера'],['week','Эта неделя'],['lastweek','Прошлая неделя'],['month','Этот месяц'],['lastmonth','Прошлый месяц'],['all','Всё время'],['custom','Свои даты']];
 function nav(){const html=tabs.map(([id,label])=>`<a href="#${id}" aria-label="${label}" class="${state.view===id?'active':''}" ${state.view===id?'aria-current="page"':''}>${icon(id)}<span>${label}</span></a>`).join('');$('#desktop-nav').innerHTML=html;$('#mobile-nav').innerHTML=html;$('#crumb').textContent=tabs.find(([id])=>id===state.view)?.[1]||'Счёт';}
 function header(title,subtitle,action=''){return `<div class="page-head"><div><div class="eyebrow">Ваш капитал в движении</div><h1>${esc(title)}</h1><p>${esc(subtitle)}</p></div>${action}</div>`;}
 function empty(title,text,action=''){return `<div class="empty">${icon('chart')}<h2>${esc(title)}</h2><p>${esc(text)}</p>${action}</div>`;}
