@@ -190,6 +190,10 @@ def save(data: list[dict]) -> None:
         f.flush()
         os.fsync(f.fileno())    # иначе при отключении питания останется пустой файл
     os.replace(tmp, PATH)
+    try:
+        os.chmod(PATH, 0o600)
+    except OSError:
+        pass
 
 
 @transaction

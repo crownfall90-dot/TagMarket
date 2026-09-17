@@ -17,6 +17,7 @@ import asyncio
 import logging
 import math
 import os
+import sqlite3
 import secrets
 from datetime import datetime, timezone
 
@@ -269,7 +270,7 @@ def check_token(request) -> None:
 # агенту не нужны и не должны покидать сервер лишний раз. MT5_TERMINAL,
 # AGENT_ROLE, STANDBY_TIMEOUT, AGENT_LOCK_PORT — машинно-специфичные,
 # каждая машина держит их сама.
-AGENT_ENV_KEYS = ("AGENT_SERVER", "WEBHOOK_TOKEN", "AGENT_INTERVAL",
+AGENT_ENV_KEYS = ("AGENT_SERVER", "AGENT_INTERVAL",
                   "HISTORY_FROM", "INVESTOR_SHARE", "BROKER_FEE",
                   "REPORT_FROM", "TZ_HOURS")
 
@@ -533,7 +534,11 @@ async def agent_sync(request):
     except (ValueError, TypeError, KeyError, OverflowError) as e:
         raise web.HTTPBadRequest(text=f"bad payload: {e}")
 
-    new = store.save_sync(db, login, state, deals, command_done)
+    try:
+        new = store.save_sync(db, login, state, deals, command_done)
+    except sqlite3.OperationalError as exc:
+        log.warning("temporary database failure during sync for %s: %s", login, exc)
+        raise web.HTTPServiceUnavailable(text="database temporarily busy")
     reported_server = str(data.get("server") or "").strip()
     reported_holder = str(data.get("holder") or "").strip()
     if reported_server or reported_holder:
