@@ -508,8 +508,6 @@ async def invite(request):
         logic.invite_save(db, token, inv)
         return web.json_response({"ok": True})
     data = await request.json()
-    if logic.partner_registration_url() and not logic.partner_link(db, uid):
-        raise web.HTTPPreconditionRequired(text="Сначала сохраните персональную партнёрскую ссылку в настройках")
     logins = list(dict.fromkeys(int(x) for x in data.get("logins", [])))
     for login in logins:
         acc = owned(uid, login)
