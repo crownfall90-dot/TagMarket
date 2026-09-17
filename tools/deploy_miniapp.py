@@ -20,7 +20,7 @@ FILES = {"accounts.py", "account_lock.py", "agent.py", "bot.py", "coordination.p
          "ibportal.py", "miniapp.py", "partner.py", "store.py", "trades.py", "webhook_server.py",
          "requirements.txt", "README.md", "MINIAPP.md", "todo.md", "web/index.html",
          "web/app.js", "web/style.css", "web/brand.svg", "web/preview.json", "tools/selfcheck.py",
-         "tools/test_miniapp.py", "tools/deploy_miniapp.py"}
+         "tools/test_miniapp.py", "tools/deploy_miniapp.py", "tools/rollback_miniapp.py"}
 SERVICES = ["tagmarkets-bot", "tagmarkets-webhook"]
 
 
@@ -31,6 +31,9 @@ def run(*args, **kwargs):
 def main():
     if os.name != "posix" or not ROOT.is_dir() or not (ROOT / ".env").is_file():
         raise SystemExit("Only run on the existing /opt/tagmarkets Linux server")
+    import fcntl
+    lock_handle = open(ROOT / ".release.lock", "a+b")
+    fcntl.flock(lock_handle, fcntl.LOCK_EX)
     archive = Path(sys.argv[1]).resolve()
     stamp = time.strftime("%Y%m%d-%H%M%S")
     stage = ROOT / "releases" / stamp

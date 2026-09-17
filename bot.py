@@ -340,13 +340,17 @@ def dashboard(owner) -> tuple[str, InlineKeyboardMarkup]:
     """Стартовый экран: по каждому кабинету — вложено, PnL и ROI."""
     groups = accounts.cabinets(owner)
     demo_row = demo_button(owner)
+    mini_url = os.getenv("MINI_APP_URL", "").strip()
+    app_rows = ([[InlineKeyboardButton(text="✦ Открыть мини-приложение",
+                                       web_app=WebAppInfo(url=mini_url))]]
+                if mini_url.startswith("https://") else [])
     if not groups:
-        rows = [[InlineKeyboardButton(text="＋ Добавить счёт", callback_data="add")]]
+        rows = app_rows + [[InlineKeyboardButton(text="＋ Добавить счёт", callback_data="add")]]
         if demo_row:
             rows.append(demo_row)
         return NO_ACCOUNTS, InlineKeyboardMarkup(inline_keyboard=rows)
 
-    blocks, rows = [], []
+    blocks, rows = [], app_rows
     grand_now = grand_pnl = grand_month = 0.0
     grand_weighted = grand_weighted_roi = grand_kept = 0.0
     cur = "USD"

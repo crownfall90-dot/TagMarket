@@ -86,6 +86,21 @@ class AuthTests(unittest.TestCase):
 
 
 class BroadcastFormatTests(unittest.TestCase):
+    def test_dashboard_opens_miniapp_first_with_or_without_accounts(self):
+        with patch.dict(os.environ, {"MINI_APP_URL": "https://crownfail.shop/tagmarkets/app/"}):
+            with patch.object(accounts, "cabinets", return_value={}), \
+                    patch.object(miniapp.logic, "demo_button", return_value=None):
+                _, markup = miniapp.logic.dashboard(1)
+                self.assertEqual(markup.inline_keyboard[0][0].web_app.url,
+                                 "https://crownfail.shop/tagmarkets/app/")
+            with patch.object(accounts, "cabinets", return_value={"CU1": {
+                "holder": "Test", "accounts": [{}]
+            }}), patch.object(miniapp.logic, "account_totals", return_value=None), \
+                    patch.object(miniapp.logic, "demo_button", return_value=None):
+                _, markup = miniapp.logic.dashboard(1)
+                self.assertEqual(markup.inline_keyboard[0][0].web_app.url,
+                                 "https://crownfail.shop/tagmarkets/app/")
+
     def test_editor_html_is_canonical_and_untrusted_markup_is_escaped(self):
         self.assertEqual(miniapp.sanitize_broadcast_html(
             '<b>Заголовок <i>текст</b> после</i><script>alert(1)</script>'),
