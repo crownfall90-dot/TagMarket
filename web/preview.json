@@ -1,432 +1,503 @@
 {
-  "bootstrap": {
-    "user": {
-      "id": 1,
-      "name": "Александр"
+ "bootstrap": {
+  "user": {
+   "id": 1,
+   "name": "Александр"
+  },
+  "accounts": [
+   {
+    "login": 10001,
+    "name": "SONIC",
+    "strategy": "SONIC",
+    "holder": "Александр Миронов",
+    "cabinet": "CUDEMO1",
+    "server": "TMFinancials-Server",
+    "enabled": true,
+    "notify": {
+     "all": true,
+     "trades": true,
+     "deposits": true,
+     "withdrawals": true
     },
-    "accounts": [
-      {
-        "login": 10001,
-        "name": "SONIC",
-        "strategy": "SONIC",
-        "holder": "Александр Миронов",
-        "cabinet": "CUDEMO1",
-        "server": "TMFinancials-Server",
-        "enabled": true,
-        "notify": {
-          "all": true,
-          "trades": true,
-          "deposits": true,
-          "withdrawals": true
-        },
-        "demo": false,
-        "shared": false,
-        "base": null,
-        "base_at": null,
-        "synced": "2026-09-16T11:15:00",
-        "status": "fresh",
-        "totals": {
-          "now": 12480.5,
-          "pnl": 2486.72,
-          "kept": 1119.024,
-          "month_pct": 5.483113657305397,
-          "month_net": 684.32,
-          "today_net": 18.42,
-          "month_trades": 68,
-          "cur": "USD",
-          "roi": 19.92
-        }
-      },
-      {
-        "login": 10002,
-        "name": "NEO.FX",
-        "strategy": "NEO.FX",
-        "holder": "Александр Миронов",
-        "cabinet": "CUDEMO1",
-        "server": "TMFinancials-Server",
-        "enabled": true,
-        "notify": {
-          "all": true,
-          "trades": true,
-          "deposits": true,
-          "withdrawals": true
-        },
-        "demo": false,
-        "shared": false,
-        "base": null,
-        "base_at": null,
-        "synced": "2026-09-16T11:15:00",
-        "status": "fresh",
-        "totals": {
-          "now": 5200,
-          "pnl": 814.6,
-          "kept": 366.57,
-          "month_pct": 6.009230769230769,
-          "month_net": 312.48,
-          "today_net": 23.76,
-          "month_trades": 68,
-          "cur": "USD",
-          "roi": 15.67
-        }
-      },
-      {
-        "login": 90001,
-        "name": "Копитрейдинг · 45k$",
-        "strategy": "Копитрейдинг · 45k$",
-        "holder": "Публичная стратегия",
-        "cabinet": "DEMO",
-        "server": "TMFinancials-Server",
-        "enabled": true,
-        "notify": {
-          "all": true,
-          "trades": true,
-          "deposits": true,
-          "withdrawals": true
-        },
-        "demo": true,
-        "shared": false,
-        "base": null,
-        "base_at": null,
-        "synced": "2026-09-16T11:15:00",
-        "status": "fresh",
-        "totals": {
-          "now": 45000,
-          "pnl": 6724.89,
-          "kept": 3026.2005000000004,
-          "month_pct": 4.744000000000001,
-          "month_net": 2134.8,
-          "today_net": 45.31,
-          "month_trades": 68,
-          "cur": "USD",
-          "roi": 14.94
-        }
-      }
-    ],
+    "demo": false,
+    "shared": false,
+    "base": null,
+    "base_at": null,
+    "synced": "2026-09-16T11:15:00",
+    "status": "fresh",
     "totals": {
-      "USD": {
-        "capital": 17680.5,
-        "pnl": 3301.32,
-        "month": 996.8,
-        "today": 42.18,
-        "kept": 1485.594
-      }
+     "now": 12480.5,
+     "pnl": 2486.72,
+     "kept": 1119.024,
+     "month_pct": 5.483113657305397,
+     "month_net": 684.32,
+     "today_net": 18.42,
+     "month_trades": 68,
+     "cur": "USD",
+     "roi": 19.92
+    }
+   },
+   {
+    "login": 10002,
+    "name": "NEO.FX",
+    "strategy": "NEO.FX",
+    "holder": "Александр Миронов",
+    "cabinet": "CUDEMO1",
+    "server": "TMFinancials-Server",
+    "enabled": true,
+    "notify": {
+     "all": true,
+     "trades": true,
+     "deposits": true,
+     "withdrawals": true
     },
-    "founder": true,
-    "update_alerts": true,
-    "server_time": "2026-09-16T11:15:00Z",
-    "refresh_seconds": 15
-  },
-  "report": {
-    "title": "Этот месяц",
-    "summary": {
-      "net_income": 684.32,
-      "pct_capital": 5.483,
-      "count": 68,
-      "wins": 54
+    "demo": false,
+    "shared": false,
+    "base": null,
+    "base_at": null,
+    "synced": "2026-09-16T11:15:00",
+    "status": "fresh",
+    "totals": {
+     "now": 5200,
+     "pnl": 814.6,
+     "kept": 366.57,
+     "month_pct": 6.009230769230769,
+     "month_net": 312.48,
+     "today_net": 23.76,
+     "month_trades": 68,
+     "cur": "USD",
+     "roi": 15.67
+    }
+   },
+   {
+    "login": 10003,
+    "name": "SONIC",
+    "strategy": "SONIC",
+    "holder": "KANSTANTSIN SHAULIUKOU",
+    "cabinet": "CU228816",
+    "server": "TMFinancials-Server",
+    "enabled": true,
+    "notify": {
+     "all": true,
+     "trades": true,
+     "deposits": true,
+     "withdrawals": true
     },
-    "currency": "USD",
-    "deals": [
-      {
-        "ticket": 700000,
-        "time": "2026-09-16T10:50:00Z",
-        "symbol": "XAUUSD.f",
-        "side": "SELL",
-        "net_income": 18.42,
-        "pct_capital": 0.1476,
-        "volume": 0.024,
-        "is_balance": false,
-        "comment": ""
-      },
-      {
-        "ticket": 700001,
-        "time": "2026-09-16T10:47:00Z",
-        "symbol": "XAUUSD.f",
-        "side": "BUY",
-        "net_income": 12.86,
-        "pct_capital": 0.103,
-        "volume": 0.024,
-        "is_balance": false,
-        "comment": ""
-      },
-      {
-        "ticket": 700002,
-        "time": "2026-09-16T10:44:00Z",
-        "symbol": "XAUUSD.f",
-        "side": "SELL",
-        "net_income": -4.32,
-        "pct_capital": -0.0346,
-        "volume": 0.024,
-        "is_balance": false,
-        "comment": ""
-      },
-      {
-        "ticket": 700003,
-        "time": "2026-09-16T09:41:00Z",
-        "symbol": "XAUUSD.f",
-        "side": "BUY",
-        "net_income": 24.1,
-        "pct_capital": 0.1931,
-        "volume": 0.024,
-        "is_balance": false,
-        "comment": ""
-      },
-      {
-        "ticket": 700004,
-        "time": "2026-09-16T09:38:00Z",
-        "symbol": "XAUUSD.f",
-        "side": "SELL",
-        "net_income": 8.54,
-        "pct_capital": 0.0684,
-        "volume": 0.024,
-        "is_balance": false,
-        "comment": ""
-      },
-      {
-        "ticket": 700005,
-        "time": "2026-09-16T09:35:00Z",
-        "symbol": "XAUUSD.f",
-        "side": "BUY",
-        "net_income": 16.78,
-        "pct_capital": 0.1344,
-        "volume": 0.024,
-        "is_balance": false,
-        "comment": ""
-      },
-      {
-        "ticket": 700006,
-        "time": "2026-09-16T08:32:00Z",
-        "symbol": "XAUUSD.f",
-        "side": "SELL",
-        "net_income": 9.64,
-        "pct_capital": 0.0772,
-        "volume": 0.024,
-        "is_balance": false,
-        "comment": ""
-      },
-      {
-        "ticket": 700007,
-        "time": "2026-09-16T08:29:00Z",
-        "symbol": "XAUUSD.f",
-        "side": "BUY",
-        "net_income": 11.27,
-        "pct_capital": 0.0903,
-        "volume": 0.024,
-        "is_balance": false,
-        "comment": ""
-      }
-    ],
-    "has_more": false,
-    "offset": 0,
-    "day_totals": {"2026-09-16": {"count": 8, "net": 97.29, "pct_capital": 0.78}},
-    "insights": {
-      "week": {"available": true, "count": 18, "net": 186.4, "pct_capital": 1.493},
-      "lastweek": {"available": true, "count": 15, "net": 145.22, "pct_capital": 1.164},
-      "month": {"available": true, "count": 68, "net": 684.32, "pct_capital": 5.483},
-      "all": {"available": true, "count": 330, "net": 2486.72, "pct_capital": 19.925}
+    "demo": false,
+    "shared": false,
+    "base": null,
+    "base_at": null,
+    "synced": "2026-09-16T11:15:00",
+    "status": "fresh",
+    "totals": {
+     "now": 5200,
+     "pnl": 814.6,
+     "kept": 366.57,
+     "month_pct": 6.009230769230769,
+     "month_net": 312.48,
+     "today_net": 23.76,
+     "month_trades": 68,
+     "cur": "USD",
+     "roi": 15.67
+    }
+   },
+   {
+    "login": 90001,
+    "name": "Копитрейдинг · 45k$",
+    "strategy": "Копитрейдинг · 45k$",
+    "holder": "Публичная стратегия",
+    "cabinet": "DEMO",
+    "server": "TMFinancials-Server",
+    "enabled": true,
+    "notify": {
+     "all": true,
+     "trades": true,
+     "deposits": true,
+     "withdrawals": true
     },
-    "chart": [
-      {
-        "day": "2026-09-01",
-        "value": 42.8
-      },
-      {
-        "day": "2026-09-02",
-        "value": 65.4
-      },
-      {
-        "day": "2026-09-03",
-        "value": -21.2
-      },
-      {
-        "day": "2026-09-04",
-        "value": 86.2
-      },
-      {
-        "day": "2026-09-05",
-        "value": 19.4
-      },
-      {
-        "day": "2026-09-06",
-        "value": -34.5
-      },
-      {
-        "day": "2026-09-07",
-        "value": 108.3
-      },
-      {
-        "day": "2026-09-08",
-        "value": 50.2
-      },
-      {
-        "day": "2026-09-09",
-        "value": 72.1
-      },
-      {
-        "day": "2026-09-10",
-        "value": -16.2
-      },
-      {
-        "day": "2026-09-11",
-        "value": 91.3
-      },
-      {
-        "day": "2026-09-12",
-        "value": 48.5
-      },
-      {
-        "day": "2026-09-13",
-        "value": 61.2
-      },
-      {
-        "day": "2026-09-14",
-        "value": -11.4
-      },
-      {
-        "day": "2026-09-15",
-        "value": 44.1
-      },
-      {
-        "day": "2026-09-16",
-        "value": 78.12
-      }
-    ],
-    "months": [
-      {
-        "month": "2026-06",
-        "count": 78,
-        "net": 482.12,
-        "pct_capital": 3.863
-      },
-      {
-        "month": "2026-07",
-        "count": 81,
-        "net": 594.68,
-        "pct_capital": 4.765
-      },
-      {
-        "month": "2026-08",
-        "count": 84,
-        "net": 725.6,
-        "pct_capital": 5.814
-      },
-      {
-        "month": "2026-09",
-        "count": 87,
-        "net": 684.32,
-        "pct_capital": 5.483
-      }
-    ],
-    "archived": false,
-    "report": "SONIC\nДемонстрационный отчёт · вымышленные данные"
+    "demo": true,
+    "shared": false,
+    "base": null,
+    "base_at": null,
+    "synced": "2026-09-16T11:15:00",
+    "status": "fresh",
+    "totals": {
+     "now": 45000,
+     "pnl": 6724.89,
+     "kept": 3026.2005000000004,
+     "month_pct": 4.744000000000001,
+     "month_net": 2134.8,
+     "today_net": 45.31,
+     "month_trades": 68,
+     "cur": "USD",
+     "roi": 14.94
+    }
+   }
+  ],
+  "totals": {
+   "USD": {
+    "capital": 17680.5,
+    "pnl": 3301.32,
+    "month": 996.8,
+    "today": 42.18,
+    "kept": 1485.594
+   }
   },
-  "people": {
-    "guests": [
-      {
-        "id": "2",
-        "name": "Виктория Орлова",
-        "since": "12 сентября 2026",
-        "accounts": [
-          {
-            "login": 10001,
-            "name": "SONIC"
-          }
-        ]
-      }
-    ],
-    "invites": []
+  "founder": true,
+  "update_alerts": true,
+  "server_time": "2026-09-16T11:15:00Z",
+  "refresh_seconds": 15
+ },
+ "report": {
+  "title": "Этот месяц",
+  "summary": {
+   "net_income": 684.32,
+   "pct_capital": 5.483,
+   "count": 68,
+   "wins": 54
   },
-  "admin": {
-    "machines": [
-      {
-        "host": "Основная машина",
-        "seen": "2026-09-16T11:15:00",
-        "role": "primary"
-      }
-    ],
-    "active": "Основная машина",
-    "users": [
-      {
-        "id": "2",
-        "name": "Виктория Орлова"
-      }
+  "currency": "USD",
+  "deals": [
+   {
+    "ticket": 700000,
+    "time": "2026-09-16T10:50:00Z",
+    "symbol": "XAUUSD.f",
+    "side": "SELL",
+    "net_income": 18.42,
+    "pct_capital": 0.1476,
+    "volume": 0.024,
+    "is_balance": false,
+    "comment": ""
+   },
+   {
+    "ticket": 700001,
+    "time": "2026-09-16T10:47:00Z",
+    "symbol": "XAUUSD.f",
+    "side": "BUY",
+    "net_income": 12.86,
+    "pct_capital": 0.103,
+    "volume": 0.024,
+    "is_balance": false,
+    "comment": ""
+   },
+   {
+    "ticket": 700002,
+    "time": "2026-09-16T10:44:00Z",
+    "symbol": "XAUUSD.f",
+    "side": "SELL",
+    "net_income": -4.32,
+    "pct_capital": -0.0346,
+    "volume": 0.024,
+    "is_balance": false,
+    "comment": ""
+   },
+   {
+    "ticket": 700003,
+    "time": "2026-09-16T09:41:00Z",
+    "symbol": "XAUUSD.f",
+    "side": "BUY",
+    "net_income": 24.1,
+    "pct_capital": 0.1931,
+    "volume": 0.024,
+    "is_balance": false,
+    "comment": ""
+   },
+   {
+    "ticket": 700004,
+    "time": "2026-09-16T09:38:00Z",
+    "symbol": "XAUUSD.f",
+    "side": "SELL",
+    "net_income": 8.54,
+    "pct_capital": 0.0684,
+    "volume": 0.024,
+    "is_balance": false,
+    "comment": ""
+   },
+   {
+    "ticket": 700005,
+    "time": "2026-09-16T09:35:00Z",
+    "symbol": "XAUUSD.f",
+    "side": "BUY",
+    "net_income": 16.78,
+    "pct_capital": 0.1344,
+    "volume": 0.024,
+    "is_balance": false,
+    "comment": ""
+   },
+   {
+    "ticket": 700006,
+    "time": "2026-09-16T08:32:00Z",
+    "symbol": "XAUUSD.f",
+    "side": "SELL",
+    "net_income": 9.64,
+    "pct_capital": 0.0772,
+    "volume": 0.024,
+    "is_balance": false,
+    "comment": ""
+   },
+   {
+    "ticket": 700007,
+    "time": "2026-09-16T08:29:00Z",
+    "symbol": "XAUUSD.f",
+    "side": "BUY",
+    "net_income": 11.27,
+    "pct_capital": 0.0903,
+    "volume": 0.024,
+    "is_balance": false,
+    "comment": ""
+   }
+  ],
+  "has_more": false,
+  "offset": 0,
+  "day_totals": {
+   "2026-09-16": {
+    "count": 8,
+    "net": 97.29,
+    "pct_capital": 0.78
+   }
+  },
+  "insights": {
+   "week": {
+    "available": true,
+    "count": 18,
+    "net": 186.4,
+    "pct_capital": 1.493
+   },
+   "lastweek": {
+    "available": true,
+    "count": 15,
+    "net": 145.22,
+    "pct_capital": 1.164
+   },
+   "month": {
+    "available": true,
+    "count": 68,
+    "net": 684.32,
+    "pct_capital": 5.483
+   },
+   "all": {
+    "available": true,
+    "count": 330,
+    "net": 2486.72,
+    "pct_capital": 19.925
+   }
+  },
+  "chart": [
+   {
+    "day": "2026-09-01",
+    "value": 42.8
+   },
+   {
+    "day": "2026-09-02",
+    "value": 65.4
+   },
+   {
+    "day": "2026-09-03",
+    "value": -21.2
+   },
+   {
+    "day": "2026-09-04",
+    "value": 86.2
+   },
+   {
+    "day": "2026-09-05",
+    "value": 19.4
+   },
+   {
+    "day": "2026-09-06",
+    "value": -34.5
+   },
+   {
+    "day": "2026-09-07",
+    "value": 108.3
+   },
+   {
+    "day": "2026-09-08",
+    "value": 50.2
+   },
+   {
+    "day": "2026-09-09",
+    "value": 72.1
+   },
+   {
+    "day": "2026-09-10",
+    "value": -16.2
+   },
+   {
+    "day": "2026-09-11",
+    "value": 91.3
+   },
+   {
+    "day": "2026-09-12",
+    "value": 48.5
+   },
+   {
+    "day": "2026-09-13",
+    "value": 61.2
+   },
+   {
+    "day": "2026-09-14",
+    "value": -11.4
+   },
+   {
+    "day": "2026-09-15",
+    "value": 44.1
+   },
+   {
+    "day": "2026-09-16",
+    "value": 78.12
+   }
+  ],
+  "months": [
+   {
+    "month": "2026-06",
+    "count": 78,
+    "net": 482.12,
+    "pct_capital": 3.863
+   },
+   {
+    "month": "2026-07",
+    "count": 81,
+    "net": 594.68,
+    "pct_capital": 4.765
+   },
+   {
+    "month": "2026-08",
+    "count": 84,
+    "net": 725.6,
+    "pct_capital": 5.814
+   },
+   {
+    "month": "2026-09",
+    "count": 87,
+    "net": 684.32,
+    "pct_capital": 5.483
+   }
+  ],
+  "archived": false,
+  "report": "SONIC\nДемонстрационный отчёт · вымышленные данные"
+ },
+ "people": {
+  "guests": [
+   {
+    "id": "2",
+    "name": "Виктория Орлова",
+    "since": "12 сентября 2026",
+    "accounts": [
+     {
+      "login": 10001,
+      "name": "SONIC"
+     }
     ]
+   }
+  ],
+  "invites": []
+ },
+ "admin": {
+  "machines": [
+   {
+    "host": "DESKTOP-K8QLLI2",
+    "role": "primary",
+    "state": "polling",
+    "idle": 4,
+    "synced": 6,
+    "commit": "34273ce",
+    "blocked": ""
+   },
+   {
+    "host": "lancaster",
+    "role": "standby",
+    "state": "legacy",
+    "idle": 9,
+    "synced": null,
+    "commit": "16b627a",
+    "blocked": "незакоммиченные изменения в папке проекта"
+   }
+  ],
+  "active": "Основная машина",
+  "users": [
+   {
+    "id": "2",
+    "name": "Виктория Орлова"
+   }
+  ]
+ },
+ "overview_report": {
+  "title": "Этот месяц",
+  "summary": {
+   "count": 136,
+   "net_income": 996.8,
+   "pct_capital": 5.638
   },
-  "overview_report": {
-    "title": "Этот месяц",
-    "summary": {
-      "count": 136,
-      "net_income": 996.8,
-      "pct_capital": 5.638
-    },
-    "currency": "USD",
-    "chart": [
-      {
-        "day": "2026-09-01",
-        "value": 62.33
-      },
-      {
-        "day": "2026-09-02",
-        "value": 84.93
-      },
-      {
-        "day": "2026-09-03",
-        "value": -1.67
-      },
-      {
-        "day": "2026-09-04",
-        "value": 105.73
-      },
-      {
-        "day": "2026-09-05",
-        "value": 38.93
-      },
-      {
-        "day": "2026-09-06",
-        "value": -14.97
-      },
-      {
-        "day": "2026-09-07",
-        "value": 127.83
-      },
-      {
-        "day": "2026-09-08",
-        "value": 69.73
-      },
-      {
-        "day": "2026-09-09",
-        "value": 91.63
-      },
-      {
-        "day": "2026-09-10",
-        "value": 3.33
-      },
-      {
-        "day": "2026-09-11",
-        "value": 110.83
-      },
-      {
-        "day": "2026-09-12",
-        "value": 68.03
-      },
-      {
-        "day": "2026-09-13",
-        "value": 80.73
-      },
-      {
-        "day": "2026-09-14",
-        "value": 8.13
-      },
-      {
-        "day": "2026-09-15",
-        "value": 63.63
-      },
-      {
-        "day": "2026-09-16",
-        "value": 97.65
-      }
-    ],
-    "archived": false,
-    "accounts": 2,
-    "pending_accounts": 0
-  }
+  "currency": "USD",
+  "chart": [
+   {
+    "day": "2026-09-01",
+    "value": 62.33
+   },
+   {
+    "day": "2026-09-02",
+    "value": 84.93
+   },
+   {
+    "day": "2026-09-03",
+    "value": -1.67
+   },
+   {
+    "day": "2026-09-04",
+    "value": 105.73
+   },
+   {
+    "day": "2026-09-05",
+    "value": 38.93
+   },
+   {
+    "day": "2026-09-06",
+    "value": -14.97
+   },
+   {
+    "day": "2026-09-07",
+    "value": 127.83
+   },
+   {
+    "day": "2026-09-08",
+    "value": 69.73
+   },
+   {
+    "day": "2026-09-09",
+    "value": 91.63
+   },
+   {
+    "day": "2026-09-10",
+    "value": 3.33
+   },
+   {
+    "day": "2026-09-11",
+    "value": 110.83
+   },
+   {
+    "day": "2026-09-12",
+    "value": 68.03
+   },
+   {
+    "day": "2026-09-13",
+    "value": 80.73
+   },
+   {
+    "day": "2026-09-14",
+    "value": 8.13
+   },
+   {
+    "day": "2026-09-15",
+    "value": 63.63
+   },
+   {
+    "day": "2026-09-16",
+    "value": 97.65
+   }
+  ],
+  "archived": false,
+  "accounts": 2,
+  "pending_accounts": 0
+ }
 }

@@ -285,8 +285,10 @@ async def agent_env(request):
 async def agent_accounts(request):
     """Список счетов, которые агенту надо опрашивать (с паролями)."""
     check_token(request)
-    if not coordination.permits(request.app["db"], request.headers.get("X-Agent-Host"),
-                                request.headers.get("X-Agent-Session")):
+    session = request.headers.get("X-Agent-Session")
+    allowed = (coordination.permits(request.app["db"], request.headers.get("X-Agent-Host"), session)
+               if session else coordination.may_poll_anonymously(request.app["db"]))
+    if not allowed:
         return web.json_response([])
     db = request.app["trades"]
     return web.json_response([
@@ -319,7 +321,7 @@ async def agent_role_change(request):
     became = data.get("became")     # "active" | "standby"
     db = request.app["db"]
     if became == "active":
-        if not coordination.permits(db, host, data.get("session")):
+        if not coordination.authorize(db, host, data.get("session")):
             return web.json_response({"ok": False, "error": "not polling owner"}, status=409)
         partner.kv_set(db, "active_machine", host)
     elif became != "standby":
@@ -367,12 +369,18 @@ async def agent_update_report(request):
     if not host or not commit:
         return web.json_response({"ok": False}, status=400)
     db = request.app["db"]
+    blocked = str(data.get("blocked") or "").strip()[:120]
+    if blocked:
+        # причина, по которой машина не может обновиться (грязная рабочая копия,
+        # незапушенный коммит) — панель сервиса показывает её вместо молчания
+        partner.kv_set(db, f"machine_blocked:{host}", f"{utcnow().isoformat()}|{blocked}")
     # первая метка по этому (host, commit) остаётся первой — она и есть
     # «с какого момента standby живёт на этом коде», а не последний репорт
     key = f"canary:{host}:{commit}"
     if not partner.kv_get(db, key):
         partner.kv_set(db, key, utcnow().isoformat())
     partner.kv_set(db, "canary_latest_commit", commit)
+    partner.kv_set(db, f"machine_commit:{host}", commit)
     partner.kv_set(db, f"canary_latest_seen:{host}", utcnow().isoformat())
     return web.json_response({"ok": True})
 
@@ -527,7 +535,7 @@ async def agent_sync(request):
     except (ValueError, TypeError, KeyError, OverflowError) as e:
         raise web.HTTPBadRequest(text=f"bad payload: {e}")
     db = request.app["trades"]
-    if not coordination.permits(request.app["db"], data.get("host"), data.get("session")):
+    if not coordination.authorize(request.app["db"], data.get("host"), data.get("session")):
         raise web.HTTPConflict(text="polling lease lost")
     try:
         login, state, deals, command_done = _sync_payload(data)
@@ -591,6 +599,10 @@ async def agent_claim(request):
     except (ValueError, TypeError, KeyError):
         raise web.HTTPBadRequest(text="invalid agent identity")
     result = coordination.claim(request.app["db"], host, session, role)
+    # машина, которая умеет просить аренду, — на актуальном коде; по отсутствию
+    # этой отметки панель сервиса отличает резерв на старом коде, который
+    # заменить основную не сможет
+    partner.kv_set(request.app["db"], f"machine_claim:{host}", utcnow().isoformat())
     return web.json_response(result)
 
 

@@ -75,6 +75,55 @@ class LeaseTests(unittest.TestCase):
         self.assertEqual(coordination.read(self.db)["expires"], 180)
         self.assertFalse(coordination.claim(self.db, "main", "old", "primary", 179)["granted"])
 
+    def test_legacy_standby_cannot_take_over_while_owner_is_alive(self):
+        coordination.claim(self.db, "main", "m", "primary", 0)
+        self.assertFalse(coordination.may_poll_anonymously(self.db, 100))
+        self.assertFalse(coordination.authorize(self.db, "old-reserve", None, 100))
+        self.assertTrue(coordination.permits(self.db, "main", "m", 100))
+
+    def test_legacy_standby_replaces_offline_primary_and_holds_lease(self):
+        # Production failure: reserve on pre-lease code was fenced forever
+        # after the primary went offline, so nobody polled MT5.
+        coordination.claim(self.db, "main", "m", "primary", 0)
+        self.assertTrue(coordination.may_poll_anonymously(self.db, 181))
+        self.assertTrue(coordination.authorize(self.db, "old-reserve", None, 181))
+        coordination.renew(self.db, "old-reserve", None, 200)
+        self.assertEqual(coordination.read(self.db)["expires"], 380)
+        # A recovered new-code primary must not preempt it.
+        self.assertFalse(coordination.claim(self.db, "main", "m2", "primary", 300)["granted"])
+        self.assertTrue(coordination.authorize(self.db, "old-reserve", None, 300))
+        self.assertFalse(coordination.permits(self.db, "main", "m2", 300))
+        # Once the legacy machine stops uploading, the primary gets it back.
+        self.assertTrue(coordination.claim(self.db, "main", "m2", "primary", 381)["granted"])
+
+
+class MachineStateTests(unittest.TestCase):
+    def test_service_panel_tells_polling_waiting_legacy_and_offline_apart(self):
+        from datetime import timezone
+        db = partner.open_db(":memory:")
+        now = 1_000_000.0
+        iso = lambda ago: datetime.fromtimestamp(now - ago, timezone.utc).replace(tzinfo=None).isoformat()
+        coordination.claim(db, "main", "m" * 16, "primary", now - 10)
+        partner.kv_set(db, "machine_claim:main", iso(3))
+        partner.kv_set(db, "machine_role:main", "primary")
+        partner.kv_set(db, "machine_commit:main", "abcdef1234")
+        partner.kv_set(db, "machine_claim:reserve", iso(5))
+        partner.kv_set(db, "machine_role:reserve", "standby")
+        # standby on pre-lease code: alive (canary reports) but never claims
+        partner.kv_set(db, "canary_latest_seen:old", iso(20))
+        partner.kv_set(db, "machine_blocked:old", f"{iso(60)}|dirty tree")
+        partner.kv_set(db, "machine_seen:gone", iso(3000))
+        got = {m["host"]: m for m in miniapp.machine_states(db, now)}
+        self.assertEqual({h: m["state"] for h, m in got.items()},
+                         {"main": "polling", "reserve": "waiting", "old": "legacy", "gone": "offline"})
+        self.assertEqual(got["main"]["commit"], "abcdef1")
+        self.assertEqual(got["old"]["blocked"], "dirty tree")
+        self.assertEqual(got["main"]["blocked"], "")
+        # a stale block reason must not stay on screen forever
+        partner.kv_set(db, "machine_blocked:old", f"{iso(4000)}|dirty tree")
+        stale = {m["host"]: m for m in miniapp.machine_states(db, now)}
+        self.assertEqual(stale["old"]["blocked"], "")
+
 
 class AuthTests(unittest.TestCase):
     def test_authentication_and_tamper(self):
@@ -456,6 +505,35 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             r = await self.call(method,"/api/accounts/456",json=body)
             self.assertEqual(r.status,403)
 
+    async def test_demo_login_is_always_a_number_in_api(self):
+        # Production data: the shared demo copies keep "login" as a string, and
+        # the strict === lookup in the UI made «Настроить» a silent no-op.
+        accounts.add({**self.acc, "login": "51164384", "name": "Demo", "strategy": "", "demo": True})
+        store.save_state(self.tdb, 51164384, 240000, 240000, "USD", "Demo", 10000)
+        boot = await (await self.call("GET", "/api/bootstrap")).json()
+        for a in boot["accounts"]:
+            self.assertIs(type(a["login"]), int, a)
+
+    async def test_demo_settings_button_saves_for_owner_and_for_guest(self):
+        # Exactly what the «Настроить» button sends for the copy-trading account.
+        ui = {"enabled": False, "notify": {"all": True, "trades": False,
+                                            "deposits": True, "withdrawals": True}}
+        accounts.add({**self.acc, "login": 456, "name": "Demo", "strategy": "Demo", "demo": True})
+        store.save_state(self.tdb, 456, 240000, 240000, "USD", "Demo", 10000)
+        miniapp.logic.DEMO_ON = True
+        miniapp.logic.DEMO_LOGIN = 456
+        try:
+            for uid in (1, 2):      # 1 owns the record, 2 only sees the public copy
+                partner.kv_set(self.db, "guest:2", "1")
+                r = await self.call("PATCH", "/api/accounts/456", uid=uid, json=ui)
+                self.assertEqual(r.status, 200, f"uid={uid}: {await r.text()}")
+                boot = await (await self.call("GET", "/api/bootstrap", uid=uid)).json()
+                demo = next(a for a in boot["accounts"] if a["demo"])
+                self.assertFalse(demo["enabled"], f"uid={uid}")
+                self.assertFalse(demo["notify"]["trades"], f"uid={uid}")
+        finally:
+            miniapp.logic.DEMO_ON = False
+
     async def test_report_and_pagination(self):
         now = trades.clock()
         deals = [{"ticket":i,"time":now,"symbol":"XAUUSD","side":"buy","net":1,
@@ -582,7 +660,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         miniapp.setup(after_restart)
         self.assertIsNone(accounts.load(2)[0].get("shared_by"))
         response = await self.call("POST", "/api/guests/2", json={"action":"take", "login":123})
-        self.assertEqual(response.status, 200)
+        self.assertEqual(response.status, 403)
         self.assertEqual(accounts.load(2)[0]["name"], "Independently added")
 
     async def test_ambiguous_legacy_copy_needs_review_before_revoke(self):

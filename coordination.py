@@ -42,7 +42,7 @@ def renew(db, host, session, now=None):
     db.execute("BEGIN IMMEDIATE")
     try:
         current = read(db)
-        if current and current["expires"] > now and (current["host"], current["session"]) == (host, session):
+        if current and current["expires"] > now and (current["host"], current["session"]) == (host, session or LEGACY):
             current["expires"] = now + TTL
             db.execute("UPDATE kv SET value=? WHERE key=?", (json.dumps(current), KEY))
         db.commit()
@@ -51,10 +51,40 @@ def renew(db, host, session, now=None):
         raise
 
 
+LEGACY = "legacy"
+
+
 def permits(db, host, session, now=None):
     lease = read(db)
     now = time.time() if now is None else now
     # Before rollout starts, legacy clients continue working. Once elected,
     # the owner is fenced: stale/legacy uploads cannot overwrite its data.
     return not lease or (lease["expires"] > now and
-                         (lease["host"], lease["session"]) == (host, session))
+                         (lease["host"], lease["session"]) == (host, session or LEGACY))
+
+
+def may_poll_anonymously(db, now=None):
+    """Может ли получить список счетов клиент без сессии (агент до аренды).
+
+    Такой клиент не присылает ни хоста, ни сессии, поэтому «кто он» неизвестно;
+    пока аренда у живого владельца — он отстранён, а когда её нет или она
+    истекла (основная машина офлайн) — пускаем, дальше его закрепит authorize().
+    """
+    lease = read(db)
+    now = time.time() if now is None else now
+    return not lease or lease["expires"] <= now or lease["session"] == LEGACY
+
+
+def authorize(db, host, session, now=None):
+    """Право писать данные. Клиент с сессией — по аренде, как раньше.
+
+    Клиент без сессии — резерв на коде до аренды: до этого сервер отстранял его
+    навсегда, и когда основная машина уходила офлайн, заменить её было некому
+    (аренда истекала, /agent/claim он не знает, любая его загрузка получала
+    409). Теперь он захватывает аренду обычным образом: только если её нет
+    или она истекла, и тогда держит её на общих основаниях — вернувшаяся
+    основная его не вытесняет.
+    """
+    if session:
+        return permits(db, host, session, now)
+    return claim(db, host, LEGACY, "legacy", now)["granted"]

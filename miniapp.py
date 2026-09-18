@@ -17,7 +17,7 @@ import sqlite3
 import tempfile
 import uuid
 from collections import OrderedDict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import parse_qsl
 from account_lock import locked
@@ -29,6 +29,7 @@ from aiogram.types import FSInputFile
 os.environ["TRADES_SOURCE"] = "store"
 import accounts
 import bot as logic
+import coordination
 import partner
 import store
 import trades
@@ -199,6 +200,10 @@ def owned(uid, login):
 def public_account(acc, db):
     result = {k: acc.get(k) for k in ("login", "name", "strategy", "cabinet", "holder",
               "server", "enabled", "notify", "demo", "base", "base_at")}
+    # У копий общего демо-счёта номер в accounts.json лежит строкой, у остальных —
+    # числом. Интерфейс сравнивает его строго, и «Настроить» на такой записи
+    # молча ничего не делало
+    result["login"] = int(acc["login"])
     result["shared"] = bool(acc.get("shared_by"))
     state = store.get_state(db, acc["login"])
     result["synced"] = (state or {}).get("synced")
@@ -551,7 +556,7 @@ async def people(request):
     db = request.app["db"]
     guests = [{"id": guest, "name": name, "since": logic.when_joined(db, guest),
                "accounts": [{"login": a["login"], "name": a.get("strategy") or a["name"],
-                             "shared": a.get("shared_by") == uid}
+                             "shared": str(a.get("shared_by", "")) == uid and a.get("shared_origin") != "inferred"}
                             for a in accounts.load(guest) if not a.get("demo")]}
               for guest, name in logic.guests_of(db, uid)]
     username = os.getenv("TELEGRAM_BOT_USERNAME", "tagmarketgold_bot")
@@ -624,6 +629,12 @@ async def guest_action(request):
             raise web.HTTPConflict(text=str(error)) from error
     elif data.get("action") == "take":
         acc = owned(uid, data["login"])
+        shared = next((a for a in accounts.load(guest)
+                       if int(a["login"]) == int(acc["login"])
+                       and str(a.get("shared_by", "")) == uid
+                       and a.get("shared_origin") != "inferred"), None)
+        if not shared:
+            raise web.HTTPForbidden(text="Личный счёт гостя доступен только для просмотра")
         accounts.remove_login(acc["login"], guest, shared_by=uid)
     else:
         raise ValueError("action")
@@ -662,15 +673,66 @@ async def action(request):
     return web.json_response({"ok": True})
 
 
+ALIVE_WITHIN = 120      # секунд: любой отклик машины за это время — процесс жив
+
+
+def _seconds_since(stamp, now):
+    try:
+        return max(0, now - datetime.fromisoformat(stamp).replace(tzinfo=timezone.utc).timestamp())
+    except (TypeError, ValueError):
+        return None
+
+
+def machine_states(db, now):
+    """Агентские машины и понятное состояние каждой.
+
+    Состояние считает сервер, а не интерфейс: «опрашивает» — держит аренду;
+    «ждёт» — жива и готова подхватить; «старый код» — жива, но не умеет
+    просить аренду (агент до её появления), поэтому заменить основную не
+    сможет; «офлайн» — давно не отвечала.
+    """
+    lease = coordination.read(db)
+    holder = lease["host"] if lease and lease["expires"] > now else None
+    hosts = set()
+    for pattern in ("machine_seen:%", "machine_role:%", "machine_claim:%",
+                    "canary_latest_seen:%", "machine_sync:%"):
+        hosts.update(k.split(":", 1)[1] for k in partner.kv_keys(db, pattern))
+    out = []
+    for host in sorted(hosts):
+        stamps = {n: _seconds_since(partner.kv_get(db, f"{n}:{host}"), now)
+                  for n in ("machine_seen", "machine_claim", "canary_latest_seen", "machine_sync")}
+        contacts = [v for v in stamps.values() if v is not None]
+        idle = min(contacts) if contacts else None
+        alive = idle is not None and idle < ALIVE_WITHIN
+        claiming = stamps["machine_claim"] is not None and stamps["machine_claim"] < ALIVE_WITHIN
+        if host == holder:
+            state = "polling"
+        elif not alive:
+            state = "offline"
+        elif claiming:
+            state = "waiting"
+        else:
+            state = "legacy"
+        blocked_at, _, blocked_why = (partner.kv_get(db, f"machine_blocked:{host}") or "").partition("|")
+        age = _seconds_since(blocked_at, now)
+        out.append({"host": host, "role": partner.kv_get(db, f"machine_role:{host}"),
+                    "state": state, "idle": None if idle is None else round(idle),
+                    # причина показывается, пока свежа: проверка обновлений идёт
+                    # раз в 15 минут, а после успешного обновления запись стареет сама
+                    "blocked": blocked_why if age is not None and age < 1800 else "",
+                    "synced": stamps["machine_sync"] if stamps["machine_sync"] is None
+                              else round(stamps["machine_sync"]),
+                    "commit": (partner.kv_get(db, f"machine_commit:{host}") or "")[:7]})
+    return out
+
+
 async def admin(request):
     uid, _ = authorize(request)
     if not logic.is_founder(uid):
         raise web.HTTPForbidden(text="Только для основателя")
     db = request.app["db"]
-    machines = [{"host": k.split(":", 1)[1], "seen": partner.kv_get(db, k),
-                 "role": partner.kv_get(db, "machine_role:" + k.split(":", 1)[1])}
-                for k in partner.kv_keys(db, "machine_seen:%")]
-    return web.json_response({"machines": machines, "active": partner.kv_get(db, "active_machine"),
+    return web.json_response({"machines": machine_states(db, time.time()),
+        "active": partner.kv_get(db, "active_machine"),
         "users": [{"id": u, "name": n} for u, n in logic.all_guests(db)],
         "network": [{"day": k.split(":", 1)[1], "income": float(partner.kv_get(db, k) or 0),
                      "trades": int(partner.kv_get(db, k.replace("net_income:", "net_trades:")) or 0)}

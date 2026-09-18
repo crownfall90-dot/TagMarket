@@ -475,6 +475,22 @@ def report_canary(commit: str) -> None:
         log.warning("не отчитался о коммите: %s", e)
 
 
+def report_update_blocked(reason: str) -> None:
+    """Сказать серверу, почему код на этой машине не обновляется.
+
+    Иначе резерв молча застревает на старой версии: так lancaster остался на
+    коде до аренды и не смог заменить основную машину, а причину — грязная
+    рабочая копия — можно было узнать только зайдя на сам компьютер.
+    """
+    try:
+        requests.post(f"{SERVER}/agent/update_report",
+                      json={"host": socket.gethostname(), "blocked": reason[:120],
+                            "commit": _local_commit() or "unknown"},
+                      headers={"X-Token": TOKEN}, timeout=15)
+    except Exception as e:
+        log.warning("не сообщил серверу о блокировке обновления: %s", e)
+
+
 def send_heartbeat() -> None:
     """Отмечаемся живыми, пока ждём в резерве и не шлём agent/sync.
 
@@ -573,6 +589,7 @@ def _self_update_and_restart(lock: socket.socket, target_commit: str) -> None:
             # Автообновление тут не должно решать за человека
             log.warning("в рабочей копии есть незакоммиченные изменения — "
                        "автообновление пропущено, разберитесь вручную:\n%s", dirty)
+            report_update_blocked("незакоммиченные изменения в папке проекта")
             return
 
         # живой инцидент: локальный коммит, ещё не успевший на GitHub (push
@@ -588,6 +605,7 @@ def _self_update_and_restart(lock: socket.socket, target_commit: str) -> None:
         if ahead:
             log.warning("локальный коммит ещё не на GitHub (git push не прошёл?) — "
                        "автообновление пропущено, чтобы не стереть его:\n%s", ahead)
+            report_update_blocked("локальный коммит не отправлен на GitHub")
             return
         # текущий код уже дошёл сюда — значит он стабилен (иначе процесс не
         # выжил бы, чтобы дойти до планового автообновления). Запоминаем его

@@ -310,11 +310,11 @@ def record_notification(db, user_id, event_key, kind, title, body) -> bool:
 
 def notifications_for(db, user_id, limit=50) -> dict:
     uid = str(user_id)
-    rows = db.execute("SELECT id,kind,title,body,created_at,read_at FROM notifications "
+    rows = db.execute("SELECT id,kind,title,body,created_at,read_at,event_key FROM notifications "
                       "WHERE user_id=? ORDER BY id DESC LIMIT ?", (uid, limit)).fetchall()
     unread = db.execute("SELECT COUNT(*) FROM notifications WHERE user_id=? AND read_at IS NULL",
                         (uid,)).fetchone()[0]
-    return {"items": [dict(zip(("id","kind","title","body","created_at","read_at"), row))
+    return {"items": [dict(zip(("id","kind","title","body","created_at","read_at","event_key"), row))
                       for row in rows], "unread": unread}
 
 

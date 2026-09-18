@@ -14,3 +14,6 @@ __pycache__/
 *.log
 *.log.[0-9]
 agent.beat
+
+# архивы выкладки
+*.tgz
