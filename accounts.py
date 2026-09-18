@@ -279,21 +279,27 @@ def encrypt_snapshot(path: str) -> bool:
 
 @transaction
 def add(acc: dict) -> None:
-    if by_name(acc["name"], acc["owner"]):
-        raise ValueError(f"счёт с именем {acc['name']} у тебя уже есть")
-    # один и тот же логин+сервер дважды у одного владельца — задваивает
+    display = (acc.get("strategy") or acc["name"]).strip()
+    cabinet = (acc.get("cabinet") or "").strip()
+    if strategy_taken(acc["owner"], cabinet, display):
+        raise ValueError(f"в кабинете {cabinet or 'без номера'} уже есть счёт «{display}»")
+    # один и тот же логин дважды у одного владельца — задваивает
     # капитал и профит в сводке кабинета и на дашборде (они суммируют счета
     # без дедупликации по логину, в отличие от partner.cabinet_state).
     # У гостя копия того же логина — это нормально, он другой owner, поэтому
     # сравниваем только среди счетов ЭТОГО владельца
-    dup = next((a for a in load(acc["owner"]) if int(a["login"]) == int(acc["login"])
-               and (a.get("server") or "") == (acc.get("server") or "")), None)
+    # Mini App and bot actions address an account by its MT5 login. A second
+    # record with the same login would make edit/delete routes ambiguous even
+    # when the server or cabinet differs.
+    dup = next((a for a in load(acc["owner"]) if int(a["login"]) == int(acc["login"])), None)
     if dup:
         raise ValueError(f"этот счёт уже добавлен как «{dup['name']}»")
-    if acc.get("strategy") and strategy_taken(acc["owner"], acc.get("holder"),
-                                              acc["strategy"]):
-        raise ValueError(f"у {acc.get('holder') or 'этого владельца'} уже есть "
-                         f"стратегия {acc['strategy']}")
+    if any((a.get("cabinet") or "").strip().casefold() == cabinet.casefold()
+           and a["name"].casefold() == acc["name"].casefold()
+           for a in load(acc["owner"])):
+        raise ValueError(f"в кабинете {cabinet or 'без номера'} уже есть счёт «{acc['name']}»")
+    acc.setdefault("strategy", display)
+    acc["name"] = unique_storage_name(acc["name"], acc["owner"], cabinet, acc["login"])
     save(_read() + [acc])
 
 
@@ -378,19 +384,36 @@ def update(target: str, owner, **changes) -> bool:
     return False
 
 
-def strategy_taken(owner, holder: str, strategy: str, skip_login=None) -> bool:
-    """Занята ли такая стратегия у этого владельца.
-
-    У разных людей стратегии могут называться одинаково — они и торгуются
-    одинаково. А внутри одного владельца одинаковые названия неразличимы:
-    непонятно, о какой из них уведомление и какую выключаешь.
-    Сравниваем без учёта регистра: «sonic» и «SONIC» человек читает одинаково.
-    """
+def strategy_taken(owner, cabinet: str, strategy: str, skip_login=None) -> bool:
+    """A visible account name is unique only inside one owner's cabinet."""
     want = (strategy or "").strip().casefold()
-    return any((a.get("strategy") or "").strip().casefold() == want
-               and (a.get("holder") or "") == (holder or "")
+    scope = (cabinet or "").strip().casefold()
+    return any((a.get("strategy") or a["name"]).strip().casefold() == want
+               and (a.get("cabinet") or "").strip().casefold() == scope
                and (skip_login is None or int(a["login"]) != int(skip_login))
                for a in load(owner))
+
+
+def unique_storage_name(desired: str, owner, cabinet: str, login, skip_login=None) -> str:
+    """Keep legacy name-based bot callbacks unambiguous across cabinets."""
+    # Telegram callback_data is limited to 64 UTF-8 bytes. The longest bot
+    # prefix (cfg:delyes:) takes 11, so leave room for future action names.
+    def clipped(value: str, limit: int) -> str:
+        return value.encode("utf-8")[:limit].decode("utf-8", "ignore").rstrip()
+
+    taken = {a["name"].casefold() for a in load(owner)
+             if skip_login is None or int(a["login"]) != int(skip_login)}
+    candidate = clipped(desired, 48)
+    if candidate.casefold() not in taken:
+        return candidate
+    suffix = f" · {login}"
+    base = clipped(desired, 48 - len(suffix.encode("utf-8"))) + suffix
+    candidate, n = base, 2
+    while candidate.casefold() in taken:
+        tail = f" ({n})"
+        candidate = clipped(base, 48 - len(tail.encode("utf-8"))) + tail
+        n += 1
+    return candidate
 
 
 @transaction
@@ -410,8 +433,9 @@ def rename(name: str, owner, strategy: str) -> str:
         raise ValueError("счёт не найден")
 
     holder = acc.get("holder") or ""
-    if strategy_taken(owner, holder, strategy, skip_login=acc["login"]):
-        raise ValueError(f"у {holder or 'этого владельца'} уже есть стратегия {strategy}")
+    cabinet = acc.get("cabinet") or ""
+    if strategy_taken(owner, cabinet, strategy, skip_login=acc["login"]):
+        raise ValueError(f"в кабинете {cabinet or 'без номера'} уже есть счёт «{strategy}»")
     if holder and name == holder:
         new_name = name                             # имя — владелец, не трогаем
     elif holder and name.startswith(holder):
@@ -419,8 +443,11 @@ def rename(name: str, owner, strategy: str) -> str:
     else:
         new_name = strategy                         # владельца нет, имя = стратегия
 
-    if new_name != name and by_name(new_name, owner):
-        raise ValueError(f"счёт с именем {new_name} у тебя уже есть")
+    if any((other.get("cabinet") or "").strip().casefold() == cabinet.strip().casefold()
+           and other["name"].casefold() == new_name.casefold()
+           and int(other["login"]) != int(acc["login"]) for other in load(owner)):
+        raise ValueError(f"в кабинете {cabinet or 'без номера'} уже есть счёт «{new_name}»")
+    new_name = unique_storage_name(new_name, owner, cabinet, acc["login"], skip_login=acc["login"])
     if not update(name, owner, name=new_name, strategy=strategy):
         raise ValueError("счёт не найден")
     return new_name

@@ -231,10 +231,11 @@ async def bootstrap(request):
     totals = {}
     for a in items:
         t = a["totals"]
-        if a["demo"] or not t:
+        if a["demo"] or a.get("shared") or not t:
             continue
-        bucket = totals.setdefault(t["cur"], {"capital": 0, "pnl": 0, "month": 0, "kept": 0})
-        for key, source in (("capital", "now"), ("pnl", "pnl"), ("month", "month_net"), ("kept", "kept")):
+        bucket = totals.setdefault(t["cur"], {"capital": 0, "pnl": 0, "month": 0, "today": 0, "kept": 0})
+        for key, source in (("capital", "now"), ("pnl", "pnl"), ("month", "month_net"),
+                            ("today", "today_net"), ("kept", "kept")):
             bucket[key] += t[source]
     own_accounts = [a for a in items if not a["demo"] and not a.get("shared")]
     inviter = partner.kv_get(db, f"guest_by:{uid}")
@@ -319,8 +320,9 @@ async def overview_report(request):
     db = request.app["trades"]
     chart = {}
     total = count = account_count = archived_count = pending_count = 0
+    current_capital = 0
     for acc in accounts.dedup(accounts.load(uid)):
-        if acc.get("demo"):
+        if acc.get("demo") or acc.get("shared_by"):
             continue
         state = store.get_state(db, acc["login"])
         if not state:
@@ -329,6 +331,7 @@ async def overview_report(request):
         if state["currency"].upper() != currency:
             continue
         trades.use(acc)
+        current_capital += max(0, trades.capital())
         rows = trades.fetch(since, until)
         archived = report_archive(since, until)
         summary = trades.summary(rows)
@@ -347,7 +350,8 @@ async def overview_report(request):
             day = f'{month["month"]}-{last_day:02d}'
             chart[day] = chart.get(day, 0) + trades.net_of_fee(trades.mine(
                 (month["gross"] or 0) + (month["platform"] or 0)))
-    return web.json_response({"title": title, "summary": {"count": count, "net_income": total},
+    return web.json_response({"title": title, "summary": {"count": count, "net_income": total,
+        "pct_capital": round(total / current_capital * 100, 3) if current_capital > 0 else None},
         "currency": currency, "chart": [{"day": k, "value": v} for k, v in sorted(chart.items())],
         "archived": bool(archived_count), "accounts": account_count, "pending_accounts": pending_count})
 
@@ -364,6 +368,9 @@ async def report(request):
     archived = report_archive(since, until)
     total = summary["total"] + sum((m["gross"] or 0) + (m["platform"] or 0) for m in archived)
     summary["net_income"] = trades.net_of_fee(trades.mine(total))
+    current_capital = max(0, trades.capital())
+    summary["pct_capital"] = (round(summary["net_income"] / current_capital * 100, 3)
+                              if current_capital > 0 else None)
     summary["count"] += sum(m["trades"] or 0 for m in archived)
     summary["wins"] += sum(m["wins"] or 0 for m in archived)
     chart = {}
@@ -391,6 +398,9 @@ async def report(request):
                       "pct_capital": round(net_income / capital_then * 100, 4) if capital_then > 0 else None})
     months = [{"month": m["month"], "count": m["trades"] or 0,
                 "net": trades.net_of_fee(trades.mine((m["gross"] or 0) + (m["platform"] or 0)))} for m in trades.monthly(120)]
+    for month in months:
+        month["pct_capital"] = (round(month["net"] / current_capital * 100, 3)
+                                if current_capital > 0 else None)
     starts = {key: logic.period(key)[1] for key in ("week", "lastweek", "month")}
     recent = trades.fetch(min(starts.values()), logic.utcnow() + timedelta(days=1))
     insights = {}
@@ -409,14 +419,25 @@ async def report(request):
                          "net": trades.net_of_fee(trades.mine(amount))}
     insights["all"] = {"available": True, "count": sum(m["count"] for m in months),
                        "net": sum(m["net"] for m in months)}
+    for insight in insights.values():
+        if insight.get("available"):
+            insight["pct_capital"] = (round(insight["net"] / current_capital * 100, 3)
+                                      if current_capital > 0 else None)
     by_day = {}
-    for row in rows:
+    for row in (filtered if kind == "moves" else rows):
         by_day.setdefault(row["time"].strftime("%Y-%m-%d"), []).append(row)
     day_totals = {}
     for day, day_rows in by_day.items():
-        day_summary = trades.summary(day_rows)
-        day_totals[day] = {"count": day_summary["count"],
-                           "net": trades.net_of_fee(trades.mine(day_summary["total"]))}
+        if kind == "moves":
+            day_net = sum(trades.own_amount(row) for row in day_rows)
+            day_count = len(day_rows)
+        else:
+            day_summary = trades.summary(day_rows)
+            day_net = trades.net_of_fee(trades.mine(day_summary["total"]))
+            day_count = day_summary["count"]
+        day_totals[day] = {"count": day_count, "net": day_net,
+                           "pct_capital": round(day_net / current_capital * 100, 3)
+                           if current_capital > 0 else None}
     return web.json_response({"title": title, "summary": summary, "currency": trades.currency(),
         "deals": deals, "has_more": offset + 50 < len(filtered), "offset": offset,
         "insights": insights, "day_totals": day_totals,
@@ -445,22 +466,21 @@ async def add_account(request):
     if not server:
         known = next((a.get("server") for a in accounts.load() if a.get("server")), "")
         server = known or "TMFinancials-Server"
-    # Existing history must not become visible merely by guessing a login.
-    # accounts.add() already performs an atomic transaction.  Do not wrap it
-    # in another file lock: the old nested lock could leave the dialog hanging
-    # forever on Windows/Linux when a user submitted the form.
-    if any(int(a["login"]) == login for a in accounts.load()):
-        raise web.HTTPConflict(text="Счёт уже подключён. Попросите владельца прислать приглашение")
-    # Also deny abandoned history until independent credentials verification exists.
-    if store.get_state(request.app["trades"], login):
-        raise web.HTTPConflict(text="Для повторного подключения этого счёта обратитесь к владельцу бота")
-    accounts.add({"owner": uid, "login": login, "server": server,
-        "name": bounded_text(data, "name", 48, True),
-        "strategy": bounded_text(data, "name", 48, True),
-        "holder": bounded_text(data, "holder", 96),
-        "cabinet": bounded_text(data, "cabinet", 32),
-        "password": bounded_text(data, "password", 128, True),
-        "multiplier": logic.DEFAULT_MULTIPLIER})
+    # Keep the global claim check and write in one cross-process transaction.
+    # account_lock.locked is reentrant for accounts.add() in this thread.
+    with locked(accounts.PATH):
+        if any(int(a["login"]) == login for a in accounts.load()):
+            raise web.HTTPConflict(text="Счёт уже подключён. Попросите владельца прислать приглашение")
+        # Do not reveal abandoned trading history until credentials are verified.
+        if store.get_state(request.app["trades"], login):
+            raise web.HTTPConflict(text="Для повторного подключения этого счёта обратитесь к владельцу бота")
+        accounts.add({"owner": uid, "login": login, "server": server,
+            "name": bounded_text(data, "name", 48, True),
+            "strategy": bounded_text(data, "name", 48, True),
+            "holder": bounded_text(data, "holder", 96),
+            "cabinet": bounded_text(data, "cabinet", 32),
+            "password": bounded_text(data, "password", 128, True),
+            "multiplier": logic.DEFAULT_MULTIPLIER})
     return web.json_response({"ok": True, "pending": True}, status=201)
 
 

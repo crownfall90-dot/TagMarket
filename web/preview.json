@@ -31,6 +31,7 @@
           "kept": 1119.024,
           "month_pct": 5.483113657305397,
           "month_net": 684.32,
+          "today_net": 18.42,
           "month_trades": 68,
           "cur": "USD",
           "roi": 19.92
@@ -62,6 +63,7 @@
           "kept": 366.57,
           "month_pct": 6.009230769230769,
           "month_net": 312.48,
+          "today_net": 23.76,
           "month_trades": 68,
           "cur": "USD",
           "roi": 15.67
@@ -93,6 +95,7 @@
           "kept": 3026.2005000000004,
           "month_pct": 4.744000000000001,
           "month_net": 2134.8,
+          "today_net": 45.31,
           "month_trades": 68,
           "cur": "USD",
           "roi": 14.94
@@ -104,6 +107,7 @@
         "capital": 17680.5,
         "pnl": 3301.32,
         "month": 996.8,
+        "today": 42.18,
         "kept": 1485.594
       }
     },
@@ -116,6 +120,7 @@
     "title": "Этот месяц",
     "summary": {
       "net_income": 684.32,
+      "pct_capital": 5.483,
       "count": 68,
       "wins": 54
     },
@@ -212,6 +217,13 @@
     ],
     "has_more": false,
     "offset": 0,
+    "day_totals": {"2026-09-16": {"count": 8, "net": 97.29, "pct_capital": 0.78}},
+    "insights": {
+      "week": {"available": true, "count": 18, "net": 186.4, "pct_capital": 1.493},
+      "lastweek": {"available": true, "count": 15, "net": 145.22, "pct_capital": 1.164},
+      "month": {"available": true, "count": 68, "net": 684.32, "pct_capital": 5.483},
+      "all": {"available": true, "count": 330, "net": 2486.72, "pct_capital": 19.925}
+    },
     "chart": [
       {
         "day": "2026-09-01",
@@ -282,22 +294,26 @@
       {
         "month": "2026-06",
         "count": 78,
-        "net": 482.12
+        "net": 482.12,
+        "pct_capital": 3.863
       },
       {
         "month": "2026-07",
         "count": 81,
-        "net": 594.68
+        "net": 594.68,
+        "pct_capital": 4.765
       },
       {
         "month": "2026-08",
         "count": 84,
-        "net": 725.6
+        "net": 725.6,
+        "pct_capital": 5.814
       },
       {
         "month": "2026-09",
         "count": 87,
-        "net": 684.32
+        "net": 684.32,
+        "pct_capital": 5.483
       }
     ],
     "archived": false,
@@ -339,7 +355,8 @@
     "title": "Этот месяц",
     "summary": {
       "count": 136,
-      "net_income": 996.8
+      "net_income": 996.8,
+      "pct_capital": 5.638
     },
     "currency": "USD",
     "chart": [

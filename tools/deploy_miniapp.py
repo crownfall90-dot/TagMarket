@@ -13,6 +13,7 @@ import tarfile
 import time
 from urllib.request import urlopen
 from urllib.error import HTTPError
+from urllib.parse import urljoin
 from dotenv import dotenv_values, set_key
 
 ROOT = Path("/opt/tagmarkets")
@@ -55,6 +56,8 @@ def main():
         result = run(python, str(stage / test), cwd=stage, capture_output=True)
         (stage / (Path(test).stem + ".log")).write_text(result.stdout + result.stderr)
         print(test, "PASS", flush=True)
+    run("node", "--check", str(stage / "web/app.js"))
+    print("web/app.js syntax PASS", flush=True)
     for name in FILES | {".env"}:
         src = ROOT / name
         if src.is_file():
@@ -112,6 +115,21 @@ def main():
         else:
             raise RuntimeError("API unexpectedly allows unsigned access")
         run("systemctl", "is-active", *SERVICES)
+        public = "https://crownfail.shop/tagmarkets/app/"
+        for name in ("index.html", "app.js", "style.css", "brand.svg"):
+            url = public if name == "index.html" else urljoin(public, name) + f"?release={stamp}"
+            expected = (ROOT / "web" / name).read_bytes()
+            for attempt in range(3):
+                try:
+                    with urlopen(url, timeout=10) as response:
+                        if response.status == 200 and response.read() == expected:
+                            break
+                except OSError:
+                    pass
+                if attempt == 2:
+                    raise RuntimeError(f"Public mini-app serves outdated or unavailable {name}")
+                time.sleep(2)
+        print("Public mini-app assets PASS", flush=True)
     except Exception:
         if stopped:
             for source in backup.rglob("*"):

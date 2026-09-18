@@ -233,6 +233,17 @@ ALL = "*"      # псевдо-счёт «все вместе»
 DASHBOARD_BTN = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="📊 Дашборд", callback_data="dash")]])
 
+
+def trade_notification_buttons() -> InlineKeyboardMarkup:
+    """Open the account view first, with the familiar dashboard underneath."""
+    url = os.getenv("MINI_APP_URL", "").strip()
+    if not url.startswith("https://"):
+        return DASHBOARD_BTN
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✦ Мини-приложение", web_app=WebAppInfo(url=url))],
+        [InlineKeyboardButton(text="📊 Дашборд", callback_data="dash")],
+    ])
+
 # send() без клавиатуры сам подставляет кнопку дашборда — это способ сказать
 # «кнопок не надо» там, где она была бы мёртвой: человеку, которого только
 # что отключили, дашборд уже не откроется
@@ -318,6 +329,9 @@ def account_totals(acc: dict) -> dict | None:
     month_rows = [r for r in rows if r["time"] >= month_start]
     m = trades.summary(month_rows)
     month_net = trades.net_of_fee(trades.mine(m["total"]))
+    today_start = trades.clock().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_rows = [r for r in month_rows if r["time"] >= today_start]
+    today_net = trades.net_of_fee(trades.mine(trades.summary(today_rows)["total"]))
 
     # проценты — той же мерой, что в отчётах: доходность каждой сделки к капиталу
     # на её момент. Простое «профит ÷ капитал» занижало счёт с пополнением до
@@ -332,7 +346,7 @@ def account_totals(acc: dict) -> dict | None:
             "days": [trades.net_of_fee(trades.mine(by_day[d])) for d in sorted(by_day)],
             "month_pct": trades.growth_pct(month_rows, rows),
             "roi": trades.growth_all(),
-            "month_net": month_net, "month_trades": m["count"],
+            "month_net": month_net, "today_net": today_net, "month_trades": m["count"],
             "cur": trades.currency()}
 
 
@@ -1600,7 +1614,8 @@ async def poll_mt5(bot: Bot, db) -> int:
                                                          "withdrawals": "Вывод"}[kind],
                                         html.unescape(re.sub(r"<[^>]+>", "", body)))
             try:
-                await send(bot, owner, text, DASHBOARD_BTN)
+                await send(bot, owner, text,
+                           trade_notification_buttons() if kind == "trades" else DASHBOARD_BTN)
             except Exception as e:
                 log.warning("не доставил уведомление %s: %s", owner, e)
                 break
@@ -1828,7 +1843,7 @@ async def main():
     if mini_url.startswith("https://"):
         try:
             await bot.set_chat_menu_button(menu_button=MenuButtonWebApp(
-                text="TagMarket", web_app=WebAppInfo(url=mini_url)))
+                text="Open TagMarket", web_app=WebAppInfo(url=mini_url)))
         except Exception:
             log.exception("не обновил кнопку Mini App; продолжаю работу бота")
     db = open_db()
@@ -2615,8 +2630,9 @@ async def main():
     @dp.message(AddAcc.name)
     async def add_name(msg: Message, state: FSMContext):
         name = msg.text.strip()
-        if accounts.by_name(name, msg.from_user.id):
-            await msg.answer("Счёт с таким названием у тебя уже есть, придумай другое.")
+        cabinet = (await state.get_data()).get("cabinet", "")
+        if accounts.strategy_taken(msg.from_user.id, cabinet, name):
+            await msg.answer("В этом кабинете счёт с таким названием уже есть. Выбери другое имя.")
             return
         await state.update_data(name=name)
         await state.set_state(AddAcc.login)

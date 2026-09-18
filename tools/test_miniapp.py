@@ -86,6 +86,13 @@ class AuthTests(unittest.TestCase):
 
 
 class BroadcastFormatTests(unittest.TestCase):
+    def test_trade_notification_has_mini_app_then_dashboard(self):
+        with patch.dict(os.environ, {"MINI_APP_URL": "https://crownfail.shop/tagmarkets/app/"}):
+            buttons = miniapp.logic.trade_notification_buttons().inline_keyboard
+        self.assertEqual(len(buttons), 2)
+        self.assertEqual(buttons[0][0].web_app.url, "https://crownfail.shop/tagmarkets/app/")
+        self.assertEqual(buttons[1][0].callback_data, "dash")
+
     def test_dashboard_opens_miniapp_first_with_or_without_accounts(self):
         with patch.dict(os.environ, {"MINI_APP_URL": "https://crownfail.shop/tagmarkets/app/"}):
             with patch.object(accounts, "cabinets", return_value={}), \
@@ -334,6 +341,73 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await other.json())["accounts"], [])
         self.assertEqual(response.headers["Cache-Control"], "no-store")
 
+    async def test_new_account_submission_is_saved_and_visible_to_owner(self):
+        payload = {"name": "NEO", "login": 987654321, "password": "investor-secret",
+                   "cabinet": "CU987"}
+        response = await asyncio.wait_for(
+            self.call("POST", "/api/accounts", uid=2, json=payload), timeout=3)
+        self.assertEqual(response.status, 201, await response.text())
+        saved = accounts.load(2)
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(saved[0]["login"], payload["login"])
+        self.assertEqual(saved[0]["password"], payload["password"])
+        self.assertEqual(saved[0]["holder"], "")
+        self.assertNotIn(payload["password"], Path(accounts.PATH).read_text(encoding="utf-8"))
+        own = await (await self.call("GET", "/api/bootstrap", uid=2)).json()
+        self.assertEqual([a["login"] for a in own["accounts"]], [payload["login"]])
+        other = await (await self.call("GET", "/api/bootstrap")).json()
+        self.assertNotIn(payload["login"], [a["login"] for a in other["accounts"]])
+        second = await self.call("POST", "/api/accounts", uid=2,
+                                 json={"name": "SONIC", "login": 987654322,
+                                       "password": "second-secret", "cabinet": "CU987"})
+        self.assertEqual(second.status, 201, await second.text())
+        self.assertEqual({a["cabinet"] for a in accounts.load(2)}, {"CU987"})
+        duplicate_in_same_cabinet = await self.call("POST", "/api/accounts", uid=2,
+            json={"name": "NEO", "login": 987654323,
+                  "password": "third-secret", "cabinet": "CU987"})
+        self.assertEqual(duplicate_in_same_cabinet.status, 400)
+        same_name_other_cabinet = await self.call("POST", "/api/accounts", uid=2,
+            json={"name": "NEO", "login": 987654324,
+                  "password": "fourth-secret", "cabinet": "CU988"})
+        self.assertEqual(same_name_other_cabinet.status, 201,
+                         await same_name_other_cabinet.text())
+        neo_accounts = [a for a in accounts.load(2) if a["strategy"] == "NEO"]
+        self.assertEqual(len(neo_accounts), 2)
+        self.assertEqual({a["cabinet"] for a in neo_accounts}, {"CU987", "CU988"})
+        self.assertEqual(len({a["name"] for a in neo_accounts}), 2)
+        rename_other_cabinet = await self.call("PATCH", "/api/accounts/987654324", uid=2,
+            json={"name": "SONIC"})
+        self.assertEqual(rename_other_cabinet.status, 200, await rename_other_cabinet.text())
+        self.assertEqual({(a["login"], a["cabinet"], a["strategy"])
+                          for a in accounts.load(2) if a["strategy"] == "SONIC"},
+                         {(987654322, "CU987", "SONIC"), (987654324, "CU988", "SONIC")})
+        rename_back = await self.call("PATCH", "/api/accounts/987654324", uid=2,
+            json={"name": "NEO"})
+        self.assertEqual(rename_back.status, 200, await rename_back.text())
+        rename_same_cabinet = await self.call("PATCH", "/api/accounts/987654322", uid=2,
+            json={"name": "NEO"})
+        self.assertEqual(rename_same_cabinet.status, 400)
+        self.assertEqual(next(a for a in accounts.load(2) if a["login"] == 987654322)["strategy"], "SONIC")
+        removed = await self.call("DELETE", "/api/accounts/987654321", uid=2)
+        self.assertEqual(removed.status, 200)
+        self.assertEqual([a["login"] for a in accounts.load(2) if a["strategy"] == "NEO"],
+                         [987654324])
+
+    async def test_invited_user_onboarding_steps_follow_order(self):
+        partner.kv_set(self.db, "guest_by:2", "1")
+        initial = await (await self.call("GET", "/api/bootstrap", uid=2)).json()
+        self.assertTrue(initial["onboarding"]["needed"])
+        self.assertEqual(initial["onboarding"]["registration_url"],
+                         partner.kv_get(self.db, "partner_link:1"))
+        premature = await self.call("POST", "/api/onboarding", uid=2,
+                                    json={"step": "verified", "done": True})
+        self.assertEqual(premature.status, 409)
+        for step in ("registered", "verified", "broker_account"):
+            response = await self.call("POST", "/api/onboarding", uid=2,
+                                       json={"step": step, "done": True})
+            self.assertEqual(response.status, 200, await response.text())
+            self.assertTrue((await response.json())["progress"][step])
+
     async def test_mt5_password_encrypted_at_rest_and_legacy_migration(self):
         path = Path(accounts.PATH)
         self.assertNotIn("never-in-api", path.read_text(encoding="utf-8"))
@@ -383,7 +457,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(r.status,403)
 
     async def test_report_and_pagination(self):
-        now = datetime.utcnow()
+        now = trades.clock()
         deals = [{"ticket":i,"time":now,"symbol":"XAUUSD","side":"buy","net":1,
                   "profit":1,"swap":0,"commission":0,"volume":0.1,"is_closing":True,
                   "is_opening":False,"is_balance":False} for i in range(1,61)]
@@ -421,7 +495,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         accounts.add({**self.acc, "login": 789, "name": "Demo", "strategy": "Demo", "demo": True})
         store.save_state(self.tdb, 456, 4800, 4800, "USD", "Demo", 200)
         store.save_state(self.tdb, 789, 240000, 240000, "USD", "Demo", 10000)
-        now = datetime.utcnow()
+        now = trades.clock()
         for login, amount in ((123, 10), (456, 20), (789, 1000)):
             store.save_deals(self.tdb, login, [{"ticket": login, "time": now,
                 "symbol": "XAUUSD", "side": "buy", "net": amount, "profit": amount,
@@ -434,6 +508,22 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data["summary"]["count"], 2)
         self.assertAlmostEqual(data["summary"]["net_income"], 21)
         self.assertAlmostEqual(sum(point["value"] for point in data["chart"]), 21)
+        home = await (await self.call("GET", "/api/bootstrap")).json()
+        self.assertAlmostEqual(home["totals"]["USD"]["today"], 21)
+        self.assertAlmostEqual(data["summary"]["pct_capital"],
+                               round(21 / home["totals"]["USD"]["capital"] * 100, 3))
+
+    async def test_shared_observation_does_not_count_as_guests_capital(self):
+        accounts.share([123], 1, 2)
+        home = await (await self.call("GET", "/api/bootstrap", uid=2)).json()
+        observed = next(a for a in home["accounts"] if a["login"] == 123)
+        self.assertTrue(observed["shared"])
+        self.assertEqual(home["totals"], {})
+        report = await self.call("GET", "/api/overview/report?period=all&currency=USD", uid=2)
+        self.assertEqual(report.status, 200, await report.text())
+        data = await report.json()
+        self.assertEqual(data["accounts"], 0)
+        self.assertEqual(data["summary"]["net_income"], 0)
 
     async def test_all_time_report_accepts_nullable_archive_counts(self):
         self.tdb.execute("INSERT INTO months (login, month, trades, gross, platform, wins, losses, growth) "

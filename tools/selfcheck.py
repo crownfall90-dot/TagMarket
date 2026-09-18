@@ -524,11 +524,11 @@ import accounts as _acc                                      # noqa: E402
 _acc.PATH = os.path.join(tempfile.mkdtemp(), "accounts.json")
 _acc.save([
     {"owner": 1, "name": "ALA", "login": 1, "password": "x", "server": "s",
-     "holder": "ALA", "strategy": "SONIC 1"},                       # счёт один
+     "holder": "ALA", "strategy": "SONIC 1", "cabinet": "CU-ALA"},
     {"owner": 1, "name": "DZM · NEO.FX", "login": 2, "password": "x", "server": "s",
-     "holder": "DZM", "strategy": "NEO.FX"},                        # счетов несколько
+     "holder": "DZM", "strategy": "NEO.FX", "cabinet": "CU-DZM"},
     {"owner": 1, "name": "Лёня", "login": 3, "password": "x", "server": "s",
-     "holder": "", "strategy": "NEO"},                              # владельца нет
+     "holder": "", "strategy": "NEO", "cabinet": "CU-LEO"},
 ])
 assert _acc.rename("ALA", 1, "SONIC 2") == "ALA", "имя-владелец не меняется"
 assert _acc.by_name("ALA", 1)["strategy"] == "SONIC 2", "стратегия обновилась"
@@ -568,16 +568,18 @@ assert not _acc.remove_login(1, 555), "повторный возврат нич�
 # внутри владельца две одинаковых неразличимы.
 _acc.save(_acc.load() + [
     {"owner": 1, "name": "DZM · SONIC 1", "login": 4, "password": "x", "server": "s",
-     "holder": "DZM", "strategy": "SONIC 1"}])
-assert _acc.strategy_taken(1, "DZM", "SONIC 1"), "у этого владельца стратегия занята"
-assert not _acc.strategy_taken(1, "ALA", "SONIC 1"), "у другого владельца — можно"
-assert _acc.strategy_taken(1, "DZM", "sonic 1"), "регистр не должен обманывать"
+     "holder": "DZM", "strategy": "SONIC 1", "cabinet": "CU-DZM"}])
+assert _acc.strategy_taken(1, "CU-DZM", "SONIC 1"), "в этом кабинете имя занято"
+assert not _acc.strategy_taken(1, "CU-LEO", "SONIC 1"), "в другом кабинете имя свободно"
+assert _acc.strategy_taken(1, "CU-DZM", "sonic 1"), "регистр не должен обманывать"
 try:
     _acc.rename("DZM · NEO 2", 1, "SONIC 1")     # тёзка внутри того же владельца
     raise SystemExit("повтор стратегии у одного владельца должен отвергаться")
 except ValueError:
     pass
-# у другого владельца то же название проходит
+# в другом кабинете то же название проходит
 assert _acc.rename("ALA", 1, "SONIC 1") == "ALA", "тёзка у другого владельца разрешён"
+assert len(_acc.unique_storage_name("Очень длинное название стратегии " * 3,
+                                    1, "CU-LEO", 999).encode("utf-8")) <= 48
 
 print("OK")
