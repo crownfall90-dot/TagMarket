@@ -25,18 +25,30 @@ VERSION = re.compile(r"\d{8}-\d{6}-miniapp\Z")
 FILES = (
     "accounts.py", "account_lock.py", "agent.py", "bot.py", "coordination.py",
     "ibportal.py", "miniapp.py", "partner.py", "store.py", "trades.py",
-    "webhook_server.py", "requirements.txt", "README.md", "MINIAPP.md",
-    "todo.md", "web/index.html", "web/app.js", "web/style.css",
-    "web/brand.svg", "web/preview.json", "tools/selfcheck.py",
-    "tools/test_miniapp.py", "tools/deploy_miniapp.py",
+    "webhook_server.py", "requirements.txt", "README.md", "docs/MINIAPP.md",
+    "docs/todo.md", "web/index.html", "web/app.js", "web/style.css",
+    "web/brand.svg", "web/preview.json", "tests/selfcheck.py",
+    "tests/test_miniapp.py", "tools/deploy_miniapp.py",
 )
+# Раскладка до переноса тестов и документов в tests/ и docs/: старые копии остаются пригодными.
+OLD_MOVED = {"docs/MINIAPP.md": "MINIAPP.md", "docs/todo.md": "todo.md",
+             "tests/selfcheck.py": "tools/selfcheck.py",
+             "tests/test_miniapp.py": "tools/test_miniapp.py"}
+
+
+def layout(path: Path) -> dict[str, str]:
+    """Имя файла в текущей раскладке -> где он лежит в этой копии."""
+    for names in ({n: n for n in FILES}, {n: OLD_MOVED.get(n, n) for n in FILES}):
+        if all((path / old).is_file() and not (path / old).is_symlink() for old in names.values()):
+            return names
+    return {}
 
 
 def compatible(path: Path) -> bool:
     """Older code cannot read encrypted MT5 credentials, so never offer it."""
     if path.is_symlink() or not path.is_dir() or path.parent.resolve() != BACKUPS.resolve():
         return False
-    if any(not (path / name).is_file() or (path / name).is_symlink() for name in FILES):
+    if not layout(path):
         return False
     try:
         accounts = (path / "accounts.py").read_text(encoding="utf-8")
@@ -57,10 +69,10 @@ def run(*argv):
 
 
 def copy_code(source: Path, destination: Path) -> None:
-    for name in FILES:
+    for name, old in layout(source).items():
         target = destination / name
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source / name, target)
+        shutil.copy2(source / old, target)
 
 
 def snapshot_current() -> Path:
@@ -110,8 +122,8 @@ def restore(version: str) -> None:
     source = BACKUPS / version
     python = str(ROOT / "venv/bin/python")
     run(python, "-m", "compileall", "-q", str(source))
-    for test in ("tools/selfcheck.py", "tools/test_miniapp.py"):
-        result = subprocess.run([python, str(source / test)], cwd=source,
+    for test in ("tests/selfcheck.py", "tests/test_miniapp.py"):
+        result = subprocess.run([python, str(source / layout(source)[test])], cwd=source,
                                 text=True, capture_output=True)
         if result.returncode:
             raise RuntimeError(f"{test} failed: {(result.stdout + result.stderr)[-500:]}")

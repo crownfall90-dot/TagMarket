@@ -3,8 +3,8 @@
 Telegram-бот: сделки по счетам MT5 и события партнёрского кабинета.
 
 **Telegram Mini App:** новый интерфейс Pulse/Aurora, общий с ботом backend,
-счета, история, гости и настройки. Запуск и ограничения — [MINIAPP.md](MINIAPP.md).
-Результаты продуктового/UI/технического ревью — [todo.md](todo.md).
+счета, история, гости и настройки. Запуск и ограничения — [docs/MINIAPP.md](docs/MINIAPP.md).
+Результаты продуктового/UI/технического ревью — [docs/todo.md](docs/todo.md).
 
 ## Как устроено
 
@@ -34,9 +34,21 @@ Telegram-бот: сделки по счетам MT5 и события партн
 | `partner.py` | состояние, дедупликация, события кабинета |
 | `ibportal.py` | доступ к партнёрскому кабинету (JWT) |
 
-**`tools/`** — обслуживание: `selfcheck.py` (проверка логики),
-`audit.py` (сверка расчётов на боевых данных), `backup.sh`,
-`keeper.ps1` и `TagMarkets.bat` (пульт на ПК).
+**`web/`** — Mini App (`index.html`, `app.js`, `style.css`, `preview.json`).
+
+**`tests/`** — `selfcheck.py` (логика), `test_miniapp.py` (API, права, lease),
+`ui_smoke.py` (браузерная проверка).
+
+**`docs/`** — `MINIAPP.md` (запуск и ограничения), `todo.md` (ревью),
+`AUDIT_HOWTO.md` (как сверять боевые данные).
+
+**`tools/`** — обслуживание: `audit.py`, `deploy_miniapp.py` и
+`rollback_miniapp.py` (сервер), `rollback-miniapp.bat`, `keeper.ps1`,
+`TagMarkets.bat` (пульт на ПК), `backup.sh`.
+
+Модули и точки входа (`bot.py`, `agent.py`, `webhook_server.py`…) лежат в корне
+намеренно: systemd-сервисы, задачи Планировщика Windows и самообновление агента
+запускают их по этим путям, а модули импортируют друг друга без пакета.
 
 **`data/`** и **`logs/`** — базы, счета, токены и журналы. В репозиторий не
 попадают: там пароли от счетов.
@@ -44,8 +56,8 @@ Telegram-бот: сделки по счетам MT5 и события партн
 ## Проверки
 
 ```bash
-python tools/selfcheck.py   # логика на выдуманных числах — быстро, без сети
-python tools/test_miniapp.py # права доступа, синхронизация, lease и API
+python tests/selfcheck.py   # логика на выдуманных числах — быстро, без сети
+python tests/test_miniapp.py # права доступа, синхронизация, lease и API
 python tools/audit.py       # сверка боевых данных: сходятся ли экраны между собой
 ```
 

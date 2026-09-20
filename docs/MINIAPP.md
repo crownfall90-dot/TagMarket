@@ -84,10 +84,10 @@ python -m http.server 8765 --bind 127.0.0.1 --directory web
 ## Проверки
 
 ```powershell
-python tools/selfcheck.py
-python tools/test_miniapp.py
+python tests/selfcheck.py
+python tests/test_miniapp.py
 node --check web/app.js
-python tools/ui_smoke.py
+python tests/ui_smoke.py
 ```
 
 Тесты создают временные БД и accounts.json. Рассылки реальным пользователям,
@@ -124,7 +124,7 @@ primary ждёт исправный резерв — автоматическо�
 
 Перед каждым развёртыванием сохраняется снимок кода, настроек и баз на VPS.
 Для просмотра последних десяти **совместимых** версий и отката кода запустите
-`rollback-miniapp.bat` в локальной папке проекта. Нужен настроенный SSH-адрес
+`tools/rollback-miniapp.bat` в локальной папке проекта. Нужен настроенный SSH-адрес
 `tagvps`. Выберите номер версии и подтвердите словом `ROLLBACK`. Сервер перед
 откатом сохранит текущий код, остановит оба сервиса, восстановит выбранную
 версию и проверит `/health`, интерфейс и защиту API. Если проверка не пройдёт,

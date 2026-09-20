@@ -1,6 +1,6 @@
 """Browser smoke for preview layout and common mobile interactions.
 
-Run locally: python tools/ui_smoke.py
+Run locally: python tests/ui_smoke.py
 Uses the installed Playwright Chromium and fictional web/preview.json only.
 """
 from functools import partial

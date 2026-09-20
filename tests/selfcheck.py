@@ -1,9 +1,9 @@
-"""Проверка логики дедупликации, форматирования и сводок. python selfcheck.py"""
+"""Проверка логики дедупликации, форматирования и сводок. python tests/selfcheck.py"""
 
 import os
 import sys
 
-# запускаемся из tools/, а модули лежат в корне проекта
+# запускаемся из tests/, а модули лежат в корне проекта
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

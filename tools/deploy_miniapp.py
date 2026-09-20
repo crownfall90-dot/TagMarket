@@ -19,9 +19,9 @@ from dotenv import dotenv_values, set_key
 ROOT = Path("/opt/tagmarkets")
 FILES = {"accounts.py", "account_lock.py", "agent.py", "bot.py", "coordination.py",
          "ibportal.py", "miniapp.py", "partner.py", "store.py", "trades.py", "webhook_server.py",
-         "requirements.txt", "README.md", "MINIAPP.md", "todo.md", "web/index.html",
-         "web/app.js", "web/style.css", "web/brand.svg", "web/preview.json", "tools/selfcheck.py",
-         "tools/test_miniapp.py", "tools/deploy_miniapp.py", "tools/rollback_miniapp.py"}
+         "requirements.txt", "README.md", "docs/MINIAPP.md", "docs/todo.md", "web/index.html",
+         "web/app.js", "web/style.css", "web/brand.svg", "web/preview.json", "tests/selfcheck.py",
+         "tests/test_miniapp.py", "tools/deploy_miniapp.py", "tools/rollback_miniapp.py"}
 SERVICES = ["tagmarkets-bot", "tagmarkets-webhook"]
 
 
@@ -52,7 +52,7 @@ def main():
         bundle.extractall(stage, filter="data")
     python = str(ROOT / "venv/bin/python")
     run(python, "-m", "compileall", "-q", str(stage))
-    for test in ("tools/selfcheck.py", "tools/test_miniapp.py"):
+    for test in ("tests/selfcheck.py", "tests/test_miniapp.py"):
         result = run(python, str(stage / test), cwd=stage, capture_output=True)
         (stage / (Path(test).stem + ".log")).write_text(result.stdout + result.stderr)
         print(test, "PASS", flush=True)
