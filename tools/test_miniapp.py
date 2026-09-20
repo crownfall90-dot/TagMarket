@@ -119,6 +119,9 @@ class MachineStateTests(unittest.TestCase):
         self.assertEqual(got["main"]["commit"], "abcdef1")
         self.assertEqual(got["old"]["blocked"], "dirty tree")
         self.assertEqual(got["main"]["blocked"], "")
+        # блокировку записали 60 с назад, проверка раз в 15 минут — осталось 840 с
+        self.assertEqual(got["old"]["next_check"], 840)
+        self.assertIsNone(got["main"]["next_check"])
         # a stale block reason must not stay on screen forever
         partner.kv_set(db, "machine_blocked:old", f"{iso(4000)}|dirty tree")
         stale = {m["host"]: m for m in miniapp.machine_states(db, now)}

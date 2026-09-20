@@ -744,6 +744,7 @@ async def action(request):
 
 
 ALIVE_WITHIN = 120      # секунд: любой отклик машины за это время — процесс жив
+UPDATE_EVERY = 900      # как часто агент сам проверяет обновления (UPDATE_CHECK_EVERY)
 
 
 def _seconds_since(stamp, now):
@@ -790,6 +791,10 @@ def machine_states(db, now):
                     # причина показывается, пока свежа: проверка обновлений идёт
                     # раз в 15 минут, а после успешного обновления запись стареет сама
                     "blocked": blocked_why if age is not None and age < 1800 else "",
+                    # агент повторяет проверку сам; если папка проекта исправлена,
+                    # обновится на ближайшей — показываем, когда она будет
+                    "next_check": (max(0, round(UPDATE_EVERY - age))
+                                   if blocked_why and age is not None and age < 1800 else None),
                     "synced": stamps["machine_sync"] if stamps["machine_sync"] is None
                               else round(stamps["machine_sync"]),
                     "commit": (partner.kv_get(db, f"machine_commit:{host}") or "")[:7]})
