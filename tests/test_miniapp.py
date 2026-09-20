@@ -203,6 +203,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.app["db"], self.app["trades"] = self.db, self.tdb
         miniapp.setup(self.app)
         self.app.router.add_post("/agent/sync", webhook_server.agent_sync)
+        self.app.router.add_post("/agent/candles", webhook_server.agent_candles)
         self.app.router.add_post("/agent/claim", webhook_server.agent_claim)
         self.app.router.add_post("/agent/role_change", webhook_server.agent_role_change)
         self.app.router.add_get("/agent/accounts", webhook_server.agent_accounts)
@@ -623,6 +624,43 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         r = await self.call("GET", "/api/overview/report?period=week&currency=USD")
         self.assertEqual(r.status, 200, await r.text())
 
+    async def test_price_chart_returns_candles_and_trade_markers(self):
+        now = trades.clock()
+        store.save_candles(self.tdb, [
+            {"time": (now - timedelta(minutes=30)).isoformat(), "open": 2400, "high": 2405, "low": 2398, "close": 2402},
+            {"time": (now - timedelta(minutes=15)).isoformat(), "open": 2402, "high": 2410, "low": 2401, "close": 2408},
+        ])
+        store.save_deals(self.tdb, 123, [
+            {"ticket": 801, "time": now - timedelta(minutes=20), "symbol": "XAUUSD", "side": "buy",
+             "price": 2403.5, "net": 0, "profit": 0, "swap": 0, "commission": 0, "volume": 0.1,
+             "is_closing": False, "is_opening": True, "is_balance": False},
+            {"ticket": 802, "time": now - timedelta(minutes=5), "symbol": "XAUUSD", "side": "buy",
+             "price": 2407.2, "net": 12, "profit": 12, "swap": 0, "commission": 0, "volume": 0.1,
+             "is_closing": True, "is_opening": False, "is_balance": False},
+            {"ticket": 803, "time": now - timedelta(minutes=5), "symbol": "EURUSD", "side": "buy",
+             "price": 1.1, "net": 3, "profit": 3, "swap": 0, "commission": 0, "volume": 0.1,
+             "is_closing": True, "is_opening": False, "is_balance": False},
+        ])
+        r = await self.call("GET", "/api/accounts/123/candles?period=today")
+        self.assertEqual(r.status, 200, await r.text())
+        data = await r.json()
+        self.assertEqual(data["symbol"], "XAUUSD")
+        self.assertEqual(len(data["candles"]), 2)
+        self.assertEqual(data["candles"][0]["close"], 2402)
+        # только XAUUSD-сделки и только вход/выход — EURUSD и baланс отсеяны
+        self.assertEqual({m["kind"] for m in data["trades"]}, {"in", "out"})
+        self.assertEqual(len(data["trades"]), 2)
+
+    async def test_price_chart_hides_candles_older_than_retention(self):
+        now = trades.clock()
+        store.save_candles(self.tdb, [
+            {"time": (now - timedelta(days=store.CANDLE_KEEP_DAYS + 5)).isoformat(),
+             "open": 1, "high": 1, "low": 1, "close": 1},
+        ])
+        r = await self.call("GET", "/api/accounts/123/candles?period=all")
+        self.assertEqual(r.status, 200, await r.text())
+        self.assertEqual((await r.json())["candles"], [])
+
     async def test_all_time_report_accepts_nullable_archive_counts(self):
         self.tdb.execute("INSERT INTO months (login, month, trades, gross, platform, wins, losses, growth) "
                          "VALUES (123, '2026-07', 2, 10, NULL, NULL, NULL, 1.0)")
@@ -823,6 +861,28 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(store.get_state(self.tdb,123)["balance"], 2400)
         self.assertEqual(store.last_ticket(self.tdb,123), 0)
         self.assertEqual(store.get_command(self.tdb,123), "restart_terminal")
+
+    async def test_agent_candles_upserts_and_rejects_bad_rows(self):
+        now = trades.clock()
+        good = {"time": now.isoformat(), "open": 2400, "high": 2405, "low": 2398, "close": 2402}
+        r = await self.client.post("/agent/candles", headers={"X-Token": "agent-test"},
+                                   json={"candles": [good]})
+        self.assertEqual(r.status, 200, await r.text())
+        self.assertEqual((await r.json())["new"], 1)
+        self.assertEqual(len(store.get_candles(self.tdb, now - timedelta(minutes=1), now + timedelta(minutes=1))), 1)
+        # тот же бар с уточнённым close — обновляется на месте, не дублируется
+        updated = {**good, "close": 2406}
+        r = await self.client.post("/agent/candles", headers={"X-Token": "agent-test"},
+                                   json={"candles": [updated]})
+        self.assertEqual(r.status, 200, await r.text())
+        rows = store.get_candles(self.tdb, now - timedelta(minutes=1), now + timedelta(minutes=1))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["close"], 2406)
+        for bad in ({"candles": [{"time": "not-a-date", "open": 1, "high": 1, "low": 1, "close": 1}]},
+                    {"candles": [{"time": now.isoformat(), "open": -1, "high": 1, "low": 1, "close": 1}]},
+                    {"candles": "nope"}, {}):
+            r = await self.client.post("/agent/candles", headers={"X-Token": "agent-test"}, json=bad)
+            self.assertEqual(r.status, 400, await r.text())
 
     async def test_legacy_and_non_owner_agents_cannot_read_polling_work(self):
         coordination.claim(self.db,"main","session-aaaaaaaaaaaaaaaa","primary")

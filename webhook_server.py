@@ -597,6 +597,47 @@ async def agent_sync(request):
     return web.json_response({"ok": True, "new": new})
 
 
+def _candle_row(raw) -> dict:
+    if not isinstance(raw, dict):
+        raise ValueError("candle: object required")
+    time_text = _sync_text(raw.get("time"), "candle.time", 40)
+    try:
+        datetime.fromisoformat(time_text)
+    except ValueError as exc:
+        raise ValueError("candle.time: invalid ISO datetime") from exc
+    return {"time": time_text,
+            "open": _sync_number(raw.get("open"), "candle.open", nonnegative=True),
+            "high": _sync_number(raw.get("high"), "candle.high", nonnegative=True),
+            "low": _sync_number(raw.get("low"), "candle.low", nonnegative=True),
+            "close": _sync_number(raw.get("close"), "candle.close", nonnegative=True)}
+
+
+async def agent_candles(request):
+    """Агент прислал свечи XAUUSD для графика цены — не привязано к счёту/лизу:
+    котировки одного символа общие для всех, кто сейчас держит терминал.
+    """
+    check_token(request)
+    try:
+        data = await request.json()
+        if not isinstance(data, dict):
+            raise ValueError("object required")
+        rows = data.get("candles")
+        if not isinstance(rows, list) or len(rows) > 10000:
+            raise ValueError("candles: list required")
+        candles = [_candle_row(r) for r in rows]
+    except (ValueError, TypeError, KeyError, OverflowError) as e:
+        raise web.HTTPBadRequest(text=f"bad payload: {e}")
+    db = request.app["trades"]
+    try:
+        new = store.save_candles(db, candles)
+        store.trim_candles(db, commit=False)
+        db.commit()
+    except sqlite3.DatabaseError as exc:
+        log.warning("temporary database failure during candle sync: %s", exc)
+        raise web.HTTPServiceUnavailable(text="database temporarily busy")
+    return web.json_response({"ok": True, "new": new})
+
+
 async def agent_claim(request):
     check_token(request)
     try:
@@ -639,6 +680,7 @@ async def main():
     app.router.add_get("/agent/accounts", agent_accounts)
     app.router.add_get("/agent/env", agent_env)
     app.router.add_post("/agent/sync", agent_sync)
+    app.router.add_post("/agent/candles", agent_candles)
     app.router.add_post("/agent/claim", agent_claim)
     app.router.add_post("/agent/role_change", agent_role_change)
     app.router.add_post("/agent/update_notify", agent_update_notify)

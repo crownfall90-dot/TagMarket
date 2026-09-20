@@ -178,6 +178,7 @@ def server_alive() -> bool:
 _LOCAL_ENV_KEYS = ("MT5_TERMINAL", "AGENT_ROLE", "STANDBY_TIMEOUT", "AGENT_LOCK_PORT")
 ENV_FILE = os.getenv("ENV_FILE", os.path.join(ROOT, ".env"))
 ENV_SYNC_EVERY = int(os.getenv("ENV_SYNC_EVERY", 600))     # раз в 10 минут — токены меняются редко
+CANDLE_SYNC_EVERY = int(os.getenv("CANDLE_SYNC_EVERY", 300))  # раз в 5 минут — бар M15 живёт 15
 
 
 def sync_env() -> None:
@@ -796,6 +797,21 @@ def push(payload: dict) -> int:
     return _retry_request(_do)
 
 
+def push_candles(since: datetime, until: datetime) -> int:
+    """Снимает и шлёт M15-свечи XAUUSD за период — раз за круг, не на счёт:
+    символ общий, terminal.use(acc) для него не нужен (см. trades.candles).
+    """
+    rows = trades.candles(since, until)
+    if not rows:
+        return 0
+    def _do():
+        r = requests.post(f"{SERVER}/agent/candles", json={"candles": rows},
+                          headers={"X-Token": TOKEN}, timeout=15)
+        r.raise_for_status()
+        return r.json().get("new", 0)
+    return _retry_request(_do)
+
+
 def collect(acc: dict) -> dict:
     """Состояние счёта и его сделки. Первый раз — вся история, потом только новые."""
     done = False
@@ -922,6 +938,7 @@ def main():
     last_env_sync = 0.0
     last_update_check = 0.0
     last_canary_report = 0.0
+    last_candle_sync = 0.0
     # закэшировано на весь процесс: код меняется только через рестарт после
     # обновления, так что local-commit и «свой ли это коммит» не меняются
     # между запусками git заново на каждый круг
@@ -1009,6 +1026,18 @@ def main():
 
         if ok:      # хоть один счёт прочитан — терминал жив, отмечаемся для сторожа
             _touch_beat()
+
+        # свечи графика цены: раз в CANDLE_SYNC_EVERY, не на каждый счёт —
+        # символ общий, а терминал сейчас подключён (после collect() выше)
+        if ok and time.monotonic() - last_candle_sync > CANDLE_SYNC_EVERY:
+            try:
+                until = trades.clock()
+                sent = push_candles(until - timedelta(hours=1), until)
+                if sent:
+                    log.info("свечи XAUUSD: отправлено %d новых", sent)
+            except Exception as e:
+                log.warning("не отправил свечи: %s", e)
+            last_candle_sync = time.monotonic()
 
         # подтверждаем по факту «дожили до конца цикла без краха», не по
         # успеху MT5/сети конкретно в этом круге — см. комментарий выше

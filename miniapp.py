@@ -510,6 +510,29 @@ async def report(request):
         "report": plain_report(trades.fmt_report(title, rows, trades.currency(), since=since, until=until))})
 
 
+async def price_chart(request):
+    """Свечи XAUUSD за период + точки входа/выхода сделок счёта — для графика
+    цены на карточке стратегии. Свечи хранятся только CANDLE_KEEP_DAYS дней
+    (см. store.trim_candles), поэтому глубокие периоды обрезаются по факту.
+    """
+    uid, _ = authorize(request)
+    acc = owned(uid, request.match_info["login"])
+    if not store.get_state(request.app["trades"], acc["login"]):
+        return web.json_response({"pending": True, "candles": [], "trades": []})
+    trades.use(acc)
+    title, since, until = report_period(request.query)
+    edge = trades.clock() - timedelta(days=store.CANDLE_KEEP_DAYS)
+    since = max(since, edge)
+    db = request.app["trades"]
+    candles = store.get_candles(db, since, until)
+    rows = [r for r in trades.fetch(since, until) if r["is_closing"] or r["is_opening"]]
+    markers = [{"time": r["time"].isoformat() + "Z", "side": r["side"], "price": r["price"],
+               "kind": "in" if r["is_opening"] else "out", "symbol": r["symbol"]}
+              for r in rows if r["symbol"] == trades.CHART_SYMBOL]
+    return web.json_response({"title": title, "symbol": trades.CHART_SYMBOL,
+        "candles": [{**c, "time": c["time"] + "Z"} for c in candles], "trades": markers})
+
+
 def bounded_text(data, key, maximum=64, required=False):
     value = data.get(key, "")
     if not isinstance(value, str) or len(value) > maximum or (required and not value.strip()):
@@ -1006,6 +1029,7 @@ def setup(app):
     app.router.add_post("/api/onboarding", onboarding_progress)
     app.router.add_get("/api/overview/report", overview_report)
     app.router.add_get("/api/accounts/{login}/report", report)
+    app.router.add_get("/api/accounts/{login}/candles", price_chart)
     app.router.add_post("/api/accounts", add_account)
     app.router.add_patch("/api/accounts/{login}", change_account)
     app.router.add_delete("/api/accounts/{login}", change_account)

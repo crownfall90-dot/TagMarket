@@ -70,6 +70,7 @@ _base_at: datetime = None
 
 
 TERMINAL = os.getenv("MT5_TERMINAL", r"D:\MetaTrader5\terminal64.exe")
+CHART_SYMBOL = os.getenv("CHART_SYMBOL", "XAUUSD")   # у некоторых брокеров с суффиксом
 _history_seen: set[str] = set()     # у каких счетов история уже подгружалась
 
 
@@ -617,6 +618,27 @@ def fetch(since: datetime, until: datetime, all_history: bool = False) -> list[d
         raise RuntimeError(f"история недоступна: {mt5.last_error()}")
     rows = [_convert(d) for d in raw]
     return sorted((r for r in rows if since <= r["time"] <= until), key=lambda r: r["time"])
+
+
+def candles(since: datetime, until: datetime) -> list[dict]:
+    """Свечи M15 по CHART_SYMBOL за период — для графика цены на карточке стратегии.
+
+    Только на агенте (там открыт терминал с котировками). Символ общий для
+    всех счетов, поэтому снимается независимо от того, какой счёт сейчас
+    активен через use() — как и требует общий терминал (см. use()).
+    """
+    if not HAS_MT5:
+        return []
+    if not mt5.symbol_select(CHART_SYMBOL, True):
+        raise RuntimeError(f"символ {CHART_SYMBOL} недоступен: {mt5.last_error()}")
+    raw = mt5.copy_rates_range(CHART_SYMBOL, mt5.TIMEFRAME_M15,
+                               since - timedelta(minutes=15), until)
+    if raw is None:
+        raise RuntimeError(f"свечи недоступны: {mt5.last_error()}")
+    return [{"time": datetime.fromtimestamp(int(c["time"]), timezone.utc).replace(tzinfo=None).isoformat(),
+             "open": float(c["open"]), "high": float(c["high"]),
+             "low": float(c["low"]), "close": float(c["close"])}
+            for c in raw if since <= datetime.fromtimestamp(int(c["time"]), timezone.utc).replace(tzinfo=None) <= until]
 
 
 def since_ticket(ticket: int) -> list[dict]:

@@ -9,7 +9,7 @@
 
 import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 
 def utcnow() -> datetime:
@@ -86,6 +86,17 @@ CREATE TABLE IF NOT EXISTS commands (
     cmd     TEXT,
     created TEXT
 );
+
+-- Свечи M15 XAUUSD для графика цены на карточке стратегии. Общие для всех
+-- пользователей (один символ), не привязаны к login. Хранится скользящее
+-- окно (см. trim_candles) — детальная история глубже не нужна.
+CREATE TABLE IF NOT EXISTS candles (
+    time    TEXT PRIMARY KEY,      -- ISO, начало M15-бара (UTC)
+    open    REAL,
+    high    REAL,
+    low     REAL,
+    close   REAL
+);
 """
 
 
@@ -138,6 +149,39 @@ def save_deals(db, login: int, deals: list[dict], *, commit: bool = True) -> int
     if commit:
         db.commit()
     return new
+
+
+CANDLE_KEEP_DAYS = 60   # глубже графику цены заходить незачем — см. схему candles
+
+
+def save_candles(db, candles: list[dict], *, commit: bool = True) -> int:
+    """Сохраняет M15-свечи XAUUSD. INSERT OR REPLACE: агент может прислать
+    один и тот же ещё не закрытый бар повторно с уточнённым high/low/close.
+    """
+    new = 0
+    for c in candles:
+        cur = db.execute(
+            "INSERT INTO candles (time, open, high, low, close) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(time) DO UPDATE SET high=excluded.high, low=excluded.low, close=excluded.close",
+            (str(c["time"]), c["open"], c["high"], c["low"], c["close"]))
+        new += cur.rowcount
+    if commit:
+        db.commit()
+    return new
+
+
+def trim_candles(db, *, commit: bool = True) -> None:
+    edge = (utcnow() - timedelta(days=CANDLE_KEEP_DAYS)).isoformat()
+    db.execute("DELETE FROM candles WHERE time < ?", (edge,))
+    if commit:
+        db.commit()
+
+
+def get_candles(db, since: datetime, until: datetime) -> list[dict]:
+    rows = db.execute("SELECT time, open, high, low, close FROM candles "
+                      "WHERE time >= ? AND time <= ? ORDER BY time",
+                      (since.isoformat(), until.isoformat())).fetchall()
+    return [dict(r) for r in rows]
 
 
 def save_state(db, login: int, balance: float, equity: float, currency: str,
