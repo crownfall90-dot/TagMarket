@@ -150,6 +150,40 @@ def wallet_add(db, cabinet: str, amount: float) -> None:
         kv_set(db, f"wallet_since:{cabinet}", trades.clock().isoformat())
 
 
+def site_move_add(db, cabinet: str, kind: str, amount: float, currency: str = "USD") -> None:
+    """Запись в журнал движений на сайте брокера (пополнение кабинета).
+
+    Портал присылает событие, но не отдаёт историю — поэтому журнал ведём сами,
+    начиная с момента, когда бот его слышит. Вывод с сайта портал не сообщает
+    вообще, его здесь взять неоткуда.
+    """
+    if not cabinet or not amount:
+        return
+    import trades
+    stamp = trades.clock().replace(microsecond=0).isoformat()
+    kv_set(db, f"site_move:{cabinet}:{stamp}:{kind}:{amount:.2f}",
+           json.dumps({"kind": kind, "amount": round(float(amount), 2),
+                       "currency": (currency or "USD").upper(), "time": stamp}))
+
+
+def site_moves(db, cabinet: str, since=None, until=None) -> list[dict]:
+    """Движения по кабинету на сайте за период, новые сверху."""
+    prefix = f"site_move:{cabinet}:"
+    out = []
+    for key in kv_keys(db, prefix + "%"):
+        if not key.startswith(prefix):      # «_» в LIKE — любой символ
+            continue
+        try:
+            item = json.loads(kv_get(db, key) or "")
+            moment = datetime.fromisoformat(item["time"])
+        except (ValueError, KeyError, TypeError):
+            continue
+        if (since and moment < since) or (until and moment > until):
+            continue
+        out.append(item)
+    return sorted(out, key=lambda i: i["time"], reverse=True)
+
+
 def wallet_reset(db, cabinet: str) -> None:
     """Обнулить накопленный баланс кошелька вручную.
 
@@ -310,10 +344,13 @@ def record_notification(db, user_id, event_key, kind, title, body) -> bool:
 
 def notifications_for(db, user_id, limit=50) -> dict:
     uid = str(user_id)
+    # удержание доли брокера (PF Deduction) — не событие; старые записи о нём
+    # прячем здесь же, чтобы не переписывать историю в базе
+    quiet = "AND body NOT LIKE '%PF Deduction%' AND title NOT LIKE '%PF Deduction%'"
     rows = db.execute("SELECT id,kind,title,body,created_at,read_at,event_key FROM notifications "
-                      "WHERE user_id=? ORDER BY id DESC LIMIT ?", (uid, limit)).fetchall()
-    unread = db.execute("SELECT COUNT(*) FROM notifications WHERE user_id=? AND read_at IS NULL",
-                        (uid,)).fetchone()[0]
+                      f"WHERE user_id=? {quiet} ORDER BY id DESC LIMIT ?", (uid, limit)).fetchall()
+    unread = db.execute("SELECT COUNT(*) FROM notifications "
+                        f"WHERE user_id=? AND read_at IS NULL {quiet}", (uid,)).fetchone()[0]
     return {"items": [dict(zip(("id","kind","title","body","created_at","read_at","event_key"), row))
                       for row in rows], "unread": unread}
 

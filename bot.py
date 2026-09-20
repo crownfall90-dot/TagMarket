@@ -738,6 +738,32 @@ def invite_new(db, owner, logins: list, max_uses: int = 1) -> str:
     return token
 
 
+PERSONAL_USES = 10 ** 9
+
+
+def invite_personal(db, owner, renew: bool = False) -> str:
+    """Постоянная ссылка-приглашение владельца — одна на человека.
+
+    Она не сгорает после входа и не привязана к счетам: гость сначала попадает
+    в бота, а счета ему открывают отдельно из карточки гостя. renew=True
+    выпускает новую и гасит прежнюю — если старая попала не в те руки.
+    """
+    key = f"invite_personal:{owner}"
+    token = kv_get(db, key)
+    old = invite_get(db, token) if token else None
+    if old and not renew:
+        return token
+    if old:
+        old["revoked"] = True
+        invite_save(db, token, old)
+    token = secrets.token_urlsafe(9)
+    kv_set(db, f"invite:{token}", json.dumps({
+        "owner": owner, "logins": [], "uses": 0, "max_uses": PERSONAL_USES,
+        "personal": True, "revoked": False, "created": trades.clock().isoformat()}))
+    kv_set(db, key, token)
+    return token
+
+
 def invite_get(db, token: str, active_only: bool = True) -> dict | None:
     """Приглашение по токену. Отозванное считается несуществующим."""
     if not token or "/" in token or len(token) > 64:    # мусор в кv не ищем
@@ -1567,6 +1593,12 @@ async def poll_mt5(bot: Bot, db) -> int:
                 kv_set(db, key, row["ticket"])
                 continue
 
+            # еженедельное удержание доли брокера (PF Deduction) — не событие:
+            # 30% уже вычтены из каждой сделки, общая сумма видна в движениях
+            if row["is_balance"] and trades.is_perf_fee(row):
+                kv_set(db, key, row["ticket"])
+                continue
+
             # реинвест приходит парой строк одним моментом: Adjust списывает
             # из профита, Upgrade тут же кладёт то же самое в капитал. Раньше
             # это были два отдельных, спорящих друг с другом уведомления.
@@ -1976,18 +2008,21 @@ async def main():
                    f"✅ <b>Приглашение принято</b>\n{trades.THIN}\n{what}{demo_note}\n\n"
                    + onboarding_message(db, uid), onboarding_buttons(mini_url, db, uid), track=False)
 
-        # ссылка сгорела — сразу выпускаем следующую с теми же счетами, чтобы
-        # приглашать дальше можно было не заходя в настройки
-        nxt = invite_new(db, inv["owner"], wanted)
-        link = f"https://t.me/{(await bot.me()).username}?start={nxt}"
+        # одноразовая ссылка сгорела — сразу выпускаем следующую с теми же
+        # счетами. Личная остаётся прежней и продолжает работать
+        if inv.get("personal"):
+            tail = "Твоя ссылка остаётся прежней."
+        else:
+            nxt = invite_new(db, inv["owner"], wanted)
+            link = f"https://t.me/{(await bot.me()).username}?start={nxt}"
+            tail = f"Ссылка использована. Новая готова:\n<code>{link}</code>"
 
         try:    # хозяин ссылки должен знать, кто ею воспользовался
             await send(bot, inv["owner"],
                        f"🔗 <b>По твоей ссылке зашёл</b> {html.escape(str(who))}\n"
                        + (f"Получил счета:\n{html.escape(describe(added, uid))}" if added
                           else "Без счетов — только доступ к боту.")
-                       + f"\n{trades.THIN}\nСсылка использована. Новая готова:\n"
-                         f"<code>{link}</code>")
+                       + f"\n{trades.THIN}\n{tail}")
         except Exception as e:
             log.warning("не уведомил владельца ссылки: %s", e)
         return True
@@ -2779,7 +2814,7 @@ async def main():
                             inv = json.loads(raw) if raw else None
                         except ValueError:
                             continue
-                        if not inv or inv.get("uses", 0) > 0:
+                        if not inv or inv.get("uses", 0) > 0 or inv.get("personal"):
                             continue
                         created = inv.get("created")
                         if created and datetime.fromisoformat(created) < deadline:

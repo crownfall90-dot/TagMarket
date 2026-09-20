@@ -472,9 +472,12 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                                   ("DELETE","/api/accounts/123",None),
                                   ("GET","/api/admin",None),
                                   ("POST","/api/actions",{"action":"restart","login":123}),
-                                  ("POST","/api/invites",{"logins":[123]})]:
+                                  ("POST","/api/guests/1",{"action":"share","logins":[123]})]:
             r = await self.call(method,path,uid=2,json=body)
             self.assertIn(r.status,(403,404),await r.text())
+        # ссылка не несёт счетов: без своей партнёрской ссылки её и не выдают
+        r = await self.call("POST","/api/invites",uid=2,json={"logins":[123]})
+        self.assertEqual(r.status,428)
 
     async def test_revoked_user_cannot_reuse_valid_telegram_session(self):
         partner.kv_set(self.db, "left:1", "1")
@@ -623,19 +626,94 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(denied.status, 428)
         self.assertEqual(miniapp.logic.invite_list(self.db, 1), [])
         partner.kv_set(self.db, "partner_link:1", "https://exfusion.ibportal.io/auth/register?e=test-link&a=1")
-        r = await self.call("POST","/api/invites",json={"logins":[123]})
+        r = await self.call("POST","/api/invites",json={})
         self.assertEqual(r.status,200)
         token = (await r.json())["url"].split("start=")[1]
         self.assertIsNotNone(miniapp.logic.invite_get(self.db,token))
+        # ссылка одна и та же, сколько её ни запрашивай
+        again = await self.call("POST","/api/invites",json={})
+        self.assertEqual((await again.json())["url"].split("start=")[1], token)
         r = await self.call("DELETE","/api/invites/"+token,uid=2)
         self.assertEqual(r.status,404)
-        await self.call("DELETE","/api/invites/"+token)
+        # «обновить»: прежняя гаснет, вместо неё сразу новая
+        renewed = await self.call("DELETE","/api/invites/"+token)
+        fresh = (await renewed.json())["url"].split("start=")[1]
+        self.assertNotEqual(fresh, token)
         self.assertIsNone(miniapp.logic.invite_get(self.db,token))
+        self.assertIsNotNone(miniapp.logic.invite_get(self.db,fresh))
         accounts.share([123],1,2)
         accounts.share([123],1,2)
         self.assertEqual(len(accounts.load(2)),1)
         r = await self.call("POST","/api/actions",uid=2,json={"action":"restart","login":123})
         self.assertEqual(r.status,403)
+
+    async def test_personal_link_survives_use_and_stale_cleanup(self):
+        token = miniapp.logic.invite_personal(self.db, 1)
+        inv = miniapp.logic.invite_get(self.db, token)
+        self.assertTrue(inv["personal"])
+        self.assertEqual(inv["logins"], [])
+        # вошёл человек — ссылка та же и действует для следующего
+        inv["uses"] = 5
+        miniapp.logic.invite_save(self.db, token, inv)
+        self.assertEqual(miniapp.logic.invite_check(self.db, 7, token, set())[0], "ok")
+        self.assertEqual(miniapp.logic.invite_personal(self.db, 1), token)
+
+    async def test_owner_can_open_own_accounts_to_a_guest_but_not_shared_or_demo(self):
+        partner.kv_set(self.db, "guest:2", "1")
+        partner.kv_set(self.db, "guest_by:2", "1")
+        r = await self.call("POST", "/api/guests/2", json={"action": "share", "logins": [123]})
+        self.assertEqual(r.status, 200, await r.text())
+        self.assertEqual([a["login"] for a in accounts.load(2)], [123])
+        self.assertEqual(accounts.load(2)[0].get("shared_by"), "1")
+        # чужой гость и чужой счёт недоступны
+        self.assertEqual((await self.call("POST", "/api/guests/2", uid=3,
+                                          json={"action": "share", "logins": [123]})).status, 403)
+        accounts.add({**self.acc, "owner": "3", "login": 999, "name": "Other", "strategy": "Other"})
+        self.assertIn((await self.call("POST", "/api/guests/2", json={"action": "share", "logins": [999]})).status,
+                      (403, 404))
+
+    async def test_moves_hide_fee_rows_pair_reinvest_and_total_the_commission(self):
+        store.save_deals(self.tdb, 123, [
+            {"ticket": 1, "time": "2026-09-10T10:00:00", "is_balance": True, "is_closing": False,
+             "is_opening": False, "net": 4800.0, "volume": 0, "comment": "Deposit"},
+            {"ticket": 2, "time": "2026-09-11T00:00:00", "is_balance": True, "is_closing": False,
+             "is_opening": False, "net": -15.0, "volume": 0, "comment": "PF Deduction"},
+            {"ticket": 3, "time": "2026-09-12T12:00:00", "is_balance": True, "is_closing": False,
+             "is_opening": False, "net": -6.0, "volume": 0, "comment": "Adjust-6.00"},
+            {"ticket": 4, "time": "2026-09-12T12:00:00", "is_balance": True, "is_closing": False,
+             "is_opening": False, "net": 144.0, "volume": 0, "comment": "Upgrade-144.00"},
+            {"ticket": 5, "time": "2026-09-14T00:00:00", "is_balance": True, "is_closing": False,
+             "is_opening": False, "net": -5.0, "volume": 0, "comment": "PF Deduction"},
+        ])
+        r = await self.call("GET", "/api/accounts/123/report?period=all&kind=moves")
+        self.assertEqual(r.status, 200, await r.text())
+        data = await r.json()
+        kinds = {d["ticket"]: d["move"] for d in data["deals"]}
+        self.assertEqual(kinds, {4: "reinvest", 1: "deposit"})
+        self.assertEqual(data["commission_total"], 20.0)
+        self.assertEqual(data["commission_count"], 2)
+        reinvest = next(d for d in data["deals"] if d["ticket"] == 4)
+        self.assertAlmostEqual(reinvest["capital_now"] - reinvest["capital_was"], 6.0)
+        self.assertEqual(len(data["capital_series"]), 3)
+        self.assertNotIn("PF Deduction", " ".join(str(d.get("comment")) for d in data["deals"]))
+
+    async def test_site_deposits_are_listed_per_cabinet(self):
+        partner.site_move_add(self.db, "CU1", "deposit", 250.0, "USD")
+        partner.site_move_add(self.db, "CU2", "deposit", 999.0, "USD")
+        store.save_deals(self.tdb, 123, [
+            {"ticket": 1, "time": "2026-09-10T10:00:00", "is_balance": True, "is_closing": False,
+             "is_opening": False, "net": 2400.0, "volume": 0, "comment": "Deposit"}])
+        r = await self.call("GET", "/api/accounts/123/report?period=all&kind=moves")
+        moves = (await r.json())["site_moves"]
+        self.assertEqual([(m["kind"], m["amount"]) for m in moves], [("deposit", 250.0)])
+
+    async def test_pf_deduction_is_not_shown_in_the_event_feed(self):
+        partner.record_notification(self.db, 1, "trade:123:1", "withdrawals", "SONIC · Вывод",
+                                    "Плата платформы\nPF Deduction")
+        partner.record_notification(self.db, 1, "trade:123:2", "trades", "SONIC · Сделка", "+1.00 $")
+        feed = partner.notifications_for(self.db, 1)
+        self.assertEqual([i["title"] for i in feed["items"]], ["SONIC · Сделка"])
+        self.assertEqual(feed["unread"], 1)
 
     async def test_revoking_guest_preserves_their_personal_accounts(self):
         partner.kv_set(self.db, "guest:2", "1")

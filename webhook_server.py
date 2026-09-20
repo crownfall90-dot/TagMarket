@@ -127,9 +127,11 @@ def _remember_wallet_income(db, kind: str, row: dict) -> None:
     # по всему боту; берём число тем же способом (rpartition по последнему
     # пробелу — устойчивее, чем брать первое слово, если в сумме вдруг
     # окажется внутренний пробел)
-    number, _, _ = partner.money(row).rpartition(" ")
+    number, _, currency = partner.money(row).rpartition(" ")
     try:
-        partner.wallet_add(db, cabinet, float(number.replace(" ", "").replace(" ", "")))
+        amount = float(number.replace(" ", "").replace(" ", ""))
+        partner.wallet_add(db, cabinet, amount)
+        partner.site_move_add(db, cabinet, "deposit", amount, currency)
     except (TypeError, ValueError):
         log.warning("не разобрал сумму депозита для кошелька: %r", number)
 

@@ -391,7 +391,20 @@
     ]
    }
   ],
-  "invites": []
+  "link": "https://t.me/tagmarketgold_bot?start=Xk3pQ9aLm2",
+  "partner_url": "https://exfusion.ibportal.io/auth/register?e=demo&a=1",
+  "shareable": [
+   {
+    "login": 10001,
+    "name": "SONIC",
+    "cabinet": "CUDEMO1"
+   },
+   {
+    "login": 10002,
+    "name": "NEO.FX",
+    "cabinet": "CUDEMO1"
+   }
+  ]
  },
  "admin": {
   "machines": [

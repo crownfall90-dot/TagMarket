@@ -361,6 +361,43 @@ async def overview_report(request):
         "archived": bool(archived_count), "accounts": account_count, "pending_accounts": pending_count})
 
 
+CAPITAL_MOVES = ("deposit", "reinvest", "capital_out")
+
+
+def move_kind(row):
+    """Что это за операция на счёте — теми же словами, что в боте."""
+    if trades.is_perf_fee(row):
+        return "commission"
+    own = trades.own_amount(row)
+    if trades.is_profit_side(row):
+        return "profit_out" if own < 0 else "profit_in"
+    if own < 0:
+        return "capital_out"
+    return "reinvest" if "upgrade" in (row["comment"] or "").lower() else "deposit"
+
+
+def moves_list(rows):
+    """Движения средств без удержаний брокера и без половинок реинвеста.
+
+    Реинвест приходит парой строк в один момент: Adjust списывает из профита,
+    Upgrade кладёт ту же сумму в капитал. Человеку это одно событие.
+    """
+    balance = [r for r in rows if r["is_balance"] and not trades.is_perf_fee(r)]
+    upgrades = {r["time"] for r in balance if move_kind(r) == "reinvest"}
+    return [r for r in balance
+            if not ("adjust" in (r["comment"] or "").lower() and r["time"] in upgrades)]
+
+
+def capital_steps(moves):
+    """Капитал до и после каждого его изменения: пополнение, реинвест, вывод."""
+    steps = {}
+    for row in sorted((r for r in moves if move_kind(r) in CAPITAL_MOVES),
+                      key=lambda r: (r["time"], r["ticket"]))[-300:]:
+        was, became = trades.capital_around(row)
+        steps[row["ticket"]] = (was, became, row["time"])
+    return steps
+
+
 async def report(request):
     uid, _ = authorize(request)
     acc = owned(uid, request.match_info["login"])
@@ -390,8 +427,9 @@ async def report(request):
         chart[day] = chart.get(day, 0) + trades.net_of_fee(trades.mine((month["gross"] or 0) + (month["platform"] or 0)))
     offset = max(0, int(request.query.get("offset", 0)))
     kind = request.query.get("kind", "trades")
-    filtered = [r for r in rows if r["is_balance"]] if kind == "moves" else [r for r in rows if r["is_closing"]]
+    filtered = moves_list(rows) if kind == "moves" else [r for r in rows if r["is_closing"]]
     filtered.sort(key=lambda x: (x["time"], x["ticket"]), reverse=True)
+    steps = capital_steps(filtered) if kind == "moves" else {}
     page = filtered[offset:offset + 50]
     flows = (trades.fetch(min(r["time"] for r in page), logic.utcnow() + timedelta(days=1))
              if page and kind != "moves" else [])
@@ -399,8 +437,13 @@ async def report(request):
     for row in page:
         net_income = trades.own_amount(row) if row["is_balance"] else trades.net_of_fee(trades.mine(row["net"]))
         capital_then = trades.capital_at(row["time"], flows) if not row["is_balance"] else 0
-        deals.append({**row, "time": row["time"].isoformat() + "Z", "net_income": net_income,
-                      "pct_capital": round(net_income / capital_then * 100, 4) if capital_then > 0 else None})
+        item = {**row, "time": row["time"].isoformat() + "Z", "net_income": net_income,
+                "pct_capital": round(net_income / capital_then * 100, 4) if capital_then > 0 else None}
+        if row["is_balance"]:
+            item["move"] = move_kind(row)
+            if row["ticket"] in steps:
+                item["capital_was"], item["capital_now"] = steps[row["ticket"]][:2]
+        deals.append(item)
     months = [{"month": m["month"], "count": m["trades"] or 0,
                 "net": trades.net_of_fee(trades.mine((m["gross"] or 0) + (m["platform"] or 0)))} for m in trades.monthly(120)]
     for month in months:
@@ -443,7 +486,20 @@ async def report(request):
         day_totals[day] = {"count": day_count, "net": day_net,
                            "pct_capital": round(day_net / current_capital * 100, 3)
                            if current_capital > 0 else None}
-    return web.json_response({"title": title, "summary": summary, "currency": trades.currency(),
+    extra = {}
+    if kind == "moves":
+        # общая сумма удержанной комиссии брокера (30%) — одной цифрой вместо
+        # еженедельных строк PF Deduction в списке
+        fees = [abs(r["net"]) for r in rows if r["is_balance"] and trades.is_perf_fee(r)]
+        ordered = sorted(steps.values(), key=lambda v: v[2])
+        series = ([{"time": ordered[0][2].isoformat() + "Z", "capital": ordered[0][0]}] if ordered else []) + [
+            {"time": v[2].isoformat() + "Z", "capital": v[1]} for v in ordered]
+        site = (partner.site_moves(request.app["db"], acc.get("cabinet") or "", since, until)
+                if acc.get("cabinet") else [])
+        extra = {"commission_total": round(sum(fees), 2), "commission_count": len(fees),
+                 "capital_series": series,
+                 "site_moves": [{**m, "time": m["time"] + "Z"} for m in site]}
+    return web.json_response({**extra, "title": title, "summary": summary, "currency": trades.currency(),
         "deals": deals, "has_more": offset + 50 < len(filtered), "offset": offset,
         "insights": insights, "day_totals": day_totals,
         "chart": [{"day": k, "value": v} for k, v in sorted(chart.items())],
@@ -560,10 +616,13 @@ async def people(request):
                             for a in accounts.load(guest) if not a.get("demo")]}
               for guest, name in logic.guests_of(db, uid)]
     username = os.getenv("TELEGRAM_BOT_USERNAME", "tagmarketgold_bot")
-    invites = [{"token": token, "url": logic.invite_link(username, token),
-                "created": inv.get("created"), "uses": inv.get("uses", 0),
-                "logins": inv.get("logins", [])} for token, inv in logic.invite_list(db, uid)]
-    return web.json_response({"guests": guests, "invites": invites})
+    partner_url = logic.partner_link(db, uid)
+    link = logic.invite_link(username, logic.invite_personal(db, uid)) if partner_url else None
+    return web.json_response({"guests": guests, "link": link, "partner_url": partner_url,
+                              "shareable": [{"login": a["login"], "name": a.get("strategy") or a["name"],
+                                             "cabinet": a.get("cabinet")}
+                                            for a in accounts.load(uid)
+                                            if not a.get("demo") and not a.get("shared_by")]})
 
 
 async def cabinet_report(request):
@@ -580,24 +639,24 @@ async def cabinet_report(request):
 async def invite(request):
     uid, _ = authorize(request)
     db = request.app["db"]
+    username = os.getenv("TELEGRAM_BOT_USERNAME", "tagmarketgold_bot")
+    if request.method != "DELETE" and not logic.partner_link(db, uid):
+        raise web.HTTPPreconditionRequired(text="Сначала сохраните свою ссылку из раздела Partner в IB Portal")
     if request.method == "DELETE":
+        # «обновить ссылку»: прежняя перестаёт работать, входившие остаются гостями
         token = request.match_info["token"]
         inv = logic.invite_get(db, token)
         if not inv or str(inv["owner"]) != uid:
             raise web.HTTPNotFound(text="Приглашение не найдено")
-        inv["revoked"] = True
-        logic.invite_save(db, token, inv)
-        return web.json_response({"ok": True})
-    data = await request.json()
-    logins = list(dict.fromkeys(int(x) for x in data.get("logins", [])))
-    for login in logins:
-        acc = owned(uid, login)
-        if acc.get("demo") or acc.get("shared_by"):
-            raise web.HTTPForbidden(text="Делиться можно только собственными счетами")
-    if not logic.partner_link(db, uid):
-        raise web.HTTPPreconditionRequired(text="Сначала сохраните свою ссылку из раздела Partner в IB Portal")
-    token = logic.invite_new(db, uid, logins)
-    return web.json_response({"url": logic.invite_link(os.getenv("TELEGRAM_BOT_USERNAME", "tagmarketgold_bot"), token),
+        if inv.get("personal"):
+            token = logic.invite_personal(db, uid, renew=True)
+        else:
+            inv["revoked"] = True
+            logic.invite_save(db, token, inv)
+            token = logic.invite_personal(db, uid)
+    else:
+        token = logic.invite_personal(db, uid)
+    return web.json_response({"url": logic.invite_link(username, token),
                               "partner_url": logic.partner_link(db, uid)})
 
 
@@ -627,6 +686,17 @@ async def guest_action(request):
             logic.revoke_guest(db, uid, guest)
         except ValueError as error:
             raise web.HTTPConflict(text=str(error)) from error
+    elif data.get("action") == "share":
+        logins = list(dict.fromkeys(int(x) for x in data.get("logins", [])))[:50]
+        for login in logins:
+            acc = owned(uid, login)
+            if acc.get("demo") or acc.get("shared_by"):
+                raise web.HTTPForbidden(text="Делиться можно только собственными счетами")
+        try:
+            added = accounts.share(logins, uid, guest) if logins else []
+        except ValueError as error:
+            raise web.HTTPConflict(text=str(error)) from error
+        return web.json_response({"ok": True, "added": len(added)})
     elif data.get("action") == "take":
         acc = owned(uid, data["login"])
         shared = next((a for a in accounts.load(guest)
