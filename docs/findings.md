@@ -1,0 +1,289 @@
+# Red-team: найденные дефекты
+
+Проверка от 2026-09-21. Правки в исходники не вносились. Всё воспроизводилось локально на временных БД (harness как в `tests/test_miniapp.py`), без обращения к VPS и без чтения секретов.
+
+---
+
+## Критично
+
+### 1. Список счетов с паролями MT5 отдаётся любому клиенту без сессии
+`coordination.py:66-75` (`may_poll_anonymously`), `webhook_server.py:287-307` (`agent_accounts`)
+
+`may_poll_anonymously()` возвращает `True`, если `lease["session"] == LEGACY` — **без проверки хоста и без проверки, жива ли аренда**. Пока legacy-машина держит аренду, любой клиент, знающий `WEBHOOK_TOKEN` и не приславший `X-Agent-Session`, получает полный список счетов вместе с расшифрованными паролями MT5. Противоречит `docs/MINIAPP.md:110`. Отдельно: тот же `WEBHOOK_TOKEN` вшит в URL вебхуков в портале Syntellicore и ездит в query-строке, т.е. попадает в access-логи nginx и в конфигурацию стороннего сервиса.
+
+Воспроизведение:
+```
+POST /agent/sync?token=…   {"host":"A","login":123,...}    # legacy-аренда у A
+GET  /agent/accounts?token=…  -H "X-Agent-Host: чужой"
+→ 200 [{"name":…,"login":123,"password":"<пароль MT5>","server":…}]
+```
+Фикс (одна строка): в `may_poll_anonymously` убрать ветку `lease["session"] == LEGACY`, оставив `return not lease or lease["expires"] <= now`.
+
+- [ ]
+
+### 2. `/agent/sync` не валидирует `host`/`session` — отравление аренды
+`webhook_server.py:530-541`, `:573-588`
+
+`coordination.authorize(...)` вызывается **до** `_sync_payload()`, а `host`/`session` не проверяются по типу (в отличие от `/agent/claim`, `webhook_server.py:596-600`). Любой JSON-объект становится владельцем аренды.
+
+Воспроизведено:
+```
+POST /agent/sync?token=…  {"host":{"evil":[1,2]},"login":123,"balance":1,
+                           "equity":1,"currency":"USD","server":"Demo","deals":[]}
+→ 200  ; coordination.read(db) == {'host': {'evil': [1, 2]}, 'session': 'legacy', …}
+```
+Последствия: настоящая машина получает 409 на 180 с + ещё 180 с окна перехвата; в `machine_states` (`miniapp.py:779`) `host == holder` не совпадёт, и панель «Сервис» покажет «Терминал никто не опрашивает», хотя аренда занята.
+
+Фикс: прогнать `host`/`session` через ту же проверку типов, что и `agent_claim`, до вызова `coordination.authorize`.
+
+- [ ]
+
+### 3. Битое значение `polling_lease` навсегда роняет весь опрос
+`coordination.py:9-11` (`read`)
+
+`json.loads(row[0])` без `try`. Любое нечитаемое значение делает `claim/renew/permits/authorize` бросающими `JSONDecodeError`.
+
+Воспроизведено:
+```
+partner.kv_set(db, "polling_lease", "not-json")
+GET  /agent/accounts?token=… → 500
+POST /agent/sync?token=…     → 500
+GET  /api/admin              → 400 (панель «Сервис» пустеет)
+```
+Самоизлечения нет. Везде в проекте JSON из KV читается защищённо (`bot.invite_get`, `partner.site_moves`, `miniapp.bootstrap`), кроме этого места.
+
+Фикс (одна строка): `try: return json.loads(row[0]) except (TypeError, ValueError): return None`.
+
+- [ ]
+
+### 4. Неделя, начавшаяся в свёрнутом месяце, роняет весь отчёт в 422
+`miniapp.py:307-316` (`report_archive`), вызовы `miniapp.py:341` и `:410`
+
+`store.months()` фильтрует по `month >= since[:7]`, поэтому для периода, начинающегося в уже свёрнутом месяце, в выборку попадает весь тот месяц, а `report_archive` требует, чтобы месяц целиком лежал внутри периода, иначе 422. Верхний вызов (410) ничем не обёрнут — падает весь отчёт, а не только «инсайты» (там 422 ловится, `:458-461`).
+
+Воспроизведено (в базе свёрнутый прошлый месяц, «Эта неделя» начинается в понедельник прошлого месяца):
+```
+GET /api/accounts/123/report?period=week → 422 «Детали этого периода уже свёрнуты…»
+GET /api/overview/report?period=week     → 422 (то же для всего Обзора)
+```
+В первые дни каждого месяца «Сделки» и «Динамика» показывают «Не удалось открыть отчёт» у всех.
+
+Фикс: в `report_archive` не поднимать 422, а отбрасывать месяцы, вылезающие за границы (`archived = [m for m in archived if since <= start and end <= until]`).
+
+- [ ]
+
+### 5. Гостевая копия не даёт владельцу выключить опрос своего счёта
+`webhook_server.py:306`, `miniapp.py:577-587`
+
+Фильтр `a.get("enabled", True)` применяется **до** дедупликации по логину, поэтому любая включённая копия того же логина возвращает счёт в список опроса. Гость может менять `enabled` на своей копии — для `shared_by` заблокированы только `name` и `base`.
+
+Воспроизведено:
+```
+accounts.share([123], "1", "2")
+PATCH /api/accounts/123  (uid=1) {"enabled": false}   → 200
+GET   /agent/accounts?token=…            → [123]      # всё ещё опрашивается
+PATCH /api/accounts/123  (uid=2) {"enabled": true}    → 200 (гость включил обратно)
+```
+Владелец видит «На паузе», но терминал продолжает ходить в счёт и уведомления уходят гостю.
+
+Фикс: добавить `enabled` в список запрещённых для `acc.get("shared_by")` полей (рядом с `base`, `miniapp.py:594`).
+
+- [ ]
+
+---
+
+## Важно
+
+### 6. CSP запрещает инлайновые `style=` — спарклайн, скелетоны и палитра не рисуются
+`miniapp.py:966-968` (`style-src 'self'`), `web/app.js:44`, `:70`, `:144`
+
+`style-src 'self'` без `'unsafe-inline'` блокирует и атрибуты `style="…"` (CSP3: `style-src-attr` наследуется от `style-src`). В `app.js` высоты столбиков и цвета образцов передаются именно атрибутом — 5 вхождений.
+
+Воспроизведение: открыть `/app/` через сервер (не `python -m http.server`) — столбики спарклайна нулевой высоты, образцы гамм бесцветные, в консоли `Refused to apply inline style…`. `tests/ui_smoke.py` этого не ловит: он ходит на `http.server`, который CSP не шлёт.
+
+Фикс (одна строка): добавить в CSP `style-src-attr 'unsafe-inline'`.
+
+- [ ]
+
+### 7. Реинвест раздваивается, если Adjust и Upgrade разошлись на секунду
+`miniapp.py:379-388` (`moves_list`)
+
+Пара склеивается по **точному равенству** `r["time"]`. Одна секунда расхождения — и человек видит два события об одном.
+
+Воспроизведено (тикеты 902/903 с разницей 1 с против корректной пары 900/901):
+```
+[{"t":903,"move":"reinvest","net":5.0}, {"t":902,"move":"profit_out","net":-5.0},
+ {"t":901,"move":"reinvest","net":6.92}]     # 900 схлопнулся, 902 — нет
+```
+Фикс: сравнивать окно (±5 с), а не равенство.
+
+- [ ]
+
+### 8. Не-ASCII токен в `/agent/*` даёт 500 вместо 403
+`webhook_server.py:263-267` (`check_token`)
+
+`secrets.compare_digest` на строках бросает `TypeError` для не-ASCII, и ошибка не перехвачена (эти маршруты не под `/api/`).
+
+Воспроизведено: `GET /agent/accounts?token=пароль` → **HTTP 500** + трассировка в логе на каждый запрос.
+
+Фикс (одна строка): `secrets.compare_digest(q.encode(), TOKEN.encode())`.
+
+- [ ]
+
+### 9. `tests/test_miniapp.py` падает по времени суток и блокирует развёртывание
+`tests/test_miniapp.py:560-575` (строка 562 `current = datetime.utcnow()`)
+
+Тест кладёт сделку по часам UTC, а границы периода берёт `logic.period("week")` по часам брокера (`trades.clock()` = UTC+`TZ_HOURS`, по умолчанию +3). В понедельник с 00:00 до 03:00 МСК «сейчас» по UTC — ещё прошлая неделя.
+
+Воспроизведено прямо сейчас (21.09.2026, 00:05 МСК, понедельник):
+```
+python tests/test_miniapp.py
+FAIL: test_trade_insights_separate_current_and_previous_week
+AssertionError: 0 != 1        (Ran 58 tests, failures=1)
+```
+`tools/deploy_miniapp.py:55-58` запускает набор через `run(..., check=True)` → в это окно **любое развёртывание и любой откат (`tools/rollback_miniapp.py:125-129`) обрываются** на исправном коде.
+
+Фикс (одна строка): `current = trades.clock()`.
+
+- [ ]
+
+### 10. `tools/audit.py` документирован как серверный, но не входит в поставку
+`tools/deploy_miniapp.py:20-24`, `tools/rollback_miniapp.py:25-32`, `docs/AUDIT_HOWTO.md:1-14`
+
+`docs/AUDIT_HOWTO.md` и `README.md:61` говорят «на сервере… `python tools/audit.py`», но ни `FILES` деплоя, ни `FILES` отката его не содержат: на свежеразвёрнутый VPS файл не попадает, откат его не восстанавливает. То же с `docs/AUDIT_HOWTO.md`.
+
+Фикс (одна строка): добавить `"tools/audit.py", "docs/AUDIT_HOWTO.md"` в оба `FILES`.
+
+- [ ]
+
+### 11. `add_account`: `int(data["login"])` принимает `true` и дробные
+`miniapp.py:520-521`
+
+В отличие от `_sync_payload` (`webhook_server.py:475`, честная `str(login).isdigit()`), здесь `int()` молча приводит типы.
+
+Воспроизведено:
+```
+POST /api/accounts {"login": true,  …} → 201 (заведён счёт 1)
+POST /api/accounts {"login": "0123",…} → тот же счёт 123
+POST /api/accounts {"login": 123.9, …} → счёт 123
+```
+Последствие: можно занять номер чужого счёта опечаткой и получить 409 «Счёт уже подключён» на легитимной регистрации.
+
+Фикс (одна строка): `if type(data["login"]) not in (int, str) or not str(data["login"]).isdigit(): raise ValueError("login")`.
+
+- [ ]
+
+### 12. Раздел «Сделки» у пользователя без счетов висит в скелетоне вечно
+`web/app.js:239` (`loadReport` → `return null`), `:115`
+
+`currentAccount()` → `undefined`, `loadReport()` → `null`, `state.report` остаётся `null`, `state.reportError` пуст → `dealsView` бесконечно рисует `skeleton('list',4)`. Воспроизведение: новый пользователь без счетов → вкладка «Сделки».
+
+Фикс (одна строка): `if(!currentAccount())return start+empty('Счетов пока нет',…)`.
+
+- [ ]
+
+### 13. Валюта из агента не проверяется на ISO-4217 — Mini App падает целиком
+`webhook_server.py:481` (`_sync_text(currency, 16)`), `web/app.js:21`
+
+Воспроизведено: `store.save_state(..., currency="XXXXX")` → `/api/bootstrap` отдаёт `"totals": {"XXXXX": …}`; в браузере `new Intl.NumberFormat('ru-RU',{style:'currency',currency:'XXXXX'})` → `RangeError: Invalid currency code` (проверено в node). Исключение вылетает из `render()` — пустой экран.
+
+Фикс (одна строка): валидировать в `_sync_payload` — `re.fullmatch(r"[A-Za-z]{3}", state["currency"])`.
+
+- [ ]
+
+---
+
+## Мелочь
+
+### 14. Обещанные 15 секунд обновления — на деле 60, поля ответа мертвы
+`miniapp.py:255`, `web/app.js:360`, `docs/MINIAPP.md:63`
+`grep -c "refresh_seconds\|server_time" web/app.js` → `0`. Мертвы также `totals[*].kept` (`miniapp.py:241,243`) и `"active"` в `/api/admin` (`:810`).
+Фикс: `setInterval(..., (state.data?.refresh_seconds||60)*1000)`.
+- [ ]
+
+### 15. «Капитал X → Y» пропадает начиная с 7-й страницы движений
+`miniapp.py:391-398` (`[-300:]`) против `:433` (страницы по 50). На `offset >= 300` нет `capital_was/capital_now`, `web/app.js:102` молча не рисует строку.
+Фикс: `capital_steps(page)` вместо хвоста в 300.
+- [ ]
+
+### 16. Два одинаковых пополнения кабинета в одну секунду схлопываются
+`partner.py:153-166` (ключ `site_move:{cabinet}:{stamp}:{kind}:{amount:.2f}`). Воспроизведено: два `site_move_add(db,"CU1","deposit",100.0)` → одна запись в `site_moves`.
+Фикс (одна строка): добавить в ключ `uuid4().hex[:8]`.
+- [ ]
+
+### 17. `valid_partner_link` пропускает произвольный query
+`bot.py:79-83`. Принимается `https://exfusion.ibportal.io/auth/register?x="><img src=x onerror=alert(1)>` (проверено: `PUT /api/profile/partner-link` → 200), строка отдаётся гостям в `onboarding.registration_url`. XSS сейчас нет (`web/app.js:75` экранирует), но это единственная преграда; ссылка ещё уходит в `InlineKeyboardButton(url=…)`.
+Фикс: фильтровать `"<>` в query.
+- [ ]
+
+### 18. `pretty_money` не снимает узкий неразрывный пробел (U+202F)
+`partner.py:93` (только U+0020) против `webhook_server.py:132` (U+0020 **и** U+202F — сверено по кодпойнтам). Одна сумма из портала в одном месте форматируется, в другом отдаётся «как пришла».
+Фикс (одна строка): продублировать `.replace(" ", "")`.
+- [ ]
+
+### 19. `archived_before_now()` объявлен как 2-кортеж, а возвращает 4
+`trades.py:1077`. `trades.py:835` уже подставляет запасное значение из четырёх элементов.
+Фикс: `-> tuple[float, int, int, int]`.
+- [ ]
+
+### 20. «Следующая проверка через меньше минуты» висит 15 минут
+`miniapp.py:796-797`: `max(0, UPDATE_EVERY - age)`, но блокировка показывается пока `age < 1800` → при age 900…1800 всегда 0, и `web/app.js:139` врёт.
+Фикс (одна строка): `round(UPDATE_EVERY - age % UPDATE_EVERY)`.
+- [ ]
+
+### 21. Точечные ключи удаляются шаблоном LIKE, хотя есть `kv_del_exact`
+`bot.py:676`, `:702-703`, `:279-282`. `kv_del` — `DELETE … WHERE key LIKE ?`, где `_` = любой символ; ключи `guest_by:`, `guest_since:`, `guest_name:`, `term_down:` содержат `_`. Сейчас не эксплуатируется (uid — цифры), но `partner.kv_del_exact` (`partner.py:428`) заведён ровно для этого.
+- [ ]
+
+### 22. Токен вебхука сравнивается не за постоянное время
+`webhook_server.py:90` (`row.get("token") != TOKEN`) — при том что в соседнем `check_token` (`:265`) специально `secrets.compare_digest` с комментарием про утечку по времени.
+- [ ]
+
+### 23. `/status` открыт без токена
+`webhook_server.py:224-249`, снаружи `/tagmarkets/status`. Отдаёт живость бота, число счетов и время последней синхронизации.
+Фикс (одна строка): `check_token(request)` в начале.
+- [ ]
+
+### 24. `retry_after` вырождается в 1 секунду в окне собственного штрафа
+`coordination.py:36`. Проверено: `claim(...,0)` затем `claim(...,200)` → `{'granted': False, 'retry_after': 1}` (ждать реально 160 с). Агент поле игнорирует, так что сейчас безвредно.
+Фикс: `max(1, int(current["expires"] + (TTL if expired else 0) - now))`.
+- [ ]
+
+### 25. `logins` в `share` приводится `int()` без проверки типа
+`miniapp.py:690`. `{"logins":"123"}` итерируется посимвольно, `[True]` → счёт 1, `[123.9]` → счёт 123 (все три проверены). Ошибка пользователю непонятна.
+- [ ]
+
+### 26. `day_totals` для `kind=moves` считается и не используется
+`miniapp.py:474-488` против `web/app.js:106`. Плюс `pct_capital` от суммы пополнений к капиталу смысла не имеет.
+Фикс (одна строка): считать только при `kind != "moves"`.
+- [ ]
+
+### 27. Идентификаторы подставляются в атрибуты без `esc()`
+`web/app.js:54`, `:93`, `:108`, `:135`, `:292`. Значения сейчас числовые (`miniapp.py:206`), пробоя нет, но это единственные неэкранированные интерполяции в атрибуты во всём файле.
+- [ ]
+
+### 28. Список `tools/` в README устарел
+`README.md:45-47`: перечислены 7 файлов, реально 13. Не упомянуты `rollback_cli.py`, `rollback.ps1`, `run_agent.bat`, `run_agent.vbs`, `setup_console_free.ps1`, `status.ps1` — при том что `tools/rollback-miniapp.bat:5` запускает именно `rollback_cli.py`.
+- [ ]
+
+---
+
+## Проверено и устойчиво
+
+- **Подпись initData** (`miniapp.py:110-130`): подмена `hash`, срок 24 ч, будущий `auth_date` (допуск −30 с), дублирующиеся поля (`strict_parsing` + сверка длины), `user.id` строкой/нулём/отрицательным, пустой заголовок, >16 КБ — всё отвергается. `hmac.compare_digest`, секрет выводится ровно по документации Telegram.
+- **IDOR по всем ресурсам**: гость (uid 3) против чужого счёта/гостя/кабинета/админки — `GET/PATCH/DELETE /api/accounts/123` → 404, `GET/POST /api/guests/2` → 403, `GET /api/admin` → 403, `GET /api/cabinets/CU1/report` → 404. `user_id` из тела нигде не читается.
+- **`take`/`share`/`revoke`**: `take` требует `shared_by == uid` и `shared_origin != "inferred"` (`:702-708`), `share` не даёт делиться чужим/демо/расшаренным (`:693`), `revoke_guest` не трогает личные счета гостя.
+- **Приглашения**: удаление чужого токена → 404 (`:650`), `renew` гасит прежний, вошедшие остаются гостями; `invite_get` отбивает `/` и длину > 64.
+- **Раздача статики** (`:960-963`): белый список из пяти имён — `../miniapp.py` и `..%2Fminiapp.py` → 404, обхода нет.
+- **SQL**: все запросы параметризованы; f-строки только с константами (`store.py:135`, `partner.py:349`, `store.py:117`) — инъекции нет.
+- **XSS в `web/app.js`**: `esc()` применён ко всем пользовательским значениям (имена счетов и гостей, `title`/`body` уведомлений, `symbol`/`side`, `host`/`blocked`/`commit` машин, партнёрская ссылка, тексты ошибок). `broadcastPreview` (`:36`) сначала экранирует и лишь затем возвращает пять фиксированных тегов — подмена атрибутов невозможна.
+- **Санитайзер рассылки** (`:63-107`): `<script>`, `<a href>`, атрибуты вырезаются, незакрытые теги закрываются, лимит 4096 в UTF-16 единицах.
+- **Идемпотентность рассылки**: `request_id` + `fingerprint`, статусы `pending/media_sent/sent/failed` в KV; `target` любого типа (число, `null`, список, словарь) → 404.
+- **Загрузка медиа**: магические байты JPG/PNG/MP4, 10/20 МБ, `O_EXCL` + `0o600`, `unlink` в `finally`, `client_max_size=22 МБ`.
+- **Битые тела**: не-JSON → 400, массив вместо объекта → 400, `offset=abc|1e3` → 400, `custom` без `to` → 400, `from > to` → 400, `currency=US|U$D` → 400, `ids` со строкой/булевым → 400. Ни одного 500.
+- **Аренда опроса**: фенсинг по `(host, session)` работает — вернувшийся primary не вытесняет живой резерв, протухшая сессия не продлевает, heartbeat не продлевает, окно 180 с соблюдается.
+- **Ограничение частоты** (`:144-152`): 121-й запрос за минуту → 429. Вытеснение LRU счётчик сбрасывает, но нужно 4096 **подписанных** пользователей — непрактично.
+- **Пароли MT5** не попадают ни в один ответ `/api/*`: `public_account` (`:200-216`) отдаёт фиксированный набор ключей.
+- **`tools/rollback_miniapp.py:39-44`**: `layout()` понимает обе раскладки — новую (`tests/`, `docs/`) и дореформенную (`tools/selfcheck.py`, `MINIAPP.md` в корне); `compatible()` отсекает версии без шифрования паролей.
+- **`FILES` деплоя**: все 24 имени существуют в репозитории (сверено); архив принимается только при точном совпадении состава.
+- **`node --check web/app.js`** — без ошибок; функций, вызываемых но не определённых, нет (`networkView`, `sonicGuide`, `archive` объявлены через `function` и поднимаются).

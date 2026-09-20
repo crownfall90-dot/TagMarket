@@ -559,7 +559,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_trade_insights_separate_current_and_previous_week(self):
         previous = miniapp.logic.period("lastweek")[1] + timedelta(days=1)
-        current = datetime.utcnow()
+        current = trades.clock()  # часы брокера, как и period() — иначе тест плывёт у границы недели
         deals = [{"ticket": index, "time": moment, "symbol": "XAUUSD", "side": "buy",
                   "net": amount, "profit": amount, "swap": 0, "commission": 0,
                   "volume": .1, "is_closing": True, "is_opening": False,
@@ -608,6 +608,20 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         data = await report.json()
         self.assertEqual(data["accounts"], 0)
         self.assertEqual(data["summary"]["net_income"], 0)
+
+    async def test_week_report_survives_archived_month_at_its_start(self):
+        # понедельник этой недели может лежать в уже свёрнутом (архивном) месяце —
+        # report_archive не должен ронять весь отчёт 422, а просто не учитывать
+        # архивный месяц, если он не укладывается в запрошенный период целиком
+        today = trades.clock().date()
+        month = (today.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
+        self.tdb.execute("INSERT INTO months (login, month, trades, gross, platform, wins, losses, growth) "
+                         "VALUES (123, ?, 3, 30, -9, 2, 1, 1.0)", (month,))
+        self.tdb.commit()
+        r = await self.call("GET", "/api/accounts/123/report?period=week")
+        self.assertEqual(r.status, 200, await r.text())
+        r = await self.call("GET", "/api/overview/report?period=week&currency=USD")
+        self.assertEqual(r.status, 200, await r.text())
 
     async def test_all_time_report_accepts_nullable_archive_counts(self):
         self.tdb.execute("INSERT INTO months (login, month, trades, gross, platform, wins, losses, growth) "
@@ -758,14 +772,14 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(partner.kv_get(self.db, "guest_by:2"), "1")
 
     async def test_fenced_sync_does_not_mutate_data(self):
-        coordination.claim(self.db,"main","session-a","primary")
+        coordination.claim(self.db,"main","session-aaaaaaaaaaaaaaaa","primary")
         r = await self.client.post("/agent/sync",headers={"X-Token":"agent-test"},
-                                   json={"login":123,"balance":0,"host":"reserve","session":"session-b"})
+                                   json={"login":123,"balance":0,"host":"reserve","session":"session-bbbbbbbbbbbbbbbb"})
         self.assertEqual(r.status,409)
         self.assertEqual(store.get_state(self.tdb,123)["balance"],2400)
 
     async def test_sync_rejects_entire_invalid_packet_without_acking_command(self):
-        coordination.claim(self.db, "main", "session-a", "primary")
+        coordination.claim(self.db, "main", "session-aaaaaaaaaaaaaaaa", "primary")
         store.set_command(self.tdb, 123, "restart_terminal")
         deal = {"ticket": 701, "time": "2026-09-17T09:00:00", "symbol": "XAUUSD",
                 "side": "BUY", "volume": .1, "price": 3000, "profit": 12,
@@ -773,7 +787,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                 "is_closing": True, "is_opening": False, "comment": ""}
         packet = {"login":123, "balance":2500, "equity":2500, "currency":"USD",
                   "server":"Demo", "capital_hist":100, "deals":[deal],
-                  "command_done":True, "host":"main", "session":"session-a"}
+                  "command_done":True, "host":"main", "session":"session-aaaaaaaaaaaaaaaa"}
         for broken in ({**deal, "ticket":None}, {**deal, "ticket":702, "net":"NaN"},
                        {**deal, "ticket":702, "time":"bad"},
                        {**deal, "ticket":702, "is_closing":True, "is_opening":True}):
@@ -792,7 +806,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(store.get_command(self.tdb,123))
 
     async def test_sync_rolls_back_state_and_ack_if_database_insert_fails(self):
-        coordination.claim(self.db, "main", "session-a", "primary")
+        coordination.claim(self.db, "main", "session-aaaaaaaaaaaaaaaa", "primary")
         store.set_command(self.tdb, 123, "restart_terminal")
         self.tdb.execute("CREATE TRIGGER reject_sync BEFORE INSERT ON deals "
                          "BEGIN SELECT RAISE(ABORT, 'test insert failure'); END")
@@ -804,22 +818,22 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         r = await self.client.post("/agent/sync", headers={"X-Token":"agent-test"},
             json={"login":123,"balance":2600,"equity":2600,"currency":"USD",
                   "server":"Demo","deals":[deal],"command_done":True,
-                  "host":"main","session":"session-a"})
+                  "host":"main","session":"session-aaaaaaaaaaaaaaaa"})
         self.assertEqual(r.status, 503)
         self.assertEqual(store.get_state(self.tdb,123)["balance"], 2400)
         self.assertEqual(store.last_ticket(self.tdb,123), 0)
         self.assertEqual(store.get_command(self.tdb,123), "restart_terminal")
 
     async def test_legacy_and_non_owner_agents_cannot_read_polling_work(self):
-        coordination.claim(self.db,"main","session-a","primary")
+        coordination.claim(self.db,"main","session-aaaaaaaaaaaaaaaa","primary")
         r = await self.client.get("/agent/accounts",headers={"X-Token":"agent-test"})
         self.assertEqual(await r.json(),[])
         r = await self.client.get("/agent/accounts",headers={"X-Token":"agent-test",
-            "X-Agent-Host":"main","X-Agent-Session":"session-a"})
+            "X-Agent-Host":"main","X-Agent-Session":"session-aaaaaaaaaaaaaaaa"})
         self.assertEqual(len(await r.json()),1)
 
     async def test_role_change_cannot_override_elected_owner(self):
-        coordination.claim(self.db,"main","session-a","primary")
+        coordination.claim(self.db,"main","session-aaaaaaaaaaaaaaaa","primary")
         partner.kv_set(self.db,"active_machine","main")
         for host, session in (("reserve",None),("main","old-session")):
             r = await self.client.post("/agent/role_change",headers={"X-Token":"agent-test"},
@@ -827,14 +841,21 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(r.status,409)
             self.assertEqual(partner.kv_get(self.db,"active_machine"),"main")
         r = await self.client.post("/agent/role_change",headers={"X-Token":"agent-test"},
-            json={"host":"main","session":"session-a","became":"active"})
+            json={"host":"main","session":"session-aaaaaaaaaaaaaaaa","became":"active"})
         self.assertEqual(r.status,200)
 
-    async def test_enabled_guest_copy_keeps_physical_account_in_polling_list(self):
+    async def test_owner_pause_stops_polling_even_with_enabled_guest_copy(self):
+        # владелец решает, опрашивать ли физический логин — включённая
+        # гостевая копия того же счёта не должна держать опрос вопреки паузе
         accounts.share([123],1,2)
         accounts.update("SONIC",1,enabled=False)
         r = await self.client.get("/agent/accounts",headers={"X-Token":"agent-test"})
-        self.assertEqual(len(await r.json()),1)
+        self.assertEqual(len(await r.json()),0)
+
+    async def test_guest_cannot_toggle_shared_account_polling(self):
+        accounts.share([123],1,2)
+        r = await self.call("PATCH", "/api/accounts/123", uid=2, json={"enabled": False})
+        self.assertEqual(r.status, 403, await r.text())
 
     async def test_paused_account_stays_in_personal_capital(self):
         before = await (await self.call("GET", "/api/bootstrap")).json()

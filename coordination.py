@@ -8,7 +8,12 @@ TTL = 180
 
 def read(db):
     row = db.execute("SELECT value FROM kv WHERE key=?", (KEY,)).fetchone()
-    return json.loads(row[0]) if row else None
+    if not row:
+        return None
+    try:
+        return json.loads(row[0])
+    except (TypeError, ValueError):
+        return None
 
 
 def claim(db, host, session, role, now=None):
@@ -72,7 +77,11 @@ def may_poll_anonymously(db, now=None):
     """
     lease = read(db)
     now = time.time() if now is None else now
-    return not lease or lease["expires"] <= now or lease["session"] == LEGACY
+    # session==LEGACY тоже "без сессии" по факту — но у неё уже есть владелец
+    # (host), а сюда попадают клиенты без единого опознавательного признака.
+    # Читать счета целиком с паролями MT5 может только тот, у кого аренды нет
+    # вовсе или она истекла — не "любой, кто узнал WEBHOOK_TOKEN".
+    return not lease or lease["expires"] <= now
 
 
 def authorize(db, host, session, now=None):

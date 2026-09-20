@@ -306,14 +306,17 @@ def report_period(query):
 
 def report_archive(since, until):
     archived = trades.archive(since, until)
+    kept = []
     for month in archived:
         start = datetime.fromisoformat(month["month"] + "-01")
         end = start.replace(day=calendar.monthrange(start.year, start.month)[1],
                             hour=23, minute=59, second=59, microsecond=999999)
-        if start < since or end > until:
-            raise web.HTTPUnprocessableEntity(
-                text="Детали этого периода уже свёрнуты. Выберите весь месяц или историю по месяцам")
-    return archived
+        # период (например, "эта неделя") может начинаться внутри уже свёрнутого
+        # месяца — сам месяц в выборку не попадает целиком, отбрасываем его тут,
+        # а не роняем весь отчёт: клетки внутри свёрнутого месяца просто не в него
+        if start >= since and end <= until:
+            kept.append(month)
+    return kept
 
 
 async def overview_report(request):
@@ -582,6 +585,8 @@ def _change_account(uid, login, method, data, db=None):
             bounded_text(data, "name", 48, True)
         changes = {}
         if "enabled" in data:
+            if acc.get("shared_by"):
+                raise web.HTTPForbidden(text="Опрос этого счёта включает и выключает только владелец")
             if type(data["enabled"]) is not bool:
                 raise ValueError("enabled")
             changes["enabled"] = data["enabled"]

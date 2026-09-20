@@ -303,7 +303,11 @@ async def agent_accounts(request):
         # владельцев (свой счёт + расшаренная гостевая копия через share()).
         # by_owner=True тут не спас бы главный сценарий: гостевая копия
         # именно у ДРУГОГО owner'а всё равно осталась бы отдельной строкой
-        for a in accounts.dedup([a for a in accounts.load() if a.get("enabled", True)], by_owner=False)
+        # владелец решает, опрашивать ли счёт — его запись должна победить
+        # дедуп раньше расшаренной гостевой копии того же логина, иначе
+        # гость держит копию enabled и опрос продолжается вопреки паузе владельца
+        for a in accounts.dedup(sorted((a for a in accounts.load()), key=lambda a: bool(a.get("shared_by"))), by_owner=False)
+        if a.get("enabled", True)
     ])
 
 
@@ -537,7 +541,11 @@ async def agent_sync(request):
     except (ValueError, TypeError, KeyError, OverflowError) as e:
         raise web.HTTPBadRequest(text=f"bad payload: {e}")
     db = request.app["trades"]
-    if not coordination.authorize(request.app["db"], data.get("host"), data.get("session")):
+    host, session = data.get("host"), data.get("session")
+    if (not isinstance(host, str) or not 1 <= len(host) <= 128
+            or (session is not None and (not isinstance(session, str) or not 16 <= len(session) <= 128))):
+        raise web.HTTPBadRequest(text="invalid agent identity")
+    if not coordination.authorize(request.app["db"], host, session):
         raise web.HTTPConflict(text="polling lease lost")
     try:
         login, state, deals, command_done = _sync_payload(data)
