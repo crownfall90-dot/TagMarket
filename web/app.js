@@ -271,7 +271,7 @@ async function navigate(){
  await refresh();
  tg?.BackButton?.[state.view==='account'?'show':'hide']();
 }
-const SCHEMES=[['lime','Графит и лайм','dark','#111416',['#111416','#d0f29b','#b8a6e9']],['sapphire','Ночной сапфир','dark','#0e1420',['#0e1420','#8fc4ff','#c3b5ff']],['light','Светлая','light','#f4f5f0',['#f4f5f0','#537831','#79639e']]];
+const SCHEMES=[['lime','Графит и лайм','dark','#111416',['#111416','#d0f29b','#b8a6e9']],['sapphire','Ночной сапфир','dark','#0e1420',['#0e1420','#8fc4ff','#c3b5ff']],['light','Светлая','light','#dcdfd5',['#dcdfd5','#48692b','#79639e']]];
 function currentScheme(){return document.documentElement.dataset.scheme||'lime';}
 function setScheme(id,persist=true){const sc=SCHEMES.find(x=>x[0]===id)||SCHEMES[0],root=document.documentElement;root.dataset.scheme=sc[0];root.dataset.theme=sc[2];try{if(persist)localStorage.setItem('tag-scheme',sc[0]);}catch{}document.querySelector('meta[name="theme-color"]').content=sc[3];try{tg?.setHeaderColor(sc[3]);tg?.setBackgroundColor(sc[3]);}catch{}if(state.data&&state.view==='settings')render();}
 function setTheme(theme,persist=true){setScheme(theme==='light'?'light':'lime',persist);}
