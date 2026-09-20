@@ -59,6 +59,23 @@ function sonicStrategyCard(){
  const heading=`<div class="strategy-card-head"><div><span class="eyebrow">НАША СТРАТЕГИЯ</span><h3>SONIC</h3></div><span class="strategy-chip">XAUUSD · золото</span></div>`;
  return `<section class="panel strategy-card strategy-full">${heading}<div class="strategy-facts"><span><b>1–2</b><small>сделки в день</small></span><span><b>0,2–0,5%</b><small>депозита на вход</small></span><span><b>30%</b><small>комиссия с прибыли</small></span></div><div class="risk-line">${icon('shield')}<p>Торговый баланс с плечом можно потерять полностью. Прошлые результаты не гарантируют будущих.</p></div><div class="strategy-links"><a class="text-link" href="https://www.tagmarkets.com/amplify/" target="_blank" rel="noopener">Условия Amplify ${icon('arrow')}</a>${account?`<a class="text-link" href="#account/${account.login}">Мой SONIC ${icon('arrow')}</a>`:''}</div></section>`;
 }
+const STRATEGY_FAQ=[
+ ['Как это работает',[
+  ['Что именно делает SONIC','Алгоритм торгует золотом (XAUUSD) на счёте Tag Markets Amplify: 1–2 сделки в день, вход 0,2–0,5% депозита за раз. Вы не торгуете сами — только пополняете счёт и следите за результатом здесь.'],
+  ['Почему именно золото','Золото — самый ликвидный и предсказуемый по волатильности инструмент, что позволяет держать риск на сделку небольшим и стабильным.'],
+  ['Что такое Amplify ×24','Брокер усиливает ваш торговый баланс плечом ×24: капитал = баланс счёта ÷ 24. Прибыль и убыток считаются от полного торгового баланса, поэтому итог для вашего капитала заметнее.'],
+ ]],
+ ['Деньги и комиссия',[
+  ['Где физически мои деньги','На вашем личном счёте MT5 у брокера Tag Markets (T.M. Financials Ltd) — не у нас и не в общем пуле. Вы можете запросить вывод в любой момент через кабинет брокера.'],
+  ['Какая комиссия и как она списывается','30% с прибыли, только когда стратегия заработала — без прибыли комиссии нет. Списывается автоматически на стороне брокера, в приложении видна отдельной строкой в «Движениях средств».'],
+  ['Можно ли потерять деньги','Да — торговый баланс с плечом можно потерять полностью, это не гарантированный доход. Прошлые результаты не обещают будущих.'],
+ ]],
+ ['Как начать',[
+  ['Что нужно, чтобы подключиться','Зарегистрироваться в партнёрском портале по вашей ссылке (раздел «Гости»), создать счёт Tag Markets, пополнить его и добавить сюда инвесторский пароль MT5 — дальше данные обновляются сами.'],
+  ['Можно попробовать без своих денег','Да, в приложении есть демо-счёт «Копитрейдинг 45k» — он показывает реальную динамику стратегии, но не входит в ваш капитал.'],
+ ]],
+];
+function strategyFaq(){return `<section class="panel strategy-faq"><div class="panel-head"><h2>Частые вопросы</h2></div>${STRATEGY_FAQ.map(([group,items])=>`<div class="faq-group"><span class="eyebrow">${esc(group)}</span>${items.map(([q,a])=>`<details class="faq-item"><summary>${esc(q)}${icon('chevron')}</summary><p>${esc(a)}</p></details>`).join('')}</div>`).join('')}</section>`;}
 function brokerCard(){return `<section class="panel license-card broker-card"><div class="license-card-head"><span class="license-icon">${icon('shield')}</span><div><span class="eyebrow">БРОКЕР И СЧЁТ</span><h2>Tag Markets</h2></div></div><p>Tag Markets — торговое название «T.M. Financials Ltd» (регистрационный номер C185265). Регулируется Комиссией по финансовым услугам (FSC) как инвестиционный дилер, лицензия № GB21026474.</p><div class="license-box"><p>TM FINANCIALS SA (PTY) LTD (рег. № 2024/508189/07) — авторизованный поставщик финансовых услуг (FSP № 55237), регулируется Управлением по финансовому поведению (FSCA). Оказывает только маркетинговые услуги. Торговые счета ведёт, а торговые услуги и ликвидность предоставляет T.M. Financials Ltd.</p></div><div class="license-actions"><a class="button secondary" href="https://www.tagmarkets.com/" target="_blank" rel="noopener">Сайт брокера ${icon('arrow')}</a></div></section>`;}
 function sonicGuide(){return brokerCard();}
 function compactStrategy(a){const name=a.strategy||a.name;const sonic=/sonic|sonik/i.test(name),neo=/neo/i.test(name);return `<section class="panel detail-strategy"><span class="eyebrow">СТРАТЕГИЯ СЧЁТА</span><div><h2>${esc(name)}</h2><span class="badge">${sonic?'XAUUSD':neo?'NEO':'MT5'}</span></div></section>`;}
@@ -83,7 +100,7 @@ function overview(){const d=state.data, curr=state.currency||Object.keys(d.total
  ${Object.keys(d.totals).length>1?`<div class="filterbar"><label class="field no-margin">Валюта сводки<select id="currency">${Object.keys(d.totals).map(c=>`<option ${curr===c?'selected':''}>${esc(c)}</option>`).join('')}</select></label></div>`:''}
   ${stats([['Результат за месяц',resultPair(t.month,curr,t.capital>0?t.month/t.capital*100:null),'',signedClass(t.month),'up']])}
   <section class="panel chart-panel dynamics"><div class="panel-head"><h2>Динамика</h2>${periodTabs(['today','week','month','all'])}</div>${dynamics}</section></div>
- <aside class="side-stack">${sonicStrategyCard()}
+ <aside class="side-stack">${sonicStrategyCard()}${strategyFaq()}
  ${demo?`<section class="panel demo-panel"><span class="eyebrow">Публичная стратегия</span><h3>Копитрейдинг 45k</h3><div class="demo-number">${demo.totals?money(demo.totals.now,demo.totals.cur):'—'}</div><span class="badge demo">Не входит в ваш капитал</span><a class="button" href="#account/${demo.login}">Открыть ${icon('arrow')}</a></section>`:''}</aside></div>`;
 }
 function balanceCard(personal){const totals=state.data.totals||{},list=Object.keys(totals);if(!list.length)return '';return `<section class="panel balance-card">${list.map(c=>{const x=totals[c];return `<div class="balance-row"><div><span class="eyebrow">ОБЩИЙ БАЛАНС · ${esc(c)}</span><strong>${money(x.capital,c)}</strong><small>${countLabel(personal.length,['счёт','счёта','счетов'])}</small></div><div class="balance-side"><small>За месяц</small>${resultPair(x.month,c,x.capital>0?x.month/x.capital*100:null)}</div></div>`;}).join('')}</section>`;}

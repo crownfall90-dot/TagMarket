@@ -267,5 +267,5 @@ dialog.info-only #dialog-body{padding-bottom:22px}
 .risk-line{display:flex;gap:11px;align-items:flex-start;padding:12px 14px;border-radius:12px;background:rgb(228 191 122 / .08);border:1px solid rgb(228 191 122 / .22)}
 .risk-line svg{width:18px;height:18px;flex:none;color:#e4bf7a;margin-top:1px}
 .risk-line p{margin:0;font-size:12px;line-height:1.5;color:var(--text)}
-.strategy-links{display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px 16px;margin-top:12px}
+.strategy-links{display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px 16px;margin-top:12px}.strategy-faq{margin-top:20px}.faq-group{margin-top:18px}.faq-group:first-of-type{margin-top:16px}.faq-group>.eyebrow{color:var(--muted)}.faq-item{border-bottom:1px solid var(--line);padding:13px 0}.faq-item:last-child{border-bottom:0}.faq-item summary{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12px;font-weight:550;cursor:pointer;list-style:none}.faq-item summary::-webkit-details-marker{display:none}.faq-item summary svg{width:14px;height:14px;color:var(--muted);flex-shrink:0;transition:transform .15s}.faq-item[open] summary svg{transform:rotate(90deg)}.faq-item p{font-size:11px;color:var(--muted);margin-top:10px;line-height:1.6}
 @media(max-width:740px){.balance-row strong{font-size:26px}.extremes{gap:8px}.scheme b{font-size:10px}}
