@@ -635,6 +635,14 @@ def candles(since: datetime, until: datetime) -> list[dict]:
                                since - timedelta(minutes=15), until)
     if raw is None:
         raise RuntimeError(f"свечи недоступны: {mt5.last_error()}")
+    if len(raw) == 0:
+        # copy_rates_range может вернуть пусто сразу после symbol_select,
+        # пока терминал не догрузил историю по символу с сервера брокера —
+        # copy_rates_from_pos тянет последние бары независимо от диапазона
+        # дат и обычно доступна раньше (не требует докачки конкретного окна)
+        raw = mt5.copy_rates_from_pos(CHART_SYMBOL, mt5.TIMEFRAME_M15, 0, 200)
+        if raw is None:
+            raise RuntimeError(f"свечи недоступны: {mt5.last_error()}")
     return [{"time": datetime.fromtimestamp(int(c["time"]), timezone.utc).replace(tzinfo=None).isoformat(),
              "open": float(c["open"]), "high": float(c["high"]),
              "low": float(c["low"]), "close": float(c["close"])}

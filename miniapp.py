@@ -992,7 +992,7 @@ async def static(request):
     response = web.FileResponse(STATIC / name)
     response.headers["Cache-Control"] = "no-cache"
     response.headers["Content-Security-Policy"] = ("default-src 'self'; script-src 'self' https://telegram.org; "
-        "style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; "
+        "style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; "
         "connect-src 'self'; base-uri 'none'; object-src 'none'")
     return response
 

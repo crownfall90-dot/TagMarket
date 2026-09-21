@@ -21,7 +21,8 @@ FILES = {"accounts.py", "account_lock.py", "agent.py", "bot.py", "coordination.p
          "ibportal.py", "miniapp.py", "partner.py", "store.py", "trades.py", "webhook_server.py",
          "requirements.txt", "README.md", "docs/MINIAPP.md", "docs/todo.md", "web/index.html",
          "web/app.js", "web/style.css", "web/brand.svg", "web/preview.json", "tests/selfcheck.py",
-         "tests/test_miniapp.py", "tools/deploy_miniapp.py", "tools/rollback_miniapp.py"}
+         "tests/test_miniapp.py", "tools/deploy_miniapp.py", "tools/rollback_miniapp.py",
+         "tools/audit.py", "docs/AUDIT_HOWTO.md"}
 SERVICES = ["tagmarkets-bot", "tagmarkets-webhook"]
 
 

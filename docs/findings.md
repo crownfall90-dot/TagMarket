@@ -1,6 +1,8 @@
 # Red-team: найденные дефекты
 
-Проверка от 2026-09-21. Правки в исходники не вносились. Всё воспроизводилось локально на временных БД (harness как в `tests/test_miniapp.py`), без обращения к VPS и без чтения секретов.
+Проверка от 2026-09-21. Правки в исходники не вносились на момент проверки. Всё воспроизводилось локально на временных БД (harness как в `tests/test_miniapp.py`), без обращения к VPS и без чтения секретов.
+
+**Обновление 2026-09-21 (повторная сверка с HEAD).** `cf231c2` (тот же коммит, что добавил этот файл) уже закрыл №1, №2, №3, №5, №9 — отмечены `[x]` ниже, чекбоксы были не проставлены при коммите. Отдельно в этот проход закрыты №6, №8, №10, №23 (правки внесены). Остальные пункты перепроверены построчно на HEAD `08118ae` и подтверждены живыми без изменений.
 
 ---
 
@@ -19,7 +21,7 @@ GET  /agent/accounts?token=…  -H "X-Agent-Host: чужой"
 ```
 Фикс (одна строка): в `may_poll_anonymously` убрать ветку `lease["session"] == LEGACY`, оставив `return not lease or lease["expires"] <= now`.
 
-- [ ]
+- [x] Исправлено в `cf231c2` — `may_poll_anonymously` теперь ровно `return not lease or lease["expires"] <= now`.
 
 ### 2. `/agent/sync` не валидирует `host`/`session` — отравление аренды
 `webhook_server.py:530-541`, `:573-588`
@@ -36,7 +38,7 @@ POST /agent/sync?token=…  {"host":{"evil":[1,2]},"login":123,"balance":1,
 
 Фикс: прогнать `host`/`session` через ту же проверку типов, что и `agent_claim`, до вызова `coordination.authorize`.
 
-- [ ]
+- [x] Исправлено в `cf231c2` — `agent_sync` проверяет тип/длину `host`/`session` до `coordination.authorize`.
 
 ### 3. Битое значение `polling_lease` навсегда роняет весь опрос
 `coordination.py:9-11` (`read`)
@@ -54,7 +56,7 @@ GET  /api/admin              → 400 (панель «Сервис» пустее
 
 Фикс (одна строка): `try: return json.loads(row[0]) except (TypeError, ValueError): return None`.
 
-- [ ]
+- [x] Исправлено в `cf231c2` — `coordination.read` оборачивает `json.loads` в `try/except (TypeError, ValueError)`.
 
 ### 4. Неделя, начавшаяся в свёрнутом месяце, роняет весь отчёт в 422
 `miniapp.py:307-316` (`report_archive`), вызовы `miniapp.py:341` и `:410`
@@ -70,7 +72,7 @@ GET /api/overview/report?period=week     → 422 (то же для всего О
 
 Фикс: в `report_archive` не поднимать 422, а отбрасывать месяцы, вылезающие за границы (`archived = [m for m in archived if since <= start and end <= until]`).
 
-- [ ]
+- [x] Исправлено в `cf231c2`.
 
 ### 5. Гостевая копия не даёт владельцу выключить опрос своего счёта
 `webhook_server.py:306`, `miniapp.py:577-587`
@@ -88,7 +90,7 @@ PATCH /api/accounts/123  (uid=2) {"enabled": true}    → 200 (гость вкл
 
 Фикс: добавить `enabled` в список запрещённых для `acc.get("shared_by")` полей (рядом с `base`, `miniapp.py:594`).
 
-- [ ]
+- [x] Исправлено в `cf231c2` — гость не может переключать `enabled` на расшаренной копии.
 
 ---
 
@@ -103,7 +105,7 @@ PATCH /api/accounts/123  (uid=2) {"enabled": true}    → 200 (гость вкл
 
 Фикс (одна строка): добавить в CSP `style-src-attr 'unsafe-inline'`.
 
-- [ ]
+- [x] Исправлено — `style-src-attr 'unsafe-inline'` добавлен в CSP (`miniapp.py`).
 
 ### 7. Реинвест раздваивается, если Adjust и Upgrade разошлись на секунду
 `miniapp.py:379-388` (`moves_list`)
@@ -117,7 +119,7 @@ PATCH /api/accounts/123  (uid=2) {"enabled": true}    → 200 (гость вкл
 ```
 Фикс: сравнивать окно (±5 с), а не равенство.
 
-- [ ]
+- [ ] Проверено на HEAD `08118ae` — всё ещё точное равенство `r["time"] in upgrades`, живо.
 
 ### 8. Не-ASCII токен в `/agent/*` даёт 500 вместо 403
 `webhook_server.py:263-267` (`check_token`)
@@ -128,7 +130,7 @@ PATCH /api/accounts/123  (uid=2) {"enabled": true}    → 200 (гость вкл
 
 Фикс (одна строка): `secrets.compare_digest(q.encode(), TOKEN.encode())`.
 
-- [ ]
+- [x] Исправлено — `check_token` оборачивает оба `compare_digest` в `try/except TypeError`, не-ASCII токен теперь даёт 403, не 500.
 
 ### 9. `tests/test_miniapp.py` падает по времени суток и блокирует развёртывание
 `tests/test_miniapp.py:560-575` (строка 562 `current = datetime.utcnow()`)
@@ -145,7 +147,7 @@ AssertionError: 0 != 1        (Ran 58 tests, failures=1)
 
 Фикс (одна строка): `current = trades.clock()`.
 
-- [ ]
+- [x] Исправлено в `cf231c2` — тест использует `trades.clock()` в проверенных местах.
 
 ### 10. `tools/audit.py` документирован как серверный, но не входит в поставку
 `tools/deploy_miniapp.py:20-24`, `tools/rollback_miniapp.py:25-32`, `docs/AUDIT_HOWTO.md:1-14`
@@ -154,7 +156,7 @@ AssertionError: 0 != 1        (Ran 58 tests, failures=1)
 
 Фикс (одна строка): добавить `"tools/audit.py", "docs/AUDIT_HOWTO.md"` в оба `FILES`.
 
-- [ ]
+- [x] Исправлено — добавлены в `deploy_miniapp.py:FILES`; в `rollback_miniapp.py` — как `OPTIONAL_FILES` (копируются если есть, но не входят в проверку совместимости `compatible()`, иначе все существующие бэкапы на VPS до сегодня стали бы недоступны для отката).
 
 ### 11. `add_account`: `int(data["login"])` принимает `true` и дробные
 `miniapp.py:520-521`
@@ -242,7 +244,7 @@ POST /api/accounts {"login": 123.9, …} → счёт 123
 ### 23. `/status` открыт без токена
 `webhook_server.py:224-249`, снаружи `/tagmarkets/status`. Отдаёт живость бота, число счетов и время последней синхронизации.
 Фикс (одна строка): `check_token(request)` в начале.
-- [ ]
+- [x] Исправлено — `check_token(request)` добавлен первой строкой в `status()`. Проверено: `/status` нигде не вызывается внешними скриптами (`tools/*.ps1`, `*.bat`) без токена, контракт не ломается.
 
 ### 24. `retry_after` вырождается в 1 секунду в окне собственного штрафа
 `coordination.py:36`. Проверено: `claim(...,0)` затем `claim(...,200)` → `{'granted': False, 'retry_after': 1}` (ждать реально 160 с). Агент поле игнорирует, так что сейчас безвредно.

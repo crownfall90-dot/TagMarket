@@ -224,6 +224,7 @@ async def health(request):
 async def status(request):
     """Состояние бота и синхронизации — читается по HTTPS, поэтому работает
     даже когда SSH до сервера не отвечает."""
+    check_token(request)
     db = request.app["db"]
     beat = partner.kv_get(db, "bot_heartbeat")
     alive, ago = False, None
@@ -262,7 +263,11 @@ def check_token(request) -> None:
     # раньше расходятся строки — теоретическая утечка токена по времени ответа
     q = request.query.get("token") or ""
     h = request.headers.get("X-Token") or ""
-    if not TOKEN or not (secrets.compare_digest(q, TOKEN) or secrets.compare_digest(h, TOKEN)):
+    try:
+        ok = not TOKEN or secrets.compare_digest(q, TOKEN) or secrets.compare_digest(h, TOKEN)
+    except TypeError:  # compare_digest: не-ASCII строки сравнивать не умеет
+        ok = False
+    if not ok:
         log.warning("агент: неверный токен от %s", request.remote)
         raise web.HTTPForbidden(text="bad token")
 

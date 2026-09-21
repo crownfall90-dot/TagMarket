@@ -803,6 +803,11 @@ def push_candles(since: datetime, until: datetime) -> int:
     """
     rows = trades.candles(since, until)
     if not rows:
+        # тихий возврат [] (без исключения) — терминал ещё не отдал историю
+        # по символу или CHART_SYMBOL не совпадает с тикером у брокера;
+        # логируем явно, иначе это неотличимо от "всё в порядке, просто рано"
+        log.warning("свечи %s: терминал вернул пустой список за %s..%s",
+                    trades.CHART_SYMBOL, since, until)
         return 0
     def _do():
         r = requests.post(f"{SERVER}/agent/candles", json={"candles": rows},

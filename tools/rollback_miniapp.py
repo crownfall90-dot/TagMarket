@@ -30,6 +30,9 @@ FILES = (
     "web/brand.svg", "web/preview.json", "tests/selfcheck.py",
     "tests/test_miniapp.py", "tools/deploy_miniapp.py",
 )
+# Копируются, если есть в снимке, но не требуются для совместимости — старые
+# бэкапы без них всё ещё годны для отката (в отличие от FILES).
+OPTIONAL_FILES = ("tools/audit.py", "docs/AUDIT_HOWTO.md")
 # Раскладка до переноса тестов и документов в tests/ и docs/: старые копии остаются пригодными.
 OLD_MOVED = {"docs/MINIAPP.md": "MINIAPP.md", "docs/todo.md": "todo.md",
              "tests/selfcheck.py": "tools/selfcheck.py",
@@ -40,6 +43,8 @@ def layout(path: Path) -> dict[str, str]:
     """Имя файла в текущей раскладке -> где он лежит в этой копии."""
     for names in ({n: n for n in FILES}, {n: OLD_MOVED.get(n, n) for n in FILES}):
         if all((path / old).is_file() and not (path / old).is_symlink() for old in names.values()):
+            names = dict(names)
+            names.update({n: n for n in OPTIONAL_FILES if (path / n).is_file()})
             return names
     return {}
 
