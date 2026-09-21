@@ -1,5 +1,16 @@
 @echo off
 setlocal enabledelayedexpansion
+:: Enable/Start-ScheduledTask trebuyut prav administratora - bez nih punkty
+:: 4/6/7/9 molcha lovili "Otkazano v dostupe" i agent ostavalsya ostanovlen.
+:: Proveryaem prava cherez net session (ne daet vyvoda, tolko kod vozvrata)
+:: i, esli ih net, perezapuskaem etot zhe .bat s temi zhe argumentami cherez UAC.
+net session >nul 2>&1
+if %errorlevel% neq 0 (
+    echo Nuzhny prava administratora - otkryvayu novoe okno...
+    powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -ArgumentList '%*' -Verb RunAs" >nul 2>&1
+    timeout /t 2 >nul
+    exit /b
+)
 chcp 866 >nul
 title TagMarkets
 cd /d "%~dp0"
