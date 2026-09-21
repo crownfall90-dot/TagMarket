@@ -70,7 +70,7 @@ _base_at: datetime = None
 
 
 TERMINAL = os.getenv("MT5_TERMINAL", r"D:\MetaTrader5\terminal64.exe")
-CHART_SYMBOL = os.getenv("CHART_SYMBOL", "XAUUSD")   # у некоторых брокеров с суффиксом
+CHART_SYMBOL = os.getenv("CHART_SYMBOL", "XAUUSD.f")  # у Tag Markets тикеры с суффиксом .f
 _history_seen: set[str] = set()     # у каких счетов история уже подгружалась
 
 
@@ -620,6 +620,32 @@ def fetch(since: datetime, until: datetime, all_history: bool = False) -> list[d
     return sorted((r for r in rows if since <= r["time"] <= until), key=lambda r: r["time"])
 
 
+_chart_symbol: str = ""     # разрешённое имя тикера: у брокера бывает с суффиксом
+
+
+def chart_symbol() -> str:
+    """Имя тикера золота в этом терминале, готовое к запросу котировок.
+
+    У Tag Markets тикеры с суффиксом (`XAUUSD.f`), у других брокеров он свой
+    или отсутствует — поэтому при промахе ищем по префиксу среди доступных
+    символов, а не падаем. Результат кэшируется: перебор всего списка
+    символов на каждом круге опроса ни к чему.
+    """
+    global _chart_symbol
+    if _chart_symbol:
+        return _chart_symbol
+    if mt5.symbol_select(CHART_SYMBOL, True):
+        _chart_symbol = CHART_SYMBOL
+        return _chart_symbol
+    base = CHART_SYMBOL.split(".")[0]
+    for info in mt5.symbols_get(f"{base}*") or ():
+        if mt5.symbol_select(info.name, True):
+            log.warning("тикер %s не найден, беру %s", CHART_SYMBOL, info.name)
+            _chart_symbol = info.name
+            return _chart_symbol
+    raise RuntimeError(f"символ {CHART_SYMBOL} недоступен: {mt5.last_error()}")
+
+
 def candles(since: datetime, until: datetime) -> list[dict]:
     """Свечи M15 по CHART_SYMBOL за период — для графика цены на карточке стратегии.
 
@@ -629,9 +655,8 @@ def candles(since: datetime, until: datetime) -> list[dict]:
     """
     if not HAS_MT5:
         return []
-    if not mt5.symbol_select(CHART_SYMBOL, True):
-        raise RuntimeError(f"символ {CHART_SYMBOL} недоступен: {mt5.last_error()}")
-    raw = mt5.copy_rates_range(CHART_SYMBOL, mt5.TIMEFRAME_M15,
+    symbol = chart_symbol()
+    raw = mt5.copy_rates_range(symbol, mt5.TIMEFRAME_M15,
                                since - timedelta(minutes=15), until)
     if raw is None:
         raise RuntimeError(f"свечи недоступны: {mt5.last_error()}")
@@ -640,7 +665,7 @@ def candles(since: datetime, until: datetime) -> list[dict]:
         # пока терминал не догрузил историю по символу с сервера брокера —
         # copy_rates_from_pos тянет последние бары независимо от диапазона
         # дат и обычно доступна раньше (не требует докачки конкретного окна)
-        raw = mt5.copy_rates_from_pos(CHART_SYMBOL, mt5.TIMEFRAME_M15, 0, 200)
+        raw = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M15, 0, 200)
         if raw is None:
             raise RuntimeError(f"свечи недоступны: {mt5.last_error()}")
     return [{"time": datetime.fromtimestamp(int(c["time"]), timezone.utc).replace(tzinfo=None).isoformat(),

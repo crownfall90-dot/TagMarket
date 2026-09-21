@@ -630,24 +630,26 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             {"time": (now - timedelta(minutes=30)).isoformat(), "open": 2400, "high": 2405, "low": 2398, "close": 2402},
             {"time": (now - timedelta(minutes=15)).isoformat(), "open": 2402, "high": 2410, "low": 2401, "close": 2408},
         ])
+        # у брокера тикеры с суффиксом (XAUUSD.f) — сопоставление идёт по
+        # базовому имени, иначе маркеры сделок пропадают с графика
         store.save_deals(self.tdb, 123, [
-            {"ticket": 801, "time": now - timedelta(minutes=20), "symbol": "XAUUSD", "side": "buy",
+            {"ticket": 801, "time": now - timedelta(minutes=20), "symbol": "XAUUSD.f", "side": "buy",
              "price": 2403.5, "net": 0, "profit": 0, "swap": 0, "commission": 0, "volume": 0.1,
              "is_closing": False, "is_opening": True, "is_balance": False},
-            {"ticket": 802, "time": now - timedelta(minutes=5), "symbol": "XAUUSD", "side": "buy",
+            {"ticket": 802, "time": now - timedelta(minutes=5), "symbol": "XAUUSD.f", "side": "buy",
              "price": 2407.2, "net": 12, "profit": 12, "swap": 0, "commission": 0, "volume": 0.1,
              "is_closing": True, "is_opening": False, "is_balance": False},
-            {"ticket": 803, "time": now - timedelta(minutes=5), "symbol": "EURUSD", "side": "buy",
+            {"ticket": 803, "time": now - timedelta(minutes=5), "symbol": "EURUSD.f", "side": "buy",
              "price": 1.1, "net": 3, "profit": 3, "swap": 0, "commission": 0, "volume": 0.1,
              "is_closing": True, "is_opening": False, "is_balance": False},
         ])
         r = await self.call("GET", "/api/accounts/123/candles?period=today")
         self.assertEqual(r.status, 200, await r.text())
         data = await r.json()
-        self.assertEqual(data["symbol"], "XAUUSD")
+        self.assertEqual(data["symbol"], trades.CHART_SYMBOL)
         self.assertEqual(len(data["candles"]), 2)
         self.assertEqual(data["candles"][0]["close"], 2402)
-        # только XAUUSD-сделки и только вход/выход — EURUSD и baланс отсеяны
+        # только сделки золота и только вход/выход — EURUSD и баланс отсеяны
         self.assertEqual({m["kind"] for m in data["trades"]}, {"in", "out"})
         self.assertEqual(len(data["trades"]), 2)
 

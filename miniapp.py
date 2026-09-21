@@ -526,9 +526,12 @@ async def price_chart(request):
     db = request.app["trades"]
     candles = store.get_candles(db, since, until)
     rows = [r for r in trades.fetch(since, until) if r["is_closing"] or r["is_opening"]]
+    # сравниваем по базовому имени: у брокера тикеры с суффиксом (XAUUSD.f),
+    # и он может смениться — маркеры сделок не должны из-за этого пропадать
+    base = trades.CHART_SYMBOL.split(".")[0]
     markers = [{"time": r["time"].isoformat() + "Z", "side": r["side"], "price": r["price"],
                "kind": "in" if r["is_opening"] else "out", "symbol": r["symbol"]}
-              for r in rows if r["symbol"] == trades.CHART_SYMBOL]
+              for r in rows if (r["symbol"] or "").split(".")[0] == base]
     return web.json_response({"title": title, "symbol": trades.CHART_SYMBOL,
         "candles": [{**c, "time": c["time"] + "Z"} for c in candles], "trades": markers})
 
