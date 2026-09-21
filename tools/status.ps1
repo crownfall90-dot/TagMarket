@@ -17,7 +17,9 @@ try {
 }
 
 $agent = 'остановлен'
-if ((Get-ScheduledTask -TaskName TagMarketsAgent).State -eq 'Running') { $agent = 'работает' }
+$agentProc = Get-CimInstance Win32_Process -Filter "Name='pythonw.exe'" -EA SilentlyContinue |
+             Where-Object { $_.CommandLine -like '*agent.py*' }
+if ($agentProc) { $agent = 'работает' }
 
 $term = 'остановлен'
 if (Get-Process terminal64) { $term = 'работает' }
