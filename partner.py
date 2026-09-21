@@ -84,6 +84,14 @@ def whose(row) -> tuple[str, bool]:
     return (number or who(row)), False
 
 
+def whose_label(row) -> str:
+    """Строка «от кого» с подписью: имя клиента как есть, голый номер кабинета —
+    явно как номер («Кабинет CU261825»), чтобы не читаться именем человека."""
+    name, _ = whose(row)
+    number = str(pick(row, "customer_no", "customer", "client_no") or "").strip()
+    return f"Кабинет {name}" if name == number else name
+
+
 def pretty_money(row: dict, signed: bool = False) -> str:
     """Сумма в том же виде, что и в остальных уведомлениях: «+0.31 $»."""
     raw = money(row)                # «0.31 USD» — после разбора мусора портала
@@ -239,27 +247,31 @@ def wallet_balance(db, cabinet: str) -> tuple[float, str]:
     return max(came_in - went_out, 0.0), since
 
 
-def _event(head: str, row, note: str = "", sign: str = "") -> str:
+def _event(head: str, row, note: str = "", sign: str = "", extra: str = "") -> str:
     """Тот же визуальный порядок, что и в trades.fmt_notification() —
     время сверху жирным, заголовок, разделитель, крупная сумма, пояснение
     «от кого» строкой ниже. Разные типы уведомлений (сделка, реинвест,
     депозит в кабинет) должны читаться как одна система, а не вразнобой."""
     stamp = str(when(row) or "").strip()
-    name, _ = whose(row)
-    out = []
-    if stamp:            # пустые часы только засоряли бы сообщение
-        out.append(f"🕒 <b>{stamp}</b>")
-    out += [head, THIN, f"<b>{pretty_money(row, bool(sign))}</b>",
-           f"👤 {html.escape(name)}"]
+    if not stamp:
+        # вебхуки On Deposit/On Registration не присылают момент операции
+        # (webhook_urls() их не запрашивает — портал такого поля не отдаёт) —
+        # время получения ботом всё равно понятнее, чем полное отсутствие строки
+        import trades
+        stamp = trades.clock().strftime("%d.%m.%Y  %H:%M:%S") + " · получено"
+    out = [f"🕒 <b>{stamp}</b>", head, THIN, f"<b>{pretty_money(row, bool(sign))}</b>",
+           f"👤 {html.escape(whose_label(row))}"]
     if note:
         out.append(f"<i>{note}</i>")
+    if extra:
+        out.append(extra)
     state = cabinet_state(row)
     if state:
         out.append(state)
     return "\n".join(out)
 
 
-def fmt_deposit(row):
+def fmt_deposit(db, row):
     ftd = str(pick(row, "is_ftd", "ftd")).lower() in ("true", "1", "yes")
     _, mine = whose(row)
     if ftd:
@@ -270,7 +282,35 @@ def fmt_deposit(row):
         return _event("💰 <b>Пополнение баланса кабинета</b>", row,
                       "на балансе Tag Markets — можно вывести "
                       "или вернуть в стратегию", sign="+")
-    return _event("💰 <b>Депозит клиента</b>", row)
+    cabinet = str(pick(row, "customer_no", "customer", "client_no") or "").strip()
+    total = client_deposits_add(db, cabinet, row) if cabinet else None
+    extra = (f"📈 Пополнений от этого клиента: <b>{total[0]}</b>, всего "
+             f"<b>{trades_amount(total[1])}</b>" if total else "")
+    return _event("💰 <b>Депозит клиента</b>", row, extra=extra)
+
+
+def trades_amount(v: float) -> str:
+    import trades
+    return trades.amount(v, "USD")
+
+
+def client_deposits_add(db, cabinet: str, row: dict) -> tuple[int, float] | None:
+    """Копит счётчик и сумму депозитов чужого клиента — портал не отдаёт его
+    историю, поэтому это единственный способ ответить «сколько от него всего
+    пришло», не только «сколько сейчас». Отдельно от wallet_*: там речь о
+    собственном кошельке владельца, тут — о чужом кабинете."""
+    number, _, currency = money(row).rpartition(" ")
+    try:
+        amount = float(number.replace(" ", ""))
+    except ValueError:
+        return None
+    key = f"client_deposits:{cabinet}"
+    count_key = f"client_deposits_count:{cabinet}"
+    total = float(kv_get(db, key, 0) or 0) + amount
+    count = int(kv_get(db, count_key, 0) or 0) + 1
+    kv_set(db, key, f"{total:.2f}")
+    kv_set(db, count_key, str(count))
+    return count, total
 
 
 def fmt_withdrawal(row):

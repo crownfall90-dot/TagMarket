@@ -214,7 +214,8 @@ async def on_registration(request):
 
 
 async def on_deposit(request):
-    return await handle(request, "deposit", partner.fmt_deposit)
+    db = request.app["db"]
+    return await handle(request, "deposit", lambda row: partner.fmt_deposit(db, row))
 
 
 async def health(request):

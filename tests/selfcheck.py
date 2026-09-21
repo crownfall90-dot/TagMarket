@@ -65,13 +65,21 @@ assert partner.money({"amount": "50", "currency": "EUR"}) == "50 EUR"
 assert partner.money({"amount": "50"}) == "50 USD", "без валюты подставляем USD"
 
 # первый депозит клиента выделяется отдельно от обычного
-assert "Первый депозит" in fmt_deposit({"id": "9", "amount": "100", "is_ftd": "true"})
-assert "Первый депозит" not in fmt_deposit({"id": "8", "amount": "100"})
+assert "Первый депозит" in fmt_deposit(db, {"id": "9", "amount": "100", "is_ftd": "true"})
+assert "Первый депозит" not in fmt_deposit(db, {"id": "8", "amount": "100"})
 # свой кабинет узнаётся по номеру: это не «депозит клиента», а свои деньги
 import partner as _p
 assert _p.whose({"customer_no": "CU-неизвестный"}) == ("CU-неизвестный", False)
 assert "&lt;b&gt;" in fmt_lead({"id": "7", "name": "<b>x"}), "HTML в именах должен экранироваться"
-assert fmt_deposit({}) and fmt_lead({}), "пустая запись не должна ронять форматтер"
+assert fmt_deposit(db, {}) and fmt_lead({}), "пустая запись не должна ронять форматтер"
+# номер кабинета без имени подписывается явно, а не выглядит как имя клиента
+assert "Кабинет CU261825" in fmt_deposit(db, {"customer_no": "CU261825", "amount": "20"})
+# счётчик депозитов клиента копится и показывается в уведомлении
+msg1 = fmt_deposit(db, {"customer_no": "CU9", "amount": "20"})
+msg2 = fmt_deposit(db, {"customer_no": "CU9", "amount": "30"})
+assert "Пополнений от этого клиента: <b>1</b>" in msg1, msg1
+assert "Пополнений от этого клиента: <b>2</b>" in msg2, msg2
+assert "50" in msg2, "сумма пополнений должна накапливаться (20+30)"
 
 
 # ── сводка по сделкам ─────────────────────────────────────────────────────
