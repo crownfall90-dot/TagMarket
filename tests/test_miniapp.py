@@ -681,6 +681,22 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status, 200, await r.text())
         self.assertAlmostEqual((await r.json())["summary"]["net_income"], 7)
 
+    async def test_month_percent_uses_capital_of_that_month(self):
+        # прибыль заработана на капитале 100, потом капитал вывели почти в ноль:
+        # процент месяца должен остаться к капиталу того месяца, а не делиться
+        # на сегодняшний остаток и превращаться в тысячи процентов
+        self.tdb.execute("INSERT INTO months (login, month, trades, gross, platform, wins, losses, growth) "
+                         "VALUES (123, '2026-07', 2, 10, 0, 2, 0, 1.0)")
+        self.tdb.commit()
+        store.save_deals(self.tdb, 123, [
+            {"ticket": 90, "time": "2026-08-02T10:00:00", "is_balance": True, "is_closing": False,
+             "is_opening": False, "net": -2376.0, "volume": 0, "comment": "Withdrawal"}])
+        store.save_state(self.tdb, 123, 24, 24, "USD", "Demo", 100)
+        data = await (await self.call("GET", "/api/accounts/123/report?period=all")).json()
+        july = next(m for m in data["months"] if m["month"] == "2026-07")
+        self.assertAlmostEqual(july["net"], 7)
+        self.assertAlmostEqual(july["pct_capital"], 7.0, places=3)
+
     async def test_invites_shared_accounts_and_revoke(self):
         partner.kv_set(self.db, "partner_link:1", "")
         denied = await self.call("POST", "/api/invites", json={"logins": [123]})

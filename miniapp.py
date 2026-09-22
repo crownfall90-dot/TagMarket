@@ -449,9 +449,16 @@ async def report(request):
         deals.append(item)
     months = [{"month": m["month"], "count": m["trades"] or 0,
                 "net": trades.net_of_fee(trades.mine((m["gross"] or 0) + (m["platform"] or 0)))} for m in trades.monthly(120)]
+    # процент месяца — к капиталу на конец того месяца, а не к сегодняшнему:
+    # иначе счёт, с которого капитал потом вывели, делит прошлую прибыль на
+    # остаток около нуля и показывает проценты вида +4 550 067%
+    month_flows = trades.fetch(datetime(2000, 1, 1), logic.utcnow() + timedelta(days=1))
     for month in months:
-        month["pct_capital"] = (round(month["net"] / current_capital * 100, 3)
-                                if current_capital > 0 else None)
+        year, mon = map(int, month["month"].split("-"))
+        edge = datetime(year, mon, calendar.monthrange(year, mon)[1], 23, 59, 59)
+        capital_then = trades.capital_at(edge, month_flows)
+        month["pct_capital"] = (round(month["net"] / capital_then * 100, 3)
+                                if capital_then > 0 else None)
     starts = {key: logic.period(key)[1] for key in ("week", "lastweek", "month")}
     recent = trades.fetch(min(starts.values()), logic.utcnow() + timedelta(days=1))
     insights = {}
