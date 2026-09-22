@@ -39,6 +39,42 @@ def glider_on_active(page, nav):
         assert abs(glider[key] - link[key]) <= 1.5, (nav, key, glider, link)
 
 
+def glider_survives_rerender(page, nav):
+    """Фоновое обновление не должно трогать подсветку панели.
+
+    render() идёт и по таймеру раз в 30-60 с. Пока nav() двигал подсветку
+    на каждый такой проход, браузер пересчитывал вёрстку посреди кадра, в
+    котором дальше целиком меняется #main, — отсюда рывки и подвисания.
+    """
+    # считаем не результат (он совпадёт в любом случае), а сами обращения к
+    # offsetLeft: именно они заставляют браузер пересчитать вёрстку
+    touched = page.evaluate(
+        """nav => {
+            const link = document.querySelector(nav + ' a.active');
+            const proto = Object.getPrototypeOf(link);
+            const original = Object.getOwnPropertyDescriptor(proto, 'offsetLeft');
+            let reads = 0;
+            Object.defineProperty(link, 'offsetLeft', {
+                configurable: true,
+                get() { reads++; return original.get.call(this); }});
+            render();
+            delete link.offsetLeft;
+            return reads;
+        }""", nav)
+    assert touched == 0, (
+        f"перерисовка без смены вкладки {touched} раз замерила вёрстку панели")
+
+
+def topbar_sticks(page):
+    """Верхняя панель остаётся на экране при прокрутке и получает тень."""
+    page.evaluate("scrollTo(0, 400)")
+    page.wait_for_function("document.body.classList.contains('is-scrolled')")
+    box = page.locator(".topbar").bounding_box()
+    assert box and box["y"] <= 1.5, f"панель уехала при прокрутке: {box}"
+    page.evaluate("scrollTo(0, 0)")
+    page.wait_for_function("!document.body.classList.contains('is-scrolled')")
+
+
 def close_dialog(page):
     """Закрыть диалог крестиком в шапке: у информационных окон кнопка
     «Отмена» спрятана, а крестик есть у всех."""
@@ -97,6 +133,8 @@ def main():
 
                     nav = "#mobile-nav" if width < 740 else "#desktop-nav"
                     glider_on_active(page, nav)
+                    glider_survives_rerender(page, nav)
+                    topbar_sticks(page)
                     page.locator(f'{nav} a[href="#accounts"]').click()
                     page.locator('.account-list').first.wait_for()
                     glider_on_active(page, nav)

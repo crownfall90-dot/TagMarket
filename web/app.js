@@ -56,10 +56,24 @@ function nav(){
    root.innerHTML='<span class="nav-glider" aria-hidden="true"></span>'+tabs.map(([id,label])=>`<a href="#${id}" data-tab="${id}" aria-label="${label}">${icon(id,'nav-icon')}<span>${label}</span></a>`).join('');
    root.dataset.ready='1';root.classList.add('has-glider');
   }
+  // вкладка та же и подсветка уже стоит — не трогаем ничего: render() идёт и
+  // на фоновом обновлении раз в 30-60 с, а moveGlider синхронно читает
+  // offsetLeft/getBoundingClientRect и этим заставляет браузер пересчитать
+  // вёрстку посреди кадра, в котором дальше целиком меняется #main.
+  // _rect пуст у панели, скрытой в момент смены вкладки (на телефоне это
+  // боковая): её подсветку ставим, когда она появится
+  if(root.dataset.active===active&&root.querySelector('.nav-glider')?._rect)continue;
+  root.dataset.active=active;
   root.querySelectorAll('a[data-tab]').forEach(link=>{const on=link.dataset.tab===active;link.classList.toggle('active',on);if(on)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');});
   moveGlider(root);
  }
- $('#crumb').textContent=state.view==='account'?'Счета / Счёт':state.view==='faq'?'Частые вопросы':tabs.find(([id])=>id===state.view)?.[1]||'Счёт';
+ const crumb=$('#crumb'),title=state.view==='account'?'Счета / Счёт':state.view==='faq'?'Частые вопросы':tabs.find(([id])=>id===state.view)?.[1]||'Счёт';
+ // анимируем только настоящую смену: render() идёт и на фоновом обновлении,
+ // где заголовок тот же и мигать ему незачем
+ if(crumb.textContent!==title){
+  crumb.textContent=title;
+  crumb.classList.remove('is-changing');void crumb.offsetWidth;crumb.classList.add('is-changing');
+ }
 }
 function moveGlider(root,instant=false){
  const glider=root.querySelector('.nav-glider'),link=root.querySelector('a.active');
@@ -96,6 +110,21 @@ function enterView(direction){
  main.style.setProperty('--enter-y',direction?'0px':'10px');
  void main.offsetWidth;      // перезапуск, если прошлый въезд ещё идёт
  main.classList.add('view-enter');
+}
+// Уход старого экрана: без него переход был односторонним — старое исчезало
+// мгновенно, новое въезжало, и глаз читал это как рывок. Уезжаем в ту же
+// сторону, куда потом въедет новое, и вдвое короче въезда: ожидание между
+// нажатием и новым экраном должно оставаться незаметным
+function leaveView(direction){
+ if(reducedMotion())return Promise.resolve();
+ const main=$('#main');
+ main.classList.remove('view-enter');
+ const shift=direction?`translateX(${-direction*14}px)`:'translateY(-6px)';
+ const anim=main.animate([{opacity:1,transform:'none'},{opacity:0,transform:shift}],
+                         {duration:170,easing:'cubic-bezier(.4,0,.7,.2)',fill:'forwards'});
+ // не ждём дольше самой анимации: если вкладка ушла в фон, finished не придёт
+ return Promise.race([anim.finished.catch(()=>{}),new Promise(r=>setTimeout(r,200))])
+  .then(()=>anim.cancel());
 }
 $('#main').addEventListener('animationend',event=>{if(event.target===event.currentTarget)event.currentTarget.classList.remove('view-enter');});
 function header(title,subtitle='',action=''){return `<div class="page-head"><div><h1>${esc(title)}</h1>${subtitle?`<p>${esc(subtitle)}</p>`:''}</div>${action}</div>`;}
@@ -265,7 +294,12 @@ function render(){nav();
   const fingerprint=[...strip.querySelectorAll('button')].map(b=>b.dataset.value||b.textContent).join('|');
   prevThumbs.set(fingerprint, {left:active.offsetLeft, width:active.offsetWidth});
  });
- const views={overview,accounts:accountsView,account:accountView,people:peopleView,settings:settingsView,faq:faqView};$('#main').innerHTML=(preview?'<div class="preview-label">Демо-режим · вымышленные данные. Отправка сообщений и управление счетами работают только при запуске из <a href="https://t.me/tagmarketgold_bot" target="_blank" rel="noopener">бота в Telegram</a>.</div>':'')+(views[state.view]||overview)()+(state.view==='settings'&&state.admin?.network?.length?networkView():'');$('#avatar').textContent=state.data.user.name.slice(0,1).toUpperCase();document.querySelectorAll('.segmented').forEach(strip=>{const active=strip.querySelector('.active');if(active)strip.scrollLeft+=active.getBoundingClientRect().left-strip.getBoundingClientRect().left-(strip.clientWidth-active.clientWidth)/2;});
+ const views={overview,accounts:accountsView,account:accountView,people:peopleView,settings:settingsView,faq:faqView};$('#main').innerHTML=(preview?'<div class="preview-label">Демо-режим · вымышленные данные. Отправка сообщений и управление счетами работают только при запуске из <a href="https://t.me/tagmarketgold_bot" target="_blank" rel="noopener">бота в Telegram</a>.</div>':'')+(views[state.view]||overview)()+(state.view==='settings'&&state.admin?.network?.length?networkView():'');$('#avatar').textContent=state.data.user.name.slice(0,1).toUpperCase();
+ // сначала все замеры, потом все записи: чередование чтения и записи в одном
+ // цикле заставляет браузер пересчитывать вёрстку на каждой полосе
+ const centering=[];
+ document.querySelectorAll('.segmented').forEach(strip=>{const active=strip.querySelector('.active');if(active)centering.push([strip,active.getBoundingClientRect().left-strip.getBoundingClientRect().left-(strip.clientWidth-active.clientWidth)/2]);});
+ for(const [strip,shift] of centering)strip.scrollLeft+=shift;
  positionThumbs(prevThumbs);
 }
 function positionThumbs(prevThumbs=new Map()){
@@ -430,8 +464,15 @@ async function navigate(){
  state.view=next;
  if(login)state.login=Number(login);
  state.offset=0;state.kind='trades';state.report=null;state.reportError='';
+ // подсветка панели едет сразу по нажатию, а старый экран уходит параллельно:
+ // ждать отрисовки нового значило бы показать задержку на самом заметном месте
  nav();
- if(state.data){if(moved)window.scrollTo(0,0);render();if(moved)enterView(direction);}
+ if(state.data){
+  if(moved)await leaveView(direction);
+  if(moved)window.scrollTo(0,0);
+  render();
+  if(moved)enterView(direction);
+ }
  await refresh();
  tg?.BackButton?.[state.view==='account'?'show':'hide']();
 }
@@ -532,3 +573,17 @@ document.addEventListener('click',async event=>{const el=event.target.closest('[
 
 
 
+
+// Тень под верхней панелью — только когда под неё что-то уехало. Следим
+// маячком через IntersectionObserver, а не обработчиком scroll: тот на каждый
+// кадр прокрутки спрашивал бы позицию и заставлял пересчитывать вёрстку.
+(function watchScroll(){
+ const bar=document.querySelector('.topbar');
+ if(!bar||!window.IntersectionObserver)return;
+ const mark=document.createElement('span');
+ mark.setAttribute('aria-hidden','true');
+ mark.style.cssText='position:absolute;top:0;left:0;width:1px;height:1px;pointer-events:none';
+ bar.parentNode.insertBefore(mark,bar);
+ new IntersectionObserver(([e])=>document.body.classList.toggle('is-scrolled',!e.isIntersecting))
+  .observe(mark);
+})();
