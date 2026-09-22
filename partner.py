@@ -49,6 +49,22 @@ def money(row: dict) -> str:
     return f"{amount.strip()} {(currency or 'USD').strip()}".strip()
 
 
+def parsed_amount(row: dict) -> tuple[float, str] | None:
+    """Сумма события как число и валюта, или None, если не разобрать.
+
+    money(row) отдаёт «1234.56 USD» — общий для всех событий портала формат;
+    rpartition по последнему пробелу устойчивее, чем split по первому, если
+    в самой сумме вдруг окажется внутренний пробел. Портал иногда шлёт
+    разделитель тысяч узким неразрывным пробелом (U+202F), а не обычным —
+    снимаем оба, иначе float() падает на «3 073.00» с этим пробелом внутри.
+    """
+    number, _, currency = money(row).rpartition(" ")
+    try:
+        return float(number.replace(" ", "").replace(" ", "")), currency
+    except ValueError:
+        return None
+
+
 def when(row: dict) -> str:
     return str(pick(row, "date_time", "datetime", "trans_date", "date", "created", "reg_date"))
 
@@ -101,24 +117,22 @@ def whose(row, db=None) -> tuple[str, bool]:
     return (number or who(row)), False
 
 
-def whose_label(row, db=None) -> str:
+def whose_label(row, name: str) -> str:
     """Строка «от кого»: ФИО клиента, если известно (своё или запомненное по
     регистрации) — иначе номер кабинета явной подписью («Кабинет CU261825»),
-    чтобы не читаться именем человека."""
-    name, _ = whose(row, db)
+    чтобы не читаться именем человека. `name` — уже вычисленный whose(row, db)[0],
+    чтобы не читать и не расшифровывать accounts.json второй раз на тот же вызов."""
     number = str(pick(row, "customer_no", "customer", "client_no") or "").strip()
     return f"Кабинет {name}" if name == number else name
 
 
 def pretty_money(row: dict, signed: bool = False) -> str:
     """Сумма в том же виде, что и в остальных уведомлениях: «+0.31 $»."""
-    raw = money(row)                # «0.31 USD» — после разбора мусора портала
-    number, _, currency = raw.rpartition(" ")
-    try:
-        import trades
-        return trades.amount(float(number.replace(" ", "")), currency, signed=signed)
-    except Exception:               # непонятная сумма — отдаём как пришла
-        return raw
+    parsed = parsed_amount(row)
+    if not parsed:                  # непонятная сумма — отдаём как пришла
+        return money(row)
+    import trades
+    return trades.amount(parsed[0], parsed[1], signed=signed)
 
 
 def cabinet_state(row) -> str:
@@ -265,11 +279,12 @@ def wallet_balance(db, cabinet: str) -> tuple[float, str]:
     return max(came_in - went_out, 0.0), since
 
 
-def _event(head: str, row, note: str = "", sign: str = "", extra: str = "", db=None) -> str:
+def _event(head: str, row, name: str, note: str = "", sign: str = "", extra: str = "") -> str:
     """Тот же визуальный порядок, что и в trades.fmt_notification() —
     время сверху жирным, заголовок, разделитель, крупная сумма, пояснение
     «от кого» строкой ниже. Разные типы уведомлений (сделка, реинвест,
-    депозит в кабинет) должны читаться как одна система, а не вразнобой."""
+    депозит в кабинет) должны читаться как одна система, а не вразнобой.
+    `name` — уже вычисленный whose(row, db)[0], см. whose_label."""
     stamp = str(when(row) or "").strip()
     if not stamp:
         # вебхуки On Deposit/On Registration не присылают момент операции
@@ -278,7 +293,7 @@ def _event(head: str, row, note: str = "", sign: str = "", extra: str = "", db=N
         import trades
         stamp = trades.clock().strftime("%d.%m.%Y  %H:%M:%S") + " · получено"
     out = [f"🕒 <b>{stamp}</b>", head, THIN, f"<b>{pretty_money(row, bool(sign))}</b>",
-           f"👤 {html.escape(whose_label(row, db))}"]
+           f"👤 {html.escape(whose_label(row, name))}"]
     if note:
         out.append(f"<i>{note}</i>")
     if extra:
@@ -291,25 +306,21 @@ def _event(head: str, row, note: str = "", sign: str = "", extra: str = "", db=N
 
 def fmt_deposit(db, row):
     ftd = str(pick(row, "is_ftd", "ftd")).lower() in ("true", "1", "yes")
-    _, mine = whose(row)
+    name, mine = whose(row, db)
     if ftd:
-        return _event("🔥 <b>Первый депозит клиента</b>", row, db=db)
+        return _event("🔥 <b>Первый депозит клиента</b>", row, name)
     if mine:
         # деньги пришли на баланс собственного кабинета: обычно это вывод
         # профита со стратегии, и «депозит клиента» тут прямо врал
-        return _event("💰 <b>Пополнение баланса кабинета</b>", row,
+        return _event("💰 <b>Пополнение баланса кабинета</b>", row, name,
                       "на балансе Tag Markets — можно вывести "
-                      "или вернуть в стратегию", sign="+", db=db)
+                      "или вернуть в стратегию", sign="+")
     cabinet = str(pick(row, "customer_no", "customer", "client_no") or "").strip()
     total = client_deposits_add(db, cabinet, row) if cabinet else None
-    extra = (f"📈 Пополнений от этого клиента: <b>{total[0]}</b>, всего "
-             f"<b>{trades_amount(total[1])}</b>" if total else "")
-    return _event("💰 <b>Депозит клиента</b>", row, extra=extra, db=db)
-
-
-def trades_amount(v: float) -> str:
     import trades
-    return trades.amount(v, "USD")
+    extra = (f"📈 Пополнений от этого клиента: <b>{total[0]}</b>, всего "
+             f"<b>{trades.amount(total[1], 'USD')}</b>" if total else "")
+    return _event("💰 <b>Депозит клиента</b>", row, name, extra=extra)
 
 
 def client_deposits_add(db, cabinet: str, row: dict) -> tuple[int, float] | None:
@@ -317,11 +328,10 @@ def client_deposits_add(db, cabinet: str, row: dict) -> tuple[int, float] | None
     историю, поэтому это единственный способ ответить «сколько от него всего
     пришло», не только «сколько сейчас». Отдельно от wallet_*: там речь о
     собственном кошельке владельца, тут — о чужом кабинете."""
-    number, _, currency = money(row).rpartition(" ")
-    try:
-        amount = float(number.replace(" ", ""))
-    except ValueError:
+    parsed = parsed_amount(row)
+    if not parsed or not parsed[0]:
         return None
+    amount = parsed[0]
     key = f"client_deposits:{cabinet}"
     count_key = f"client_deposits_count:{cabinet}"
     total = float(kv_get(db, key, 0) or 0) + amount

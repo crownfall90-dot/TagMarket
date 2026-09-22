@@ -197,26 +197,29 @@ function render(){nav();
  // FLIP: #main.innerHTML заменяется целиком на каждый render(), поэтому
  // .segmented-thumb каждый раз новый DOM-узел без истории — обычный CSS
  // transition не увидел бы «откуда» ехать. Снимаем позицию активной кнопки
- // ДО замены (по индексу .segmented на странице — тот же участок разметки
- // почти всегда даёт тот же порядок), после замены ставим новый thumb сразу
- // на старое место без анимации, и только следующим кадром — на новое, уже
- // с transition: браузер анимирует именно этот второй шаг.
- const prevThumbs=[...document.querySelectorAll('.segmented')].map(strip=>{
+ // ДО замены и сопоставляем со следующим кадром по «отпечатку» набора
+ // кнопок (их data-value), а не по индексу: на разных экранах .segmented
+ // могут отличаться количеством и порядком (периоды на Обзоре — не то же,
+ // что периоды на Счёте), и по индексу thumb ехал бы с чужой позиции.
+ const prevThumbs=new Map();
+ document.querySelectorAll('.segmented').forEach(strip=>{
   const active=strip.querySelector('button.active');
-  return active?{left:active.offsetLeft,width:active.offsetWidth}:null;
+  if(!active)return;
+  const fingerprint=[...strip.querySelectorAll('button')].map(b=>b.dataset.value||b.textContent).join('|');
+  prevThumbs.set(fingerprint, {left:active.offsetLeft, width:active.offsetWidth});
  });
  const views={overview,accounts:accountsView,deals:dealsView,account:accountView,people:peopleView,settings:settingsView,faq:faqView};$('#main').innerHTML=(preview?'<div class="preview-label">Демо-режим · вымышленные данные. Отправка сообщений и управление счетами работают только при запуске из <a href="https://t.me/tagmarketgold_bot" target="_blank" rel="noopener">бота в Telegram</a>.</div>':'')+(views[state.view]||overview)()+(state.view==='settings'&&state.admin?.network?.length?networkView():'');$('#avatar').textContent=state.data.user.name.slice(0,1).toUpperCase();document.querySelectorAll('.segmented').forEach(strip=>{const active=strip.querySelector('.active');if(active)strip.scrollLeft+=active.getBoundingClientRect().left-strip.getBoundingClientRect().left-(strip.clientWidth-active.clientWidth)/2;});
  positionThumbs(prevThumbs);
 }
-function positionThumbs(prevThumbs=[]){
- const strips=[...document.querySelectorAll('.segmented')];
+function positionThumbs(prevThumbs=new Map()){
  const toAnimate=[];
- strips.forEach((strip,i)=>{
+ document.querySelectorAll('.segmented').forEach(strip=>{
   const active=strip.querySelector('button.active');
   if(!active)return;
   let thumb=strip.querySelector('.segmented-thumb');
   if(!thumb){thumb=document.createElement('i');thumb.className='segmented-thumb';strip.prepend(thumb);}
-  const prev=prevThumbs[i];
+  const fingerprint=[...strip.querySelectorAll('button')].map(b=>b.dataset.value||b.textContent).join('|');
+  const prev=prevThumbs.get(fingerprint);
   const target={left:active.offsetLeft-3,width:active.offsetWidth};
   if(prev){
    thumb.style.transition='none';

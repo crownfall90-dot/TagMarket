@@ -108,7 +108,7 @@ async def handle(request: web.Request, kind: str, fmt) -> web.Response:
         if recipient:
             title = "Новая регистрация" if kind == "registration" else "Пополнение"
             detail = partner.who(row) if kind == "registration" else \
-                f"{partner.whose(row)[0]} · {partner.money(row)}"
+                f"{partner.whose(row, db)[0]} · {partner.money(row)}"
             partner.record_notification(db, recipient, f"hook:{kind}:{partner.row_id(row)}",
                                         kind, title, detail)
         fire(notify(request.app, fmt(row)))
@@ -130,17 +130,13 @@ def _remember_wallet_income(db, kind: str, row: dict) -> None:
     if not mine:        # депозит клиента, а не движение своих денег
         return
     cabinet = str(partner.pick(row, "customer_no", "customer", "client_no") or "").strip()
-    # money() отдаёт "1234.56 USD" — та же форма, что уже разбирает pretty_money()
-    # по всему боту; берём число тем же способом (rpartition по последнему
-    # пробелу — устойчивее, чем брать первое слово, если в сумме вдруг
-    # окажется внутренний пробел)
-    number, _, currency = partner.money(row).rpartition(" ")
-    try:
-        amount = float(number.replace(" ", "").replace(" ", ""))
-        partner.wallet_add(db, cabinet, amount)
-        partner.site_move_add(db, cabinet, "deposit", amount, currency)
-    except (TypeError, ValueError):
-        log.warning("не разобрал сумму депозита для кошелька: %r", number)
+    parsed = partner.parsed_amount(row)
+    if not parsed:
+        log.warning("не разобрал сумму депозита для кошелька: %r", partner.money(row))
+        return
+    amount, currency = parsed
+    partner.wallet_add(db, cabinet, amount)
+    partner.site_move_add(db, cabinet, "deposit", amount, currency)
 
 
 def _just_sent(db, kind: str, row: dict) -> bool:
