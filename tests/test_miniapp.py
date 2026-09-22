@@ -2,6 +2,7 @@
 import asyncio
 import hashlib
 import hmac
+import inspect
 import io
 import json
 import os
@@ -24,6 +25,7 @@ os.environ.update(TRADES_SOURCE="store", TELEGRAM_BOT_TOKEN="test-token",
 from aiohttp import FormData, web
 from aiohttp.test_utils import TestClient, TestServer
 import accounts
+import bot
 import coordination
 import miniapp
 import partner
@@ -186,6 +188,21 @@ class BroadcastFormatTests(unittest.TestCase):
 
     def test_telegram_counts_emoji_as_two_caption_units(self):
         self.assertEqual(miniapp.telegram_length("😀" * 600), 1200)
+
+    def test_daily_digest_goes_only_to_the_founder(self):
+        """Сводка про агентские машины — личное дело основателя.
+
+        Раньше она рассылалась по всем владельцам счетов, и клиент не мог
+        её выключить: ручка update_alerts — не его. Функция вложена в
+        замыкание с бесконечным циклом, поэтому проверяем её исходник.
+        """
+        body = inspect.getsource(bot).split("async def daily_digest(")[1]
+        body = body.split("\n        async def ")[0].split("\n        asyncio.")[0]
+        self.assertIn("update_alerts_on(db)", body)      # уважает ручку
+        self.assertIn("send(bot, chat_id,", body)        # шлём основателю
+        self.assertNotIn('a["owner"]', body)             # и никому больше
+        # знаменатель — все счета: иначе молчащий агент даёт «0 из 0»
+        self.assertIn("total = len(all_accs)", body)
 
 
 class ApiTests(unittest.IsolatedAsyncioTestCase):
