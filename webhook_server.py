@@ -92,6 +92,13 @@ async def handle(request: web.Request, kind: str, fmt) -> web.Response:
         raise web.HTTPForbidden(text="bad token")
     row.pop("token", None)
     db = request.app["db"]
+    if kind == "registration":
+        # запоминаем ФИО клиента по кабинету здесь, а не только в fmt_lead —
+        # депозит того же клиента приходит без имени вовсе (вебхук On Deposit
+        # шлёт только customer_no), и это единственный источник, откуда его
+        # потом взять; безусловно и до дедупа: регистрация может прийти
+        # раньше первого запуска бота и потеряться как first_run
+        partner.remember_client_name(db, row)
     fresh, first_run = partner.unseen(db, kind, [row])
     if fresh and not first_run and not _just_sent(db, kind, row):
         # Telegram с этого сервера отвечает медленно, а портал ждёт ответа

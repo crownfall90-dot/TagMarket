@@ -72,16 +72,20 @@ import partner as _p
 assert _p.whose({"customer_no": "CU-неизвестный"}) == ("CU-неизвестный", False)
 assert "&lt;b&gt;" in fmt_lead({"id": "7", "name": "<b>x"}), "HTML в именах должен экранироваться"
 assert fmt_deposit(db, {}) and fmt_lead({}), "пустая запись не должна ронять форматтер"
-# номер кабинета без имени подписывается явно, а не выглядит как имя клиента,
-# и явно помечен «клиентский» — это не свои деньги
+# номер кабинета без известного имени подписывается явно, а не выглядит
+# как имя клиента
 msg_client = fmt_deposit(db, {"customer_no": "CU261825", "amount": "20"})
-assert "Кабинет CU261825" in msg_client and "клиентский кабинет" in msg_client, msg_client
+assert "Кабинет CU261825" in msg_client, msg_client
+# регистрация запоминает ФИО клиента по кабинету; последующий депозит того
+# же кабинета показывает имя вместо голого номера
+_p.remember_client_name(db, {"customer_no": "CU777", "fname": "Иван", "lname": "Петров"})
+msg_named = fmt_deposit(db, {"customer_no": "CU777", "amount": "20"})
+assert "Иван Петров" in msg_named and "CU777" not in msg_named, msg_named
 # счётчик депозитов клиента копится и показывается в уведомлении
 msg1 = fmt_deposit(db, {"customer_no": "CU9", "amount": "20"})
 msg2 = fmt_deposit(db, {"customer_no": "CU9", "amount": "30"})
 assert "Пополнений от этого клиента: <b>1</b>" in msg1, msg1
 assert "Пополнений от этого клиента: <b>2</b>" in msg2, msg2
-assert "свой кабинет" not in msg2, "чужой кабинет не должен помечаться своим"
 assert "50" in msg2, "сумма пополнений должна накапливаться (20+30)"
 
 

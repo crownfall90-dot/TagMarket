@@ -60,7 +60,17 @@ def who(row: dict) -> str:
     return name or str(pick(row, "name", "full_name", "email", "customer_no", default="—"))
 
 
-def whose(row) -> tuple[str, bool]:
+def remember_client_name(db, row: dict) -> None:
+    """Запомнить ФИО клиента по номеру кабинета — берётся из вебхука On
+    Registration (fname/lname). On Deposit присылает только customer_no,
+    без имени вовсе, поэтому без этой записи депозиту неоткуда его взять."""
+    number = str(pick(row, "customer_no", "customer", "client_no") or "").strip()
+    name = who(row)
+    if number and name and name != "—":
+        kv_set(db, f"client_name:{number}", name)
+
+
+def whose(row, db=None) -> tuple[str, bool]:
     """Чей это кабинет: имя владельца и свой ли он.
 
     Портал присылает номер вида CU261780 — сам по себе он ничего не говорит.
@@ -69,6 +79,9 @@ def whose(row) -> tuple[str, bool]:
     это перемещение собственных денег. Бот многопользовательский: гость тоже
     может завести свой счёт с любым cabinet — было бы ошибкой посчитать
     депозит клиента «своим» только потому, что кто-то чужой ввёл тот же номер.
+
+    Для чужого кабинета (не наш) подставляем ФИО, если оно раньше пришло с
+    регистрацией того же customer_no (db передан) — иначе только номер.
     """
     number = str(pick(row, "customer_no", "customer", "client_no") or "").strip()
     if number:
@@ -81,18 +94,20 @@ def whose(row) -> tuple[str, bool]:
                     return (acc.get("holder") or number), True
         except Exception:       # счета недоступны — обойдёмся номером
             pass
+        if db is not None:
+            known = kv_get(db, f"client_name:{number}")
+            if known:
+                return known, False
     return (number or who(row)), False
 
 
-def whose_label(row) -> str:
-    """Строка «от кого» с подписью: чей кабинет (свой/клиентский) явно словами,
-    а не только по формулировке заголовка события. Имя клиента — как есть,
-    голый номер кабинета — явно как номер («Кабинет CU261825»), чтобы не
-    читаться именем человека."""
-    name, mine = whose(row)
+def whose_label(row, db=None) -> str:
+    """Строка «от кого»: ФИО клиента, если известно (своё или запомненное по
+    регистрации) — иначе номер кабинета явной подписью («Кабинет CU261825»),
+    чтобы не читаться именем человека."""
+    name, _ = whose(row, db)
     number = str(pick(row, "customer_no", "customer", "client_no") or "").strip()
-    label = f"Кабинет {name}" if name == number else name
-    return f"{label} · свой кабинет" if mine else f"{label} · клиентский кабинет"
+    return f"Кабинет {name}" if name == number else name
 
 
 def pretty_money(row: dict, signed: bool = False) -> str:
@@ -250,7 +265,7 @@ def wallet_balance(db, cabinet: str) -> tuple[float, str]:
     return max(came_in - went_out, 0.0), since
 
 
-def _event(head: str, row, note: str = "", sign: str = "", extra: str = "") -> str:
+def _event(head: str, row, note: str = "", sign: str = "", extra: str = "", db=None) -> str:
     """Тот же визуальный порядок, что и в trades.fmt_notification() —
     время сверху жирным, заголовок, разделитель, крупная сумма, пояснение
     «от кого» строкой ниже. Разные типы уведомлений (сделка, реинвест,
@@ -263,7 +278,7 @@ def _event(head: str, row, note: str = "", sign: str = "", extra: str = "") -> s
         import trades
         stamp = trades.clock().strftime("%d.%m.%Y  %H:%M:%S") + " · получено"
     out = [f"🕒 <b>{stamp}</b>", head, THIN, f"<b>{pretty_money(row, bool(sign))}</b>",
-           f"👤 {html.escape(whose_label(row))}"]
+           f"👤 {html.escape(whose_label(row, db))}"]
     if note:
         out.append(f"<i>{note}</i>")
     if extra:
@@ -278,18 +293,18 @@ def fmt_deposit(db, row):
     ftd = str(pick(row, "is_ftd", "ftd")).lower() in ("true", "1", "yes")
     _, mine = whose(row)
     if ftd:
-        return _event("🔥 <b>Первый депозит клиента</b>", row)
+        return _event("🔥 <b>Первый депозит клиента</b>", row, db=db)
     if mine:
         # деньги пришли на баланс собственного кабинета: обычно это вывод
         # профита со стратегии, и «депозит клиента» тут прямо врал
         return _event("💰 <b>Пополнение баланса кабинета</b>", row,
                       "на балансе Tag Markets — можно вывести "
-                      "или вернуть в стратегию", sign="+")
+                      "или вернуть в стратегию", sign="+", db=db)
     cabinet = str(pick(row, "customer_no", "customer", "client_no") or "").strip()
     total = client_deposits_add(db, cabinet, row) if cabinet else None
     extra = (f"📈 Пополнений от этого клиента: <b>{total[0]}</b>, всего "
              f"<b>{trades_amount(total[1])}</b>" if total else "")
-    return _event("💰 <b>Депозит клиента</b>", row, extra=extra)
+    return _event("💰 <b>Депозит клиента</b>", row, extra=extra, db=db)
 
 
 def trades_amount(v: float) -> str:
