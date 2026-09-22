@@ -85,11 +85,14 @@ def whose(row) -> tuple[str, bool]:
 
 
 def whose_label(row) -> str:
-    """Строка «от кого» с подписью: имя клиента как есть, голый номер кабинета —
-    явно как номер («Кабинет CU261825»), чтобы не читаться именем человека."""
-    name, _ = whose(row)
+    """Строка «от кого» с подписью: чей кабинет (свой/клиентский) явно словами,
+    а не только по формулировке заголовка события. Имя клиента — как есть,
+    голый номер кабинета — явно как номер («Кабинет CU261825»), чтобы не
+    читаться именем человека."""
+    name, mine = whose(row)
     number = str(pick(row, "customer_no", "customer", "client_no") or "").strip()
-    return f"Кабинет {name}" if name == number else name
+    label = f"Кабинет {name}" if name == number else name
+    return f"{label} · свой кабинет" if mine else f"{label} · клиентский кабинет"
 
 
 def pretty_money(row: dict, signed: bool = False) -> str:
