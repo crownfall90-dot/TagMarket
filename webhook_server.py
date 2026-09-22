@@ -171,7 +171,7 @@ def _just_sent(db, kind: str, row: dict) -> bool:
     key = ("hook:" + kind + ":" + str(partner.pick(row, "customer_no", "customer") or "")
            + ":" + str(partner.pick(row, "amount", "sum") or ""))
     seen_at = partner.kv_get(db, key)
-    now = datetime.utcnow()
+    now = utcnow()
     partner.kv_set(db, key, now.isoformat())
     if not seen_at:
         return False

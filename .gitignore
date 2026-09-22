@@ -17,3 +17,10 @@ agent.beat
 
 # архивы выкладки
 *.tgz
+
+# окружения и кэши инструментов разработки
+.venv/
+venv/
+.ruff_cache/
+.pytest_cache/
+node_modules/

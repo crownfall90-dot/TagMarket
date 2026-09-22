@@ -3,6 +3,10 @@
 import os
 import sys
 
+# вся проверка — на assert, а python -O их вырезает: прогон «прошёл» бы молча
+if not __debug__:
+    raise SystemExit("selfcheck нельзя запускать с -O: assert отключены")
+
 # запускаемся из tests/, а модули лежат в корне проекта
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -291,7 +295,7 @@ try:
     assert accmod.by_name("A", 222) is None, "чужое имя счёта не должно резолвиться"
     try:
         accmod.add({"owner": 111, "name": "A", "login": 9, "password": "x", "server": "s"})
-        assert False, "повторное имя у того же владельца должно падать"
+        raise AssertionError("повторное имя у того же владельца должно падать")
     except ValueError:
         pass
     # то же имя у другого владельца — это разные счета, конфликта быть не должно
@@ -346,11 +350,11 @@ try:
         accmod.rename("A-new", 111, "B")     # B принадлежит другому владельцу — не конфликт
         accmod.rename("B", 111, "A-new")     # вернём обратно
     except ValueError:
-        assert False, "имя, занятое другим владельцем, не должно мешать"
+        raise AssertionError("имя, занятое другим владельцем, не должно мешать")
     accmod.add({"owner": 111, "name": "Z", "login": 7, "password": "x", "server": "s"})
     try:
         accmod.rename("Z", 111, "A-new")
-        assert False, "переименование в своё же занятое имя должно падать"
+        raise AssertionError("переименование в своё же занятое имя должно падать")
     except ValueError:
         pass
     accmod.remove("Z", 111)
@@ -364,7 +368,7 @@ try:
     assert accmod.by_name("A (2)", 222)["login"] == accmod.by_name("A", 111)["login"]
     try:
         accmod.share([_login_a], 111, 111)
-        assert False, "поделиться с самим собой нельзя"
+        raise AssertionError("поделиться с самим собой нельзя")
     except ValueError:
         pass
     accmod.remove("A (2)", 222)

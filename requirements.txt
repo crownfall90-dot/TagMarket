@@ -1,4 +1,4 @@
-﻿# Агент на Windows (читает MT5 и шлёт на сервер)
+# Агент на Windows (читает MT5 и шлёт на сервер)
 MetaTrader5>=5.0.45; sys_platform == 'win32'
 requests>=2.31
 python-dotenv>=1.0

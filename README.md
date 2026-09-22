@@ -42,9 +42,22 @@ Telegram-бот: сделки по счетам MT5 и события партн
 **`docs/`** — `MINIAPP.md` (запуск и ограничения), `todo.md` (ревью),
 `AUDIT_HOWTO.md` (как сверять боевые данные).
 
-**`tools/`** — обслуживание: `audit.py`, `deploy_miniapp.py` и
-`rollback_miniapp.py` (сервер), `rollback-miniapp.bat`, `keeper.ps1`,
-`TagMarkets.bat` (пульт на ПК), `backup.sh`.
+**`tools/`** — обслуживание:
+
+| | |
+|---|---|
+| `deploy_miniapp.py` | выкладка архива исходников на VPS с тестами и откатом (сервер) |
+| `rollback_miniapp.py` | список и восстановление последних совместимых версий кода (сервер) |
+| `rollback_cli.py`, `rollback-miniapp.bat` | тот же откат с ПК через SSH `tagvps` |
+| `audit.py` | сверка боевых данных: сходятся ли экраны между собой (сервер) |
+| `backup.sh` | ежедневная копия баз, счетов и `.env` (сервер, таймер systemd) |
+| `TagMarkets.bat` | пульт на ПК: состояние, запуск и остановка агента и сторожа |
+| `status.ps1` | четыре строки состояния для пульта (бот, синхронизация, агент, терминал) |
+| `keeper.ps1`, `run_keeper.vbs` | сторож агента и его запуск без окна |
+| `run_agent.vbs` | запуск агента без окна консоли (задача планировщика) |
+| `run_agent.bat` | прежний запуск агента — мелькает окном, заменяется `run_agent.vbs` |
+| `setup_console_free.ps1` | переключает задачу планировщика с `.bat` на `.vbs` (UAC) |
+| `rollback.ps1` | ручной откат кода агента на один из последних коммитов |
 
 Модули и точки входа (`bot.py`, `agent.py`, `webhook_server.py`…) лежат в корне
 намеренно: systemd-сервисы, задачи Планировщика Windows и самообновление агента
@@ -56,10 +69,31 @@ Telegram-бот: сделки по счетам MT5 и события партн
 ## Проверки
 
 ```bash
-python tests/selfcheck.py   # логика на выдуманных числах — быстро, без сети
-python tests/test_miniapp.py # права доступа, синхронизация, lease и API
-python tools/audit.py       # сверка боевых данных: сходятся ли экраны между собой
+python tests/selfcheck.py    # логика на выдуманных числах — быстро, без сети
+python tests/test_miniapp.py # права доступа, синхронизация, аренда опроса и API
+node --check web/app.js      # синтаксис фронтенда
+python tools/audit.py        # на сервере: сверка боевых данных между экранами
 ```
+
+Все тесты работают на временных базах и `accounts.json` — боевые данные,
+Telegram и VPS не затрагиваются. Тот же набор гоняет GitHub Actions
+(`.github/workflows/ci.yml`) на каждый push: Python 3.10 и 3.13, линтер и
+браузерный прогон интерфейса.
+
+### Разработка
+
+```bash
+python -m venv .venv && . .venv/bin/activate
+pip install -r requirements-dev.txt   # зависимости + ruff и playwright
+ruff check .                          # только настоящие ошибки, см. ruff.toml
+python -m playwright install chromium
+python tests/ui_smoke.py              # Mini App в браузере: 320–1280 px, предпросмотр
+```
+
+Новые модули в корне на сервер сами не попадут: выкладка принимает архив
+строго из `FILES` в `tools/deploy_miniapp.py` (и `tools/rollback_miniapp.py`).
+Агенты на ПК обновляются из ветки `main` автоматически (канарейка — сначала
+резервная машина), поэтому в `main` попадает только проверенный код.
 
 ## Деньги: как считается
 
