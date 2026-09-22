@@ -358,11 +358,18 @@ def purge(owner) -> int:
 
 @transaction
 def unshare(from_owner, to_owner) -> int:
-    """Revoke only copies explicitly shared by from_owner with to_owner."""
+    """Revoke copies explicitly shared by from_owner with to_owner.
+
+    An "inferred" copy is also removed once it is orphaned — its login no
+    longer belongs to from_owner at all, so there is nothing left for it to
+    be confused with; the ambiguity that protected it from bulk revoke was
+    specifically about a login still live on the inviter's own side.
+    """
     data = _read()
+    mine = {int(a["login"]) for a in data if str(a["owner"]) == str(from_owner)}
     left = [a for a in data if not (str(a["owner"]) == str(to_owner)
             and str(a.get("shared_by", "")) == str(from_owner)
-            and a.get("shared_origin") != "inferred")]
+            and (a.get("shared_origin") != "inferred" or int(a["login"]) not in mine))]
     if len(left) != len(data):
         save(left)
     return len(data) - len(left)

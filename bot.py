@@ -695,8 +695,13 @@ def revoke_guest(db, inviter, guest) -> int:
     """Sever this invitation without deleting accounts the guest added personally."""
     if str(kv_get(db, f"guest_by:{guest}")) != str(inviter):
         raise ValueError("пользователь не приглашён вами")
+    # inferred-копия блокирует отзыв, только пока у неё есть с чем спутать
+    # происхождение — тот же логин ещё жив у самого пригласившего. Если
+    # владелец уже удалил счёт, копия — осиротевший мусор без риска отдать
+    # чужие данные, и ждать ручной сверки для неё незачем.
+    mine_logins = {int(a["login"]) for a in accounts.load(inviter)}
     if any(a.get("shared_by") == str(inviter) and a.get("shared_origin") == "inferred"
-           for a in accounts.load(guest)):
+           and int(a["login"]) in mine_logins for a in accounts.load(guest)):
         raise ValueError("старые копии счетов требуют проверки владельцем сервиса")
     removed = accounts.unshare(inviter, guest)
     kv_del(db, f"guest_by:{guest}")

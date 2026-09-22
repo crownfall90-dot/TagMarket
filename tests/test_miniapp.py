@@ -48,12 +48,17 @@ class LeaseTests(unittest.TestCase):
     def tearDown(self):
         self.db.close()
 
-    def test_recovered_primary_cannot_preempt_healthy_standby(self):
+    def test_recovered_primary_preempts_healthy_standby(self):
+        # Primary always takes the lease back, even from a standby whose
+        # lease has not expired yet — reserve only fills in while primary is
+        # genuinely offline, it never keeps holding once primary is back.
         self.assertTrue(coordination.claim(self.db, "reserve", "r", "standby", 100)["granted"])
         coordination.renew(self.db, "reserve", "r", 250)
-        for moment in (110, 160, 300, 420):
-            self.assertFalse(coordination.claim(self.db, "main", "m", "primary", moment)["granted"])
-        self.assertTrue(coordination.permits(self.db, "reserve", "r", 420))
+        self.assertTrue(coordination.claim(self.db, "main", "m", "primary", 110)["granted"])
+        self.assertTrue(coordination.permits(self.db, "main", "m", 110))
+        self.assertFalse(coordination.permits(self.db, "reserve", "r", 110))
+        # a second primary claim (e.g. retry) is just a renewal, not a fresh preempt
+        self.assertTrue(coordination.claim(self.db, "main", "m", "primary", 200)["granted"])
 
     def test_failover_and_fencing(self):
         coordination.claim(self.db, "main", "m", "primary", 0)
@@ -81,7 +86,7 @@ class LeaseTests(unittest.TestCase):
         self.assertFalse(coordination.authorize(self.db, "old-reserve", None, 100))
         self.assertTrue(coordination.permits(self.db, "main", "m", 100))
 
-    def test_legacy_standby_replaces_offline_primary_and_holds_lease(self):
+    def test_legacy_standby_replaces_offline_primary_until_it_returns(self):
         # Production failure: reserve on pre-lease code was fenced forever
         # after the primary went offline, so nobody polled MT5.
         coordination.claim(self.db, "main", "m", "primary", 0)
@@ -89,12 +94,11 @@ class LeaseTests(unittest.TestCase):
         self.assertTrue(coordination.authorize(self.db, "old-reserve", None, 181))
         coordination.renew(self.db, "old-reserve", None, 200)
         self.assertEqual(coordination.read(self.db)["expires"], 380)
-        # A recovered new-code primary must not preempt it.
-        self.assertFalse(coordination.claim(self.db, "main", "m2", "primary", 300)["granted"])
-        self.assertTrue(coordination.authorize(self.db, "old-reserve", None, 300))
-        self.assertFalse(coordination.permits(self.db, "main", "m2", 300))
-        # Once the legacy machine stops uploading, the primary gets it back.
-        self.assertTrue(coordination.claim(self.db, "main", "m2", "primary", 381)["granted"])
+        # A recovered new-code primary preempts it right away — legacy reserve
+        # only ever filled in for an offline primary, never holds it back.
+        self.assertTrue(coordination.claim(self.db, "main", "m2", "primary", 300)["granted"])
+        self.assertFalse(coordination.authorize(self.db, "old-reserve", None, 300))
+        self.assertTrue(coordination.permits(self.db, "main", "m2", 300))
 
 
 class MachineStateTests(unittest.TestCase):
@@ -810,6 +814,24 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status, 409)
         self.assertEqual(len(accounts.load(2)), 1)
         self.assertEqual(partner.kv_get(self.db, "guest_by:2"), "1")
+
+    async def test_orphaned_inferred_copy_does_not_block_revoke(self):
+        # Same ambiguous copy as above, but the owner has since deleted their
+        # own side of the login — nothing left to confuse it with, so it
+        # must not hold a guest with 0 visible accounts hostage forever.
+        partner.kv_set(self.db, "guest:2", "1")
+        partner.kv_set(self.db, "guest_by:2", "1")
+        accounts.add({**self.acc, "owner":"2", "name":"Old copy"})
+        after_restart = web.Application()
+        after_restart["db"] = self.db
+        miniapp.setup(after_restart)
+        self.assertEqual(accounts.load(2)[0].get("shared_origin"), "inferred")
+        accounts.remove_login(self.acc["login"], 1)
+        self.assertEqual(accounts.load(1), [])
+        response = await self.call("POST", "/api/guests/2", json={"action":"revoke"})
+        self.assertEqual(response.status, 200)
+        self.assertEqual(accounts.load(2), [])
+        self.assertIsNone(partner.kv_get(self.db, "guest_by:2"))
 
     async def test_fenced_sync_does_not_mutate_data(self):
         coordination.claim(self.db,"main","session-aaaaaaaaaaaaaaaa","primary")

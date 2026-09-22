@@ -24,9 +24,14 @@ def claim(db, host, session, role, now=None):
         current = read(db)
         own = current and (current["host"], current["session"]) == (host, session)
         expired = current and current["expires"] <= now
+        # Primary всегда перехватывает у не-primary держателя, даже если его
+        # аренда ещё не истекла — так и просили: основная забирает себе
+        # всегда, резерв работает только пока основная реально не отвечает.
+        preempt = (role == "primary" and current and not own
+                   and current.get("role") != "primary")
         # A process that stopped producing data gives another machine a full
         # lease window to take over instead of reacquiring on each retry.
-        granted = (not current or (own and not expired)
+        granted = (not current or (own and not expired) or preempt
                    or (expired and (not own or now >= current["expires"] + TTL)))
         if granted and (not own or expired):
             current = {"host": host, "session": session, "role": role,
