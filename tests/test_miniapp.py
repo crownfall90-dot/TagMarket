@@ -210,6 +210,70 @@ class FormattingTests(unittest.TestCase):
         self.assertEqual([m["amount"] for m in partner.site_moves(db, "CU1")], [100.0, 100.0])
 
 
+class PortalTests(unittest.IsolatedAsyncioTestCase):
+    """ibportal против подставного API кабинета — без сети и без настоящих токенов."""
+
+    async def asyncSetUp(self):
+        import aiohttp
+        import ibportal
+        self.portal = ibportal
+        self.tmp = tempfile.TemporaryDirectory()
+        base = ibportal.BASE
+        app = web.Application()
+
+        async def refresh(request):
+            # метка срока без зоны — так её отдаёт .NET
+            return web.json_response({"accessToken": "a1", "refreshToken": "r2",
+                                      "expiresAt": "2099-01-01T00:00:00"})
+
+        async def notifications(request):
+            if request.headers.get("Authorization") != "Bearer a1":
+                return web.json_response({"message": "unauthorized"}, status=401)
+            return web.json_response({"items": [{"id": 1, "title": "t"}]})
+
+        async def gateway_error(request):
+            return web.Response(text="<html>502 Bad Gateway</html>", status=502, content_type="text/html")
+
+        app.router.add_post(f"{base}/Auth/refresh", refresh)
+        app.router.add_get(f"{base}/Notifications", notifications)
+        app.router.add_get(f"{base}/Distributor/Status", gateway_error)
+        self.server = TestServer(app)
+        await self.server.start_server()
+        self.session = aiohttp.ClientSession()
+        self.token_file = str(Path(self.tmp.name) / "ib_token")
+        self.patches = [patch.object(ibportal, "API", str(self.server.make_url("")).rstrip("/")),
+                        patch.object(ibportal, "TOKEN_FILE", self.token_file),
+                        patch.object(ibportal, "_token", ""), patch.object(ibportal, "_refresh", ""),
+                        patch.dict(os.environ, {"IB_REFRESH_TOKEN": "r1"})]
+        for p in self.patches:
+            p.start()
+
+    async def asyncTearDown(self):
+        for p in reversed(self.patches):
+            p.stop()
+        await self.session.close()
+        await self.server.close()
+        self.tmp.cleanup()
+
+    async def test_token_without_timezone_does_not_break_the_next_request(self):
+        self.assertEqual(await self.portal.notifications(self.session), [{"id": 1, "title": "t"}])
+        # второй запрос сравнивает «сейчас» со сроком токена — раньше TypeError
+        self.assertEqual(len(await self.portal.notifications(self.session)), 1)
+
+    async def test_refresh_token_is_saved_atomically_and_privately(self):
+        await self.portal.notifications(self.session)
+        with open(self.token_file, encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), "r2")
+        self.assertFalse(os.path.exists(self.token_file + ".tmp"))
+        if os.name == "posix":
+            self.assertEqual(os.stat(self.token_file).st_mode & 0o777, 0o600)
+
+    async def test_html_error_page_becomes_portal_error(self):
+        with self.assertRaises(self.portal.PortalError) as caught:
+            await self.portal.status(self.session)
+        self.assertIn("502", str(caught.exception))
+
+
 class AuthTests(unittest.TestCase):
     def test_authentication_and_tamper(self):
         self.assertEqual(miniapp.validate_init_data(signed(42), "test-token")["id"], 42)
