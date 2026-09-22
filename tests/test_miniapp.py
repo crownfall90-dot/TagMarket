@@ -189,6 +189,23 @@ class BroadcastFormatTests(unittest.TestCase):
     def test_telegram_counts_emoji_as_two_caption_units(self):
         self.assertEqual(miniapp.telegram_length("😀" * 600), 1200)
 
+    def test_same_login_on_another_server_is_reported(self):
+        """DATA-02: один login на двух серверах — разные физические счета.
+
+        Таблицы ключуются одним login, поэтому такой синк молча затрёт
+        баланс и капитал чужого счёта. Пока брокер один, этого не бывает;
+        защёлка должна сказать, когда появится второй.
+        """
+        db = store.open_db(":memory:")
+        store.save_state(db, 500, 10.0, 10.0, "USD", "Broker-A")
+        with self.assertLogs("store", level="ERROR") as logs:
+            store.save_state(db, 500, 20.0, 20.0, "USD", "Broker-B")
+        self.assertIn("DATA-02", logs.output[0])
+        # тот же сервер — молчим, это обычный синк
+        with patch.object(store.log, "error") as quiet:
+            store.save_state(db, 500, 30.0, 30.0, "USD", "Broker-B")
+            quiet.assert_not_called()
+
     def test_undelivered_portal_event_comes_back_next_round(self):
         """Сбой Telegram не должен съедать событие кабинета.
 

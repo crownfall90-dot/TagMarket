@@ -7,9 +7,12 @@
 Схема специально плоская: сделка целиком, как её отдал MT5, плюс логин счёта.
 """
 
+import logging
 import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
+
+log = logging.getLogger(__name__)
 
 
 def utcnow() -> datetime:
@@ -186,6 +189,18 @@ def get_candles(db, since: datetime, until: datetime) -> list[dict]:
 
 def save_state(db, login: int, balance: float, equity: float, currency: str,
                server: str, capital_hist: float = None, *, commit: bool = True) -> None:
+    # DATA-02: state/deals/months/commands ключуются одним login, а физический
+    # счёт — это login+server. Пока брокер один, номера не пересекаются и
+    # проблема не проявляется; со вторым брокером два счёта начали бы молча
+    # затирать друг другу баланс и капитал. Переписывать схему ради этого
+    # рано — но молчать нельзя, поэтому ловим момент, когда риск станет
+    # реальным. ponytail: заметка в логе, не защита; настоящее лечение —
+    # составной ключ (login, server) во всех четырёх таблицах
+    was = db.execute("SELECT server FROM state WHERE login=?", (int(login),)).fetchone()
+    if was and was[0] and server and was[0] != server:
+        log.error("DATA-02: счёт %s числится на «%s», а синк пришёл с «%s» — "
+                  "историю и баланс этих счетов смешает, нужен ключ login+server",
+                  login, was[0], server)
     db.execute(
         "INSERT INTO state (login, balance, equity, currency, server, synced, capital_hist) "
         "VALUES (?, ?, ?, ?, ?, ?, ?) "
