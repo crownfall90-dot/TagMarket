@@ -257,11 +257,6 @@ dialog.info-only #dialog-body{padding-bottom:22px}
 .extreme .result-pair b{font-size:16px}
 
 /* выбор счёта фишками */
-.account-chips{display:flex;gap:8px;overflow-x:auto;padding:2px 2px 14px;margin:0 -2px;scrollbar-width:none;-webkit-overflow-scrolling:touch}
-.account-chips::-webkit-scrollbar{display:none}
-.chip{flex:none;display:grid;gap:2px;min-width:112px;text-align:left;padding:10px 14px;border-radius:14px;border:1px solid var(--line);background:var(--raised);color:var(--text);cursor:pointer;transition:border-color .2s,background .2s}
-.chip b{font-size:13px}.chip small{font-size:11px;color:var(--muted)}
-.chip.active{border-color:var(--accent);background:rgb(var(--accent-rgb) / .10)}.chip.active b{color:var(--accent)}
 
 /* движения средств */
 .fee-card{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:14px 0}

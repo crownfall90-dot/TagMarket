@@ -69,26 +69,6 @@ def main():
                     page.locator('#dialog button[value="cancel"]').last.click()
 
                     nav = "#mobile-nav" if width < 740 else "#desktop-nav"
-                    page.locator(f'{nav} a[href="#deals"]').click()
-                    page.locator(".deal-days").wait_for()
-                    assert page.locator(".deal-row").count() == 8
-                    assert page.locator(".deals-overview .result-pair small").count() == 1
-                    fits(page)
-                    if width == 390:
-                        page.wait_for_timeout(550)
-                        shot = screenshots / "tagmarkets-mobile-deals-smoke.png"
-                        page.screenshot(path=str(shot), full_page=True)
-                        print("Mobile screenshot:", shot)
-                    page.locator('.deal-highlight[data-value="lastweek"]').click()
-                    page.locator('.deal-highlight[data-value="lastweek"].active').wait_for()
-                    assert page.locator('.deals-overview .result-pair b').count() == 1
-                    page.locator('[data-action="kind"][data-value="archive"]').click()
-                    page.locator('.archive-panel').wait_for()
-                    page.locator('[data-action="kind"][data-value="moves"]').click()
-                    page.locator('[data-action="kind"][data-value="moves"].active').wait_for()
-                    page.locator('[data-action="kind"][data-value="trades"]').click()
-                    fits(page)
-
                     page.locator(f'{nav} a[href="#accounts"]').click()
                     page.locator('.account-list').first.wait_for()
                     if width == 390:
@@ -113,11 +93,24 @@ def main():
                     assert page.locator('.detail-strategy').count() == 1
                     assert page.locator('.license-card .license-actions a').count() == 2
                     assert page.locator(f'{nav} a[href="#accounts"].active').count() == 1
+                    # сделки, движения и месяцы живут на самой странице счёта:
+                    # отдельного раздела «Сделки» больше нет
+                    page.locator(".deal-days").wait_for()
+                    assert page.locator(".deal-row").count() > 0
+                    page.locator('[data-action="kind"][data-value="archive"]').click()
+                    page.locator('.archive-panel').wait_for()
+                    page.locator('[data-action="kind"][data-value="moves"]').click()
+                    page.locator('[data-action="kind"][data-value="moves"].active').wait_for()
+                    page.locator('[data-action="kind"][data-value="trades"]').click()
+                    page.locator(".deal-days").wait_for()
+                    fits(page)
                     sonic_result = page.locator('.detail-chart .result-pair b').inner_text()
-                    page.locator('#account-select').select_option('10002')
+                    page.locator(f'{nav} a[href="#accounts"]').click()
+                    page.locator('a[href="#account/10002"]').first.click()
                     page.locator('.detail-hero h1').get_by_text('NEO.FX').wait_for()
                     assert page.locator('.detail-chart .result-pair b').inner_text() != sonic_result
-                    page.locator('#account-select').select_option('10001')
+                    page.locator(f'{nav} a[href="#accounts"]').click()
+                    page.locator('a[href="#account/10001"]').first.click()
                     page.locator('.detail-hero h1').get_by_text('SONIC').wait_for()
                     page.locator('[data-action="account-settings"]').first.click()
                     assert page.locator('#dialog input[name="trades"]').count() == 1
