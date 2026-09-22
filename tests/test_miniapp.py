@@ -849,6 +849,23 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(accounts.load(2), [])
         self.assertIsNone(partner.kv_get(self.db, "guest_by:2"))
 
+    async def test_inferred_demo_copy_does_not_block_revoke(self):
+        # Боевой случай: у гостя всего одна запись — копия общего демо-счёта,
+        # помеченная inferred старым кодом. В интерфейсе он «0 счетов», а
+        # отзыв падал с 409: демо есть у каждого гостя и спорить о его
+        # происхождении не о чем.
+        partner.kv_set(self.db, "guest:2", "1")
+        partner.kv_set(self.db, "guest_by:2", "1")
+        demo = {**self.acc, "login": 555, "name": "Demo", "strategy": "Demo", "demo": True}
+        accounts.add(demo)
+        accounts.add({**demo, "owner": "2", "shared_by": "1", "shared_origin": "inferred"})
+        response = await self.call("POST", "/api/guests/2", json={"action": "revoke"})
+        self.assertEqual(response.status, 200, await response.text())
+        self.assertEqual(accounts.load(2), [])
+        self.assertIsNone(partner.kv_get(self.db, "guest_by:2"))
+        # у пригласившего собственный демо-счёт остался нетронутым
+        self.assertEqual([int(a["login"]) for a in accounts.load(1)], [123, 555])
+
     async def test_fenced_sync_does_not_mutate_data(self):
         coordination.claim(self.db,"main","session-aaaaaaaaaaaaaaaa","primary")
         r = await self.client.post("/agent/sync",headers={"X-Token":"agent-test"},

@@ -699,9 +699,13 @@ def revoke_guest(db, inviter, guest) -> int:
     # происхождение — тот же логин ещё жив у самого пригласившего. Если
     # владелец уже удалил счёт, копия — осиротевший мусор без риска отдать
     # чужие данные, и ждать ручной сверки для неё незачем.
+    # Демо не в счёт: это общий публичный счёт, его копия есть у каждого
+    # гостя и приватных данных в ней нет — спорить о происхождении нечего,
+    # а иначе гость с одной лишь демо-копией не отзывался вообще никогда.
     mine_logins = {int(a["login"]) for a in accounts.load(inviter)}
     if any(a.get("shared_by") == str(inviter) and a.get("shared_origin") == "inferred"
-           and int(a["login"]) in mine_logins for a in accounts.load(guest)):
+           and not a.get("demo") and int(a["login"]) in mine_logins
+           for a in accounts.load(guest)):
         raise ValueError("старые копии счетов требуют проверки владельцем сервиса")
     removed = accounts.unshare(inviter, guest)
     kv_del(db, f"guest_by:{guest}")

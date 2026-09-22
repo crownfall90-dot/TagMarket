@@ -364,12 +364,20 @@ def unshare(from_owner, to_owner) -> int:
     longer belongs to from_owner at all, so there is nothing left for it to
     be confused with; the ambiguity that protected it from bulk revoke was
     specifically about a login still live on the inviter's own side.
+
+    The shared demo account is never ambiguous either: it is public, every
+    guest holds a copy of it and it carries no private data, so an inferred
+    demo copy is revoked like any other instead of blocking the whole revoke.
     """
     data = _read()
     mine = {int(a["login"]) for a in data if str(a["owner"]) == str(from_owner)}
+    def ambiguous(a):
+        return (a.get("shared_origin") == "inferred" and not a.get("demo")
+                and int(a["login"]) in mine)
+
     left = [a for a in data if not (str(a["owner"]) == str(to_owner)
             and str(a.get("shared_by", "")) == str(from_owner)
-            and (a.get("shared_origin") != "inferred" or int(a["login"]) not in mine))]
+            and not ambiguous(a))]
     if len(left) != len(data):
         save(left)
     return len(data) - len(left)
