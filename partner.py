@@ -785,3 +785,17 @@ def unseen(db, kind: str, rows: list[dict]) -> tuple[list[dict], bool]:
             (kind, kind, SEEN_KEEP))
     db.commit()
     return fresh, first_run
+
+
+def forget_seen(db, kind: str, rows: list[dict]) -> None:
+    """Снять отметку «видели» — событие не доставлено, пусть придёт снова.
+
+    unseen() отмечает до отправки, иначе повторный опрос (или ретрай
+    портала по таймауту) продублировал бы сообщение. Но если отправка не
+    состоялась, отметка означает потерю события навсегда. Там, где есть
+    следующий круг опроса, дешевле снять отметку и позволить событию
+    прийти заново, чем заводить отдельный outbox с ретраями.
+    """
+    for row in rows:
+        db.execute("DELETE FROM seen WHERE kind=? AND id=?", (kind, row_id(row)))
+    db.commit()

@@ -1582,20 +1582,29 @@ async def poll_portal(session, bot: Bot, db, chat_id: str) -> int:
         return 0
 
     sent, income, trades_n = 0, 0.0, 0
-    for row in fresh:
-        if row.get("eventType") == partner.PORTAL_INCOME:
-            # доход с сети капает по копейке — копим на сводку, а не спамим
-            income += partner.portal_amount(row)
-            trades_n += 1
-            continue
-        if _repeat_of_recent(db, row):
-            continue
-        partner.record_notification(db, FOUNDER or chat_id, "portal:" + partner.row_id(row),
-                                    "portal", str(row.get("title") or "Событие кабинета"),
-                                    str(row.get("body") or ""))
-        await send(bot, chat_id, partner.fmt_portal(row), DASHBOARD_BTN)
-        sent += 1
-        await asyncio.sleep(0.05)
+    undelivered, i = [], 0
+    try:
+        for i, row in enumerate(fresh):
+            if row.get("eventType") == partner.PORTAL_INCOME:
+                # доход с сети капает по копейке — копим на сводку, а не спамим
+                income += partner.portal_amount(row)
+                trades_n += 1
+                continue
+            if _repeat_of_recent(db, row):
+                continue
+            partner.record_notification(db, FOUNDER or chat_id, "portal:" + partner.row_id(row),
+                                        "portal", str(row.get("title") or "Событие кабинета"),
+                                        str(row.get("body") or ""))
+            await send(bot, chat_id, partner.fmt_portal(row), DASHBOARD_BTN)
+            sent += 1
+            await asyncio.sleep(0.05)
+    except Exception:
+        # Telegram недоступен: всё, начиная с упавшего, снимаем с отметки
+        # «видели» — иначе событие потеряно навсегда, ретраев здесь нет.
+        # Хвост цикла не обработан вовсе, поэтому доход из него тоже не
+        # зачтён и должен вернуться; посчитанное до падения уже в income
+        undelivered = fresh[i:]
+        log.exception("кабинет: не доставил событие, верну его следующим кругом")
 
     if income:
         day = str(trades.clock().date())
@@ -1604,6 +1613,8 @@ async def poll_portal(session, bot: Bot, db, chat_id: str) -> int:
         kv_set(db, f"net_trades:{day}",
                str(int(kv_get(db, f"net_trades:{day}", 0) or 0) + trades_n))
         log.info("доход с сети: +%.4f за %d сделок сети", income, trades_n)
+    if undelivered:
+        partner.forget_seen(db, "portal", undelivered)
     return sent
 
 
@@ -3219,13 +3230,12 @@ async def main():
                     log.exception("сбой наблюдения за агентскими машинами")
 
         async def daily_digest():
-            """Раз в сутки — сводка о состоянии, если человек её просил.
+            """Раз в сутки — сводка о состоянии агентских машин, основателю.
 
-            Сама по себе строчка «счетов отслеживается 0 из 4» бесполезна:
-            утром ноутбук обычно выключен, и это норма, а не новость. Поэтому
-            сводка идёт только тем, кто включил уведомления о связи, и только
-            когда есть что сказать: доход с сети или счета реально отвалились
-            среди рабочего дня.
+            Только основателю и только при включённой ручке update_alerts:
+            это то же «что происходит с агентом», что и heartbeat, а клиент
+            агентскими машинами не управляет — ежедневное «счетов 2 из 2»
+            ему ничего не даёт и выключить его он не может.
             """
             import store as _st
             while True:
@@ -3233,41 +3243,39 @@ async def main():
                 now = trades.clock()
                 if now.hour != DIGEST_HOUR or kv_get(db, "digest_day") == str(now.date()):
                     continue
+                if not update_alerts_on(db):
+                    continue
                 kv_set(db, "digest_day", str(now.date()))
                 try:
                     sdb = _st.open_db()
-                    gaps, fresh = [], 0
-                    for acc in accounts.load():
+                    # знаменатель — все счета, а не только успевшие
+                    # синхронизироваться: иначе полное молчание агента
+                    # выглядит как зелёное «0 из 0»
+                    all_accs = accounts.load()
+                    fresh = 0
+                    for acc in all_accs:
                         st = _st.get_state(sdb, acc["login"])
                         if st and st.get("synced"):
                             gap = (utcnow()
                                    - datetime.fromisoformat(st["synced"])).total_seconds()
-                            gaps.append(gap)
                             fresh += gap < TERMINAL_STALE
-                    total = len(gaps)
+                    total = len(all_accs)
                     link = "🟢" if fresh == total else ("🟡" if fresh else "🔴")
                     weekend = " · выходной, сделок не ждём" if trades.is_weekend(now) else ""
-                    for who in {str(a["owner"]) for a in accounts.load()}:
-                        mine = accounts.load(who)
-                        ok = sum(1 for a in mine
-                                 if (s := _st.get_state(sdb, a["login"])) and s.get("synced")
-                                 and (utcnow()
-                                      - datetime.fromisoformat(s["synced"])).total_seconds()
-                                 < TERMINAL_STALE)
-                        # доход с сети за вчера — он копится поштучно и мелко,
-                        # одной строкой в сводке читается куда лучше
-                        was = str((now - timedelta(days=1)).date())
-                        earned = float(kv_get(db, f"net_income:{was}", 0) or 0)
-                        n_net = int(kv_get(db, f"net_trades:{was}", 0) or 0)
-                        income = (f"\n💸 Доход с сети за вчера: "
-                                  f"<b>{trades.amount(earned, 'USD', signed=True)}</b>"
-                                  f" <i>({n_net} сделок сети)</i>" if earned else "")
-                        await send(bot, who,
-                                   f"{link} <b>Бот на связи</b>\n{trades.THIN}\n"
-                                   f"Счетов отслеживается: <b>{ok} из {len(mine)}</b>"
-                                   f"{weekend}{income if str(who) == str(chat_id) else ''}\n"
-                                   f"<i>{now:%d.%m.%Y}, "
-                                   f"{trades.WEEKDAYS[now.weekday()]}</i>")
+                    # доход с сети за вчера — он копится поштучно и мелко,
+                    # одной строкой в сводке читается куда лучше
+                    was = str((now - timedelta(days=1)).date())
+                    earned = float(kv_get(db, f"net_income:{was}", 0) or 0)
+                    n_net = int(kv_get(db, f"net_trades:{was}", 0) or 0)
+                    income = (f"\n💸 Доход с сети за вчера: "
+                              f"<b>{trades.amount(earned, 'USD', signed=True)}</b>"
+                              f" <i>({n_net} сделок сети)</i>" if earned else "")
+                    await send(bot, chat_id,
+                               f"{link} <b>Бот на связи</b>\n{trades.THIN}\n"
+                               f"Счетов отслеживается: <b>{fresh} из {total}</b>"
+                               f"{weekend}{income}\n"
+                               f"<i>{now:%d.%m.%Y}, "
+                               f"{trades.WEEKDAYS[now.weekday()]}</i>")
                 except Exception:
                     log.exception("не собрал ежедневную сводку")
 

@@ -2,6 +2,7 @@
 import asyncio
 import hashlib
 import hmac
+import inspect
 import io
 import json
 import os
@@ -24,6 +25,7 @@ os.environ.update(TRADES_SOURCE="store", TELEGRAM_BOT_TOKEN="test-token",
 from aiohttp import FormData, web
 from aiohttp.test_utils import TestClient, TestServer
 import accounts
+import bot
 import coordination
 import miniapp
 import partner
@@ -542,6 +544,83 @@ class BroadcastFormatTests(unittest.TestCase):
 
     def test_telegram_counts_emoji_as_two_caption_units(self):
         self.assertEqual(miniapp.telegram_length("😀" * 600), 1200)
+
+    def test_same_login_on_another_server_is_reported(self):
+        """DATA-02: один login на двух серверах — разные физические счета.
+
+        Таблицы ключуются одним login, поэтому такой синк молча затрёт
+        баланс и капитал чужого счёта. Пока брокер один, этого не бывает;
+        защёлка должна сказать, когда появится второй.
+        """
+        db = store.open_db(":memory:")
+        store.save_state(db, 500, 10.0, 10.0, "USD", "Broker-A")
+        with self.assertLogs("store", level="ERROR") as logs:
+            store.save_state(db, 500, 20.0, 20.0, "USD", "Broker-B")
+        self.assertIn("DATA-02", logs.output[0])
+        # тот же сервер — молчим, это обычный синк
+        with patch.object(store.log, "error") as quiet:
+            store.save_state(db, 500, 30.0, 30.0, "USD", "Broker-B")
+            quiet.assert_not_called()
+
+    def test_undelivered_portal_event_comes_back_next_round(self):
+        """Сбой Telegram не должен съедать событие кабинета.
+
+        unseen() отмечает событие до отправки (иначе повторный опрос
+        продублировал бы сообщение), поэтому упавшая отправка означала
+        потерю насовсем: ретраев в poll_portal нет.
+        """
+        db = partner.open_db(":memory:")
+        rows = [{"id": "e1", "eventType": "DEPOSIT", "title": "Пополнение", "body": "+5"},
+                {"id": "e2", "eventType": "TRADE_CLOSED", "title": "Сделка",
+                 "templateVariables": {"amount": "0.25"}},
+                {"id": "e3", "eventType": "DEPOSIT", "title": "Вывод", "body": "-7"}]
+        partner.unseen(db, "portal", rows)          # первый запуск — только запоминаем
+
+        async def dead_telegram(*a, **kw):
+            raise RuntimeError("Telegram недоступен")
+
+        partner.forget_seen(db, "portal", rows)     # событий никто не видел
+        partner.unseen(db, "portal", [{"id": "seed"}])   # снимаем first_run
+        asyncio.run(self._poll(db, rows, dead_telegram))
+
+        # падение было на первом же событии: весь хвост вернулся в очередь,
+        # доход из него не зачтён — иначе следующий круг прибавил бы его снова
+        still = {r[0] for r in db.execute("SELECT id FROM seen WHERE kind='portal'")}
+        self.assertEqual(still & {"e1", "e2", "e3"}, set())
+        day = str(trades.clock().date())
+        self.assertEqual(float(partner.kv_get(db, f"net_income:{day}", 0) or 0), 0.0)
+
+        # а доход, посчитанный ДО падения, назад не возвращается: событие
+        # дохода идёт первым, падаем на следующем за ним. Нужна чистая база:
+        # _repeat_of_recent помнит отпечатки текстов от прошлого прогона
+        db = partner.open_db(":memory:")
+        partner.unseen(db, "portal", [{"id": "seed"}])
+        asyncio.run(self._poll(db, [rows[1], rows[0]], dead_telegram))
+        still = {r[0] for r in db.execute("SELECT id FROM seen WHERE kind='portal'")}
+        self.assertIn("e2", still)          # зачтён — второй раз не придёт
+        self.assertNotIn("e1", still)       # не доставлен — вернётся
+        self.assertEqual(float(partner.kv_get(db, f"net_income:{day}", 0) or 0), 0.25)
+
+    @staticmethod
+    async def _poll(db, rows, sender):
+        with patch.object(bot.ibportal, "notifications", return_value=rows), \
+                patch.object(bot, "send", sender), patch.object(bot, "FOUNDER", "1"):
+            return await bot.poll_portal(None, None, db, "1")
+
+    def test_daily_digest_goes_only_to_the_founder(self):
+        """Сводка про агентские машины — личное дело основателя.
+
+        Раньше она рассылалась по всем владельцам счетов, и клиент не мог
+        её выключить: ручка update_alerts — не его. Функция вложена в
+        замыкание с бесконечным циклом, поэтому проверяем её исходник.
+        """
+        body = inspect.getsource(bot).split("async def daily_digest(")[1]
+        body = body.split("\n        async def ")[0].split("\n        asyncio.")[0]
+        self.assertIn("update_alerts_on(db)", body)      # уважает ручку
+        self.assertIn("send(bot, chat_id,", body)        # шлём основателю
+        self.assertNotIn('a["owner"]', body)             # и никому больше
+        # знаменатель — все счета: иначе молчащий агент даёт «0 из 0»
+        self.assertIn("total = len(all_accs)", body)
 
 
 class ApiTests(unittest.IsolatedAsyncioTestCase):
