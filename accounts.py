@@ -18,12 +18,31 @@
 """
 
 import json
+import logging
 import os
+import re
 from cryptography.fernet import Fernet, InvalidToken
 from account_lock import transaction
 
+log = logging.getLogger("accounts")
+
 PATH = os.getenv("ACCOUNTS_FILE", os.path.join("data", "accounts.json"))
 REQUIRED = ("owner", "name", "login", "password", "server")
+_reported_broken: set = set()   # о каждой испорченной записи пишем в лог один раз
+
+# Customer Number кабинета (CU228816). Он уходит в callback_data кнопок бота —
+# лимит Telegram 64 байта, двоеточие там разделитель, — и сверяется с номером
+# из портала посимвольно: кириллическая «С» выглядит как латинская C, но с
+# порталом уже не совпадёт
+CABINET_RE = re.compile(r"[A-Z0-9._-]{1,24}")
+
+
+def normalize_cabinet(value) -> str:
+    """Номер кабинета в каноническом виде (без пробелов, заглавными) или ValueError."""
+    cabinet = "".join(value.split()).upper() if isinstance(value, str) else ""
+    if not CABINET_RE.fullmatch(cabinet):
+        raise ValueError("номер кабинета — латинские буквы и цифры, например CU228816")
+    return cabinet
 
 # какие уведомления слать по счёту; по умолчанию все включены
 NOTIFY_KINDS = {"trades": "Сделки", "deposits": "Пополнения", "withdrawals": "Выводы"}
@@ -69,12 +88,25 @@ def _cipher(create=True):
 
 
 def load(owner=None) -> list[dict]:
-    """Счета владельца. Без owner — все, это нужно только фоновому опросу."""
-    data = _read()
-    for acc in data:
+    """Счета владельца. Без owner — все, это нужно только фоновому опросу.
+
+    Запись без обязательного поля пропускается (и один раз пишется в лог), а
+    не роняет чтение целиком: раньше одна испорченная запись одного человека
+    ломала отчёты, опрос и Mini App сразу у всех пользователей. Сама запись в
+    файле остаётся — мутации читают его через _read() и её не теряют.
+    """
+    data = []
+    for acc in _read():
         missing = [k for k in REQUIRED if not acc.get(k)]
         if missing:
-            raise ValueError(f"счёт {acc.get('name', '?')}: не заполнено {', '.join(missing)}")
+            mark = (str(acc.get("owner")), str(acc.get("login")), tuple(missing))
+            if mark not in _reported_broken:
+                _reported_broken.add(mark)
+                log.error("accounts.json: запись %s (владелец %s) пропущена — не заполнено %s",
+                          acc.get("login", "?"), acc.get("owner", "?"), ", ".join(missing))
+            continue
+        data.append(acc)
+    for acc in data:
         acc.setdefault("multiplier", 1)
         acc.setdefault("enabled", True)
         acc.setdefault("cabinet", "")     # счета, заведённые до появления кабинетов
@@ -279,6 +311,11 @@ def encrypt_snapshot(path: str) -> bool:
 
 @transaction
 def add(acc: dict) -> None:
+    # пустое обязательное поле в файле — запись, которую load() потом не
+    # сможет показать: не даём ей появиться вовсе
+    missing = [k for k in REQUIRED if not str(acc.get(k) or "").strip()]
+    if missing:
+        raise ValueError(f"не заполнено: {', '.join(missing)}")
     display = (acc.get("strategy") or acc["name"]).strip()
     cabinet = (acc.get("cabinet") or "").strip()
     if strategy_taken(acc["owner"], cabinet, display):

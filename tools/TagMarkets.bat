@@ -35,29 +35,29 @@ for /f "usebackq delims=" %%s in (`%PS% -File "%~dp0status.ps1"`) do (
   if !N!==4 set TERM=%%s
 )
 
-echo    я┐╜я┐╜я┐╜ я┐╜я┐╜ я┐╜рвея┐╜ (24/7) : !BOT!
-echo    я┐╜я┐╜я┐╜я┐╜я┐╜ MT5 я┐╜я┐╜ я┐╜том я┐╜я┐╜  : !AGENT!
-echo    я┐╜я┐╜рмия┐╜я┐╜я┐╜ MetaTrader   : !TERM!
-echo    я┐╜я┐╜я┐╜я┐╜я┐╜ я┐╜я┐╜ я┐╜рвея┐╜     : !SYNC!
+echo    Бот на сервере (24/7) : !BOT!
+echo    Агент MT5 на этом ПК  : !AGENT!
+echo    Терминал MetaTrader   : !TERM!
+echo    Данные на сервере     : !SYNC!
 echo.
 echo --------------------------------------------------
-echo      9  - я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜ я┐╜я┐╜я┐╜
-echo      8  - я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜ я┐╜я┐╜я┐╜
-echo      7  - я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜ я┐╜я┐╜я┐╜
+echo      9  - ВКЛЮЧИТЬ ВСЁ
+echo      8  - ВЫКЛЮЧИТЬ ВСЁ
+echo      7  - ПЕРЕЗАГРУЗИТЬ ВСЁ
 echo --------------------------------------------------
-echo      я┐╜я┐╜я┐╜                    я┐╜я┐╜я┐╜я┐╜я┐╜
-echo      1 я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜            4 я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜
-echo      2 я┐╜я┐╜таня┐╜я┐╜я┐╜я┐╜я┐╜           5 я┐╜я┐╜таня┐╜я┐╜я┐╜я┐╜я┐╜
-echo      3 я┐╜я┐╜резя┐╜я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜        6 я┐╜я┐╜резя┐╜я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜
+echo      БОТ                    АГЕНТ
+echo      1 запустить            4 запустить
+echo      2 остановить           5 остановить
+echo      3 перезапустить        6 перезапустить
 echo.
-echo      G я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜ я┐╜рмия┐╜я┐╜я┐╜   H я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜ я┐╜рмия┐╜я┐╜я┐╜
-echo      L я┐╜я┐╜я┐╜ я┐╜я┐╜я┐╜             K я┐╜я┐╜я┐╜ я┐╜я┐╜я┐╜я┐╜я┐╜
+echo      G запустить терминал   H закрыть терминал
+echo      L лог бота             K лог агента
 echo --------------------------------------------------
-echo      V я┐╜я┐╜я┐╜сии я┐╜я┐╜я┐╜я┐╜ (я┐╜ткая┐╜)
+echo      V версии кода (откат)
 echo --------------------------------------------------
-echo      0 я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜ я┐╜я┐╜ран       Q я┐╜я┐╜ход
+echo      0 обновить экран       Q выход
 echo.
-set /p C=я┐╜ыбея┐╜ я┐╜ункя┐╜:
+set /p C=Выбери пункт:
 
 if /i "!C!"=="9" call :all_on
 if /i "!C!"=="8" call :all_off
@@ -78,26 +78,26 @@ goto menu
 
 :all_on
 echo.
-echo   я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜ я┐╜я┐╜я┐╜ я┐╜я┐╜ я┐╜рвея┐╜...
+echo   Включаю бота на сервере...
 %SSH% "systemctl enable --now tagmarkets-bot"
-if errorlevel 1 echo   ! я┐╜рвея┐╜ я┐╜я┐╜ я┐╜твечаея┐╜ я┐╜я┐╜ SSH
-echo   я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜ я┐╜я┐╜я┐╜я┐╜я┐╜, я┐╜я┐╜ я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜ я┐╜рмия┐╜я┐╜я┐╜ сам...
+if errorlevel 1 echo   ! сервер не отвечает по SSH
+echo   Включаю агента, он поднимет терминал сам...
 %PS% -Command "Enable-ScheduledTask -TaskName TagMarketsAgent | Out-Null; Start-ScheduledTask -TaskName TagMarketsAgent"
 echo.
-echo   я┐╜я┐╜товя┐╜. я┐╜я┐╜я┐╜я┐╜таея┐╜, я┐╜я┐╜я┐╜я┐╜ я┐╜я┐╜ я┐╜ыкля┐╜я┐╜я┐╜я┐╜ сам.
+echo   Готово. Работает, пока не выключишь сам.
 timeout /t 4 >nul
 exit /b
 
 :all_off
 echo.
-echo   я┐╜я┐╜таня┐╜я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜ я┐╜я┐╜я┐╜...
+echo   Останавливаю бота...
 %SSH% "systemctl disable --now tagmarkets-bot"
-echo   я┐╜я┐╜таня┐╜я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜ я┐╜я┐╜я┐╜я┐╜я┐╜...
+echo   Останавливаю агента...
 %PS% -Command "Stop-ScheduledTask -TaskName TagMarketsAgent; Disable-ScheduledTask -TaskName TagMarketsAgent | Out-Null"
-echo   я┐╜я┐╜я┐╜я┐╜ывая┐╜ я┐╜рмия┐╜я┐╜я┐╜...
+echo   Закрываю терминал...
 taskkill /IM terminal64.exe /F >nul 2>&1
 echo.
-echo   я┐╜я┐╜я┐╜ я┐╜я┐╜таня┐╜я┐╜я┐╜я┐╜я┐╜я┐╜.
+echo   Всё остановлено.
 timeout /t 4 >nul
 exit /b
 
@@ -105,14 +105,14 @@ exit /b
 echo.
 %SSH% "systemctl restart tagmarkets-bot"
 %PS% -Command "Stop-ScheduledTask -TaskName TagMarketsAgent; Start-Sleep 3; Enable-ScheduledTask -TaskName TagMarketsAgent | Out-Null; Start-ScheduledTask -TaskName TagMarketsAgent"
-echo   я┐╜я┐╜резя┐╜я┐╜я┐╜щеня┐╜.
+echo   Перезапущено.
 timeout /t 4 >nul
 exit /b
 
 :bot
 echo.
 %SSH% "systemctl %1 %2 tagmarkets-bot"
-if errorlevel 1 (echo   ! я┐╜я┐╜рвея┐╜ я┐╜я┐╜ я┐╜твечаея┐╜ я┐╜я┐╜ SSH. я┐╜я┐╜резя┐╜я┐╜я┐╜я┐╜я┐╜ я┐╜я┐╜я┐╜ я┐╜ я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜ FirstByte.) else (echo   я┐╜я┐╜товя┐╜.)
+if errorlevel 1 (echo   ! Сервер не отвечает по SSH. Перезапусти его в панели FirstByte.) else (echo   Готово.)
 timeout /t 4 >nul
 exit /b
 
@@ -120,34 +120,34 @@ exit /b
 if "%1"=="start"   %PS% -Command "Enable-ScheduledTask -TaskName TagMarketsAgent | Out-Null; Start-ScheduledTask -TaskName TagMarketsAgent"
 if "%1"=="stop"    %PS% -Command "Stop-ScheduledTask -TaskName TagMarketsAgent; Disable-ScheduledTask -TaskName TagMarketsAgent | Out-Null"
 if "%1"=="restart" %PS% -Command "Stop-ScheduledTask -TaskName TagMarketsAgent; Start-Sleep 3; Enable-ScheduledTask -TaskName TagMarketsAgent | Out-Null; Start-ScheduledTask -TaskName TagMarketsAgent"
-echo   я┐╜я┐╜товя┐╜.
+echo   Готово.
 timeout /t 3 >nul
 exit /b
 
 :term
 if "%1"=="off" (
   taskkill /IM terminal64.exe /F >nul 2>&1
-  echo   я┐╜я┐╜рмия┐╜я┐╜я┐╜ я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜. я┐╜я┐╜я┐╜ я┐╜я┐╜я┐╜я┐╜ я┐╜я┐╜я┐╜я┐╜я┐╜ я┐╜я┐╜ я┐╜я┐╜я┐╜я┐╜я┐╜я┐╜ я┐╜я┐╜я┐╜я┐╜ сдея┐╜я┐╜я┐╜.
+  echo   Терминал закрыт. Без него агент не получит новые сделки.
 ) else (
   %PS% -Command "Start-Process 'D:\MetaTrader5\terminal64.exe' -WindowStyle Hidden"
-  echo   я┐╜я┐╜рмия┐╜я┐╜я┐╜ я┐╜я┐╜я┐╜я┐╜щен скоя┐╜я┐╜я┐╜я┐╜, я┐╜я┐╜я┐╜я┐╜я┐╜ я┐╜я┐╜я┐╜я┐╜я┐╜ я┐╜я┐╜я┐╜я┐╜ я┐╜ я┐╜ченя┐╜я┐╜ 15 секунд.
+  echo   Терминал запущен скрыто, агент спрячет окно в течение 15 секунд.
 )
 timeout /t 4 >nul
 exit /b
 
 :botlog
 cls
-echo === я┐╜я┐╜я┐╜ я┐╜я┐╜я┐╜ я┐╜я┐╜ я┐╜рвея┐╜ ===
+echo === лог бота на сервере ===
 %SSH% "journalctl -u tagmarkets-bot -n 25 --no-pager"
-if errorlevel 1 echo   я┐╜я┐╜я┐╜ я┐╜язи я┐╜я┐╜ SSH.
+if errorlevel 1 echo   Нет связи по SSH.
 echo.
 pause
 exit /b
 
 :agentlog
 cls
-echo === я┐╜я┐╜я┐╜ я┐╜я┐╜я┐╜я┐╜я┐╜ ===
-if exist "%~dp0agent.log" (%PS% -Command "Get-Content '%~dp0agent.log' -Tail 25 -Encoding UTF8") else (echo я┐╜я┐╜я┐╜ я┐╜я┐╜я┐╜я┐╜ я┐╜я┐╜я┐╜я┐╜.)
+echo === лог агента ===
+if exist "%~dp0agent.log" (%PS% -Command "Get-Content '%~dp0agent.log' -Tail 25 -Encoding UTF8") else (echo Лог пока пуст.)
 echo.
 pause
 exit /b

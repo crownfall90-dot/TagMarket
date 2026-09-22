@@ -161,7 +161,7 @@ async def api_errors(request, handler):
         if "/api/" not in request.path:
             raise
         response = web.json_response({"error": exc.text}, status=exc.status)
-    except (ValueError, TypeError, KeyError) as exc:
+    except (ValueError, TypeError, KeyError):
         if "/api/" not in request.path:
             raise
         response = web.json_response({"error": "Некорректные данные запроса"}, status=400)
@@ -184,6 +184,37 @@ async def api_errors(request, handler):
     response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=()"
     return response
+
+
+async def json_object(request) -> dict:
+    """Тело запроса — JSON-объект, иначе 400.
+
+    Массив или строка вместо объекта раньше доходили до data.get(...) и
+    падали AttributeError — 500 с трассировкой вместо понятного 400.
+    Битый JSON — ValueError, его middleware api_errors тоже превращает в 400.
+    """
+    data = await request.json()
+    if not isinstance(data, dict):
+        raise ValueError("object required")
+    return data
+
+
+def mt5_login(value) -> int:
+    """Номер счёта MT5 из тела запроса: целое число или строка из цифр.
+
+    int() молча принимал true (счёт 1) и 123.9 (счёт 123): опечаткой типа
+    можно было занять чужой номер, и настоящий владелец потом получал
+    «Счёт уже подключён».
+    """
+    if type(value) is int:
+        login = value
+    elif type(value) is str and value.isascii() and value.isdigit():
+        login = int(value)
+    else:
+        raise ValueError("login")
+    if not 0 < login < 2**63:
+        raise ValueError("login")
+    return login
 
 
 def owned(uid, login):
@@ -252,7 +283,9 @@ async def bootstrap(request):
                         "progress": logic.onboarding_status(db, uid),
                         "partner_url": logic.partner_link(request.app["db"], uid)},
         "founder": logic.is_founder(uid), "update_alerts": logic.update_alerts_on(db),
-        "server_time": logic.utcnow().isoformat() + "Z", "refresh_seconds": 15})
+        "server_time": logic.utcnow().isoformat() + "Z",
+        # интервал фонового обновления Mini App; клиент ждёт не меньше 30 с
+        "refresh_seconds": 60})
 
 
 async def notifications(request):
@@ -272,9 +305,9 @@ async def notifications(request):
 
 async def onboarding_progress(request):
     uid, _ = authorize(request)
-    data = await request.json()
+    data = await json_object(request)
     steps = ("registered", "verified", "broker_account")
-    step = data.get("step") if isinstance(data, dict) else None
+    step = data.get("step")
     if step not in steps or type(data.get("done")) is not bool:
         raise web.HTTPBadRequest(text="Некорректный шаг")
     db = request.app["db"]
@@ -386,17 +419,40 @@ def moves_list(rows):
     Upgrade кладёт ту же сумму в капитал. Человеку это одно событие.
     """
     balance = [r for r in rows if r["is_balance"] and not trades.is_perf_fee(r)]
-    upgrades = {r["time"] for r in balance if move_kind(r) == "reinvest"}
+    upgrades = [r["time"] for r in balance if move_kind(r) == "reinvest"]
+    # половины пары бывают разнесены на секунду — сравниваем окном, а не
+    # точным равенством времени, иначе реинвест показывался двумя событиями
     return [r for r in balance
-            if not ("adjust" in (r["comment"] or "").lower() and r["time"] in upgrades)]
+            if not ("adjust" in (r["comment"] or "").lower()
+                    and any(trades.same_moment(r["time"], t) for t in upgrades))]
 
 
 def capital_steps(moves):
-    """Капитал до и после каждого его изменения: пополнение, реинвест, вывод."""
-    steps = {}
-    for row in sorted((r for r in moves if move_kind(r) in CAPITAL_MOVES),
-                      key=lambda r: (r["time"], r["ticket"]))[-300:]:
-        was, became = trades.capital_around(row)
+    """Капитал до и после каждого его изменения: пополнение, реинвест, вывод.
+
+    Та же арифметика, что в trades.capital_around(): от сегодняшнего капитала
+    отматываются назад все движения капитала позже строки. Только одним
+    проходом по истории вместо отдельной выборки и пересчёта капитала на
+    каждую строку — из-за их цены список раньше резался до последних 300,
+    и начиная с седьмой страницы «Капитал было → стало» молча пропадал.
+    """
+    wanted = sorted((r for r in moves if move_kind(r) in CAPITAL_MOVES),
+                    key=lambda r: (r["time"], r["ticket"]), reverse=True)
+    if not wanted:
+        return {}
+    later = trades.fetch(wanted[-1]["time"], trades.clock() + timedelta(days=1))
+    flows = sorted((r for r in later if r["is_balance"] and trades.is_transfer(r)
+                    and not trades.is_profit_side(r)),
+                   key=lambda r: (r["time"], r.get("ticket", 0)), reverse=True)
+    current = trades.capital()
+    steps, after, i = {}, 0.0, 0
+    for row in wanted:
+        mark = (row["time"], row["ticket"])
+        while i < len(flows) and (flows[i]["time"], flows[i].get("ticket", 0)) > mark:
+            after += trades.own_amount(flows[i])
+            i += 1
+        became = current - after
+        was = became if trades.is_profit_side(row) else became - trades.own_amount(row)
         steps[row["ticket"]] = (was, became, row["time"])
     return steps
 
@@ -413,7 +469,10 @@ async def report(request):
     archived = report_archive(since, until)
     total = summary["total"] + sum((m["gross"] or 0) + (m["platform"] or 0) for m in archived)
     summary["net_income"] = trades.net_of_fee(trades.mine(total))
-    current_capital = max(0, trades.capital())
+    # один раз на запрос: капитал на дату сделки/месяца — это он же минус
+    # позднейшие движения (trades.capital_at с current), а не новый пересчёт
+    raw_capital = trades.capital()
+    current_capital = max(0, raw_capital)
     summary["pct_capital"] = (round(summary["net_income"] / current_capital * 100, 3)
                               if current_capital > 0 else None)
     summary["count"] += sum(m["trades"] or 0 for m in archived)
@@ -439,7 +498,8 @@ async def report(request):
     deals = []
     for row in page:
         net_income = trades.own_amount(row) if row["is_balance"] else trades.net_of_fee(trades.mine(row["net"]))
-        capital_then = trades.capital_at(row["time"], flows) if not row["is_balance"] else 0
+        capital_then = (trades.capital_at(row["time"], flows, raw_capital)
+                        if not row["is_balance"] else 0)
         item = {**row, "time": row["time"].isoformat() + "Z", "net_income": net_income,
                 "pct_capital": round(net_income / capital_then * 100, 4) if capital_then > 0 else None}
         if row["is_balance"]:
@@ -456,7 +516,7 @@ async def report(request):
     for month in months:
         year, mon = map(int, month["month"].split("-"))
         edge = datetime(year, mon, calendar.monthrange(year, mon)[1], 23, 59, 59)
-        capital_then = trades.capital_at(edge, month_flows)
+        capital_then = trades.capital_at(edge, month_flows, raw_capital)
         month["pct_capital"] = (round(month["net"] / capital_then * 100, 3)
                                 if capital_then > 0 else None)
     starts = {key: logic.period(key)[1] for key in ("week", "lastweek", "month")}
@@ -464,11 +524,7 @@ async def report(request):
     insights = {}
     for key in ("week", "lastweek", "month"):
         _, first, last, _ = logic.period(key)
-        try:
-            old = report_archive(first, last)
-        except web.HTTPUnprocessableEntity:
-            insights[key] = {"available": False}
-            continue
+        old = report_archive(first, last)
         selected = [r for r in recent if first <= r["time"] <= last]
         summary_for_period = trades.summary(selected)
         amount = summary_for_period["total"] + sum((m["gross"] or 0) + (m["platform"] or 0) for m in old)
@@ -481,19 +537,16 @@ async def report(request):
         if insight.get("available"):
             insight["pct_capital"] = (round(insight["net"] / current_capital * 100, 3)
                                       if current_capital > 0 else None)
+    # итоги дня — только для сделок: у движений средств интерфейс их не
+    # показывает, а «процент от капитала» у суммы пополнений смысла не имеет
     by_day = {}
-    for row in (filtered if kind == "moves" else rows):
+    for row in (rows if kind != "moves" else ()):
         by_day.setdefault(row["time"].strftime("%Y-%m-%d"), []).append(row)
     day_totals = {}
     for day, day_rows in by_day.items():
-        if kind == "moves":
-            day_net = sum(trades.own_amount(row) for row in day_rows)
-            day_count = len(day_rows)
-        else:
-            day_summary = trades.summary(day_rows)
-            day_net = trades.net_of_fee(trades.mine(day_summary["total"]))
-            day_count = day_summary["count"]
-        day_totals[day] = {"count": day_count, "net": day_net,
+        day_summary = trades.summary(day_rows)
+        day_net = trades.net_of_fee(trades.mine(day_summary["total"]))
+        day_totals[day] = {"count": day_summary["count"], "net": day_net,
                            "pct_capital": round(day_net / current_capital * 100, 3)
                            if current_capital > 0 else None}
     extra = {}
@@ -552,10 +605,19 @@ def bounded_text(data, key, maximum=64, required=False):
 
 async def add_account(request):
     uid, _ = authorize(request)
-    data = await request.json()
-    login = int(data["login"])
-    if login <= 0 or login > 2**63 - 1:
-        raise ValueError("login")
+    data = await json_object(request)
+    login = mt5_login(data.get("login"))
+    cabinet = bounded_text(data, "cabinet", 32)
+    # новый номер кабинета — в том же виде, что принимает бот (латиница и
+    # цифры): он уходит в callback_data кнопок бота и сверяется с порталом.
+    # Уже существующий кабинет владельца принимаем как есть, чтобы старые
+    # записи не откололись от своей группы
+    if cabinet and cabinet not in {a.get("cabinet") for a in accounts.load(uid)}:
+        try:
+            cabinet = accounts.normalize_cabinet(cabinet)
+        except ValueError as error:
+            raise web.HTTPBadRequest(text="Номер кабинета — латинские буквы и цифры, "
+                                          "например CU228816") from error
     # The terminal is the source of truth for broker server and account name.
     # Keep an optional deployment default only for the first login handshake;
     # agent_sync replaces it with the values reported by MT5.
@@ -575,7 +637,7 @@ async def add_account(request):
             "name": bounded_text(data, "name", 48, True),
             "strategy": bounded_text(data, "name", 48, True),
             "holder": bounded_text(data, "holder", 96),
-            "cabinet": bounded_text(data, "cabinet", 32),
+            "cabinet": cabinet,
             "password": bounded_text(data, "password", 128, True),
             "multiplier": logic.DEFAULT_MULTIPLIER})
     return web.json_response({"ok": True, "pending": True}, status=201)
@@ -583,7 +645,7 @@ async def add_account(request):
 
 async def change_account(request):
     uid, _ = authorize(request)
-    data = await request.json() if request.method != "DELETE" else {}
+    data = await json_object(request) if request.method != "DELETE" else {}
     with locked(accounts.PATH):
         return _change_account(uid, request.match_info["login"], request.method, data, request.app["db"])
 
@@ -704,7 +766,7 @@ async def partner_profile(request):
     if request.method == "GET":
         return web.json_response({"url": logic.partner_link(db, uid),
                                   "portal": "https://exfusion.ibportal.io"})
-    data = await request.json()
+    data = await json_object(request)
     value = str(data.get("url", "")).strip()
     if not logic.valid_partner_link(value):
         raise ValueError("partner url")
@@ -718,14 +780,19 @@ async def guest_action(request):
     guest = request.match_info["guest"]
     if str(partner.kv_get(db, f"guest_by:{guest}")) != uid or logic.is_founder(guest) or guest == uid:
         raise web.HTTPForbidden(text="Нет доступа к этому гостю")
-    data = await request.json()
+    data = await json_object(request)
     if data.get("action") == "revoke":
         try:
             logic.revoke_guest(db, uid, guest)
         except ValueError as error:
             raise web.HTTPConflict(text=str(error)) from error
     elif data.get("action") == "share":
-        logins = list(dict.fromkeys(int(x) for x in data.get("logins", [])))[:50]
+        raw = data.get("logins", [])
+        # строка "123" раньше итерировалась посимвольно (счета 1, 2, 3), а
+        # [true] превращался в счёт 1 — только список номеров
+        if not isinstance(raw, list) or len(raw) > 50:
+            raise ValueError("logins")
+        logins = list(dict.fromkeys(mt5_login(x) for x in raw))
         for login in logins:
             acc = owned(uid, login)
             if acc.get("demo") or acc.get("shared_by"):
@@ -736,7 +803,7 @@ async def guest_action(request):
             raise web.HTTPConflict(text=str(error)) from error
         return web.json_response({"ok": True, "added": len(added)})
     elif data.get("action") == "take":
-        acc = owned(uid, data["login"])
+        acc = owned(uid, mt5_login(data.get("login")))
         shared = next((a for a in accounts.load(guest)
                        if int(a["login"]) == int(acc["login"])
                        and str(a.get("shared_by", "")) == uid
@@ -762,10 +829,10 @@ async def guest_detail(request):
 async def action(request):
     uid, _ = authorize(request)
     db = request.app["db"]
-    data = await request.json()
+    data = await json_object(request)
     kind = data.get("action")
     if kind == "restart":
-        acc = owned(uid, data["login"])
+        acc = owned(uid, mt5_login(data.get("login")))
         if acc.get("demo") or acc.get("shared_by"):
             raise web.HTTPForbidden(text="Общий терминал недоступен для управления гостю")
         store.set_command(request.app["trades"], acc["login"], "restart_terminal")
@@ -830,8 +897,10 @@ def machine_states(db, now):
                     # раз в 15 минут, а после успешного обновления запись стареет сама
                     "blocked": blocked_why if age is not None and age < 1800 else "",
                     # агент повторяет проверку сам; если папка проекта исправлена,
-                    # обновится на ближайшей — показываем, когда она будет
-                    "next_check": (max(0, round(UPDATE_EVERY - age))
+                    # обновится на ближайшей — показываем, когда она будет. По
+                    # модулю цикла: отметка живёт 30 минут, и во второй их
+                    # половине max(0, …) давал 0 — «меньше минуты» 15 минут подряд
+                    "next_check": (round(UPDATE_EVERY - age % UPDATE_EVERY)
                                    if blocked_why and age is not None and age < 1800 else None),
                     "synced": stamps["machine_sync"] if stamps["machine_sync"] is None
                               else round(stamps["machine_sync"]),
@@ -898,7 +967,7 @@ async def broadcast(request):
                 media_digest = digest.hexdigest()
         else:
             if request.content_type == "application/json":
-                data = await request.json()
+                data = await json_object(request)
             else:
                 # aiohttp FormData without a file is urlencoded, so accept it
                 # just like multipart submissions from the web form.

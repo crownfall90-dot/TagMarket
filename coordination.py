@@ -4,16 +4,26 @@ import time
 
 KEY = "polling_lease"
 TTL = 180
+LEGACY = "legacy"       # «сессия» агента на коде до аренды: он её не присылает
 
 
 def read(db):
+    """Текущая аренда или None. Нечитаемое значение — как отсутствие аренды:
+    иначе одна битая запись навсегда роняла claim/renew/permits (KeyError на
+    ["host"] у JSON правильного синтаксиса, но не той формы)."""
     row = db.execute("SELECT value FROM kv WHERE key=?", (KEY,)).fetchone()
     if not row:
         return None
     try:
-        return json.loads(row[0])
+        lease = json.loads(row[0])
     except (TypeError, ValueError):
         return None
+    if (not isinstance(lease, dict) or not isinstance(lease.get("host"), str)
+            or not isinstance(lease.get("session"), str)
+            or isinstance(lease.get("expires"), bool)
+            or not isinstance(lease.get("expires"), (int, float))):
+        return None
+    return lease
 
 
 def claim(db, host, session, role, now=None):
@@ -33,17 +43,21 @@ def claim(db, host, session, role, now=None):
         # lease window to take over instead of reacquiring on each retry.
         granted = (not current or (own and not expired) or preempt
                    or (expired and (not own or now >= current["expires"] + TTL)))
+        # своя протухшая аренда ждёт ещё целое окно перехвата — без этого
+        # retry_after в нём вырождался в 1 секунду при реальных ~180
+        wait_until = current["expires"] + (TTL if expired and own else 0) if current else now
         if granted and (not own or expired):
             current = {"host": host, "session": session, "role": role,
                        "expires": now + TTL}
             db.execute("INSERT OR REPLACE INTO kv(key,value) VALUES (?,?)",
                        (KEY, json.dumps(current)))
+            wait_until = current["expires"]
         db.commit()
     except Exception:
         db.rollback()
         raise
     return {"granted": bool(granted), "owner": current["host"],
-            "ttl": TTL, "retry_after": max(1, int(current["expires"] - now))}
+            "ttl": TTL, "retry_after": max(1, int(wait_until - now))}
 
 
 def renew(db, host, session, now=None):
@@ -59,9 +73,6 @@ def renew(db, host, session, now=None):
     except Exception:
         db.rollback()
         raise
-
-
-LEGACY = "legacy"
 
 
 def permits(db, host, session, now=None):

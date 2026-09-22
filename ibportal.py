@@ -43,11 +43,25 @@ TOKEN_FILE = os.getenv("IB_TOKEN_FILE", os.path.join(
 # токен живёт недолго; обновляемся заранее, чтобы не ловить 401 в середине опроса
 _token: str = ""
 _refresh: str = ""
-_expires: datetime = datetime.min
+_expires: datetime = datetime.min.replace(tzinfo=timezone.utc)
 
 
 class PortalError(RuntimeError):
     """Кабинет ответил отказом — текст пригоден для показа человеку."""
+
+
+async def _json(r: aiohttp.ClientResponse):
+    """Тело ответа кабинета как JSON.
+
+    Балансировщик перед API на сбое отдаёт HTML-страницу (502/504), и
+    r.json() бросал голый JSONDecodeError — без статуса и без понятного
+    текста в логе. Теперь это PortalError с кодом ответа.
+    """
+    try:
+        return await r.json(content_type=None)
+    except ValueError as exc:
+        text = (await r.text(errors="replace"))[:200]
+        raise PortalError(f"кабинет ответил не JSON ({r.status}): {text!r}") from exc
 
 
 def _headers(auth: bool = True) -> dict:
@@ -71,11 +85,23 @@ def _stored_refresh() -> str:
 
 def _save_refresh(token: str) -> None:
     """Сохранить продлённый токен: кабинет выдаёт новый на каждое продление,
-    и без записи после перезапуска бот пришёл бы со старым, уже недействительным."""
+    и без записи после перезапуска бот пришёл бы со старым, уже недействительным.
+
+    Через временный файл и os.replace: прежняя запись открывала сам файл на
+    «w», и обрыв посередине оставлял пустой токен — единственный, прежний уже
+    отозван кабинетом, и вход возвращался только через браузер. Права 0600 —
+    с момента создания, а не chmod после записи.
+    """
+    tmp = f"{TOKEN_FILE}.tmp"
     try:
-        with open(TOKEN_FILE, "w", encoding="utf-8") as f:
+        os.makedirs(os.path.dirname(os.path.abspath(TOKEN_FILE)), exist_ok=True)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(token)
-        os.chmod(TOKEN_FILE, 0o600)     # доступ к кабинету — не для чужих глаз
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, 0o600)            # если .tmp остался от прошлого раза с другими правами
+        os.replace(tmp, TOKEN_FILE)
     except OSError as e:
         log.warning("не сохранил refresh-токен: %s", e)
 
@@ -83,6 +109,8 @@ def _save_refresh(token: str) -> None:
 def _remember(data: dict) -> None:
     """Запомнить выданные токены. Поля именуются по-разному, берём что есть."""
     global _token, _refresh, _expires
+    if not isinstance(data, dict):
+        raise PortalError(f"кабинет ответил не объектом: {str(data)[:120]}")
     _token = data.get("accessToken") or data.get("token") or data.get("access_token") or ""
     fresh = data.get("refreshToken") or data.get("refresh_token") or ""
     if not _token:
@@ -98,17 +126,24 @@ def _remember(data: dict) -> None:
     if stamp:
         try:
             when = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+            # .NET отдаёт метку и без зоны; наивную с «сейчас в UTC» сравнить
+            # нельзя — get() падал TypeError на следующем же запросе
+            if when.tzinfo is None:
+                when = when.replace(tzinfo=timezone.utc)
             _expires = when - timedelta(minutes=1)
         except ValueError:
             log.warning("не разобрал срок токена: %s", stamp)
     elif data.get("expiresIn") or data.get("expires_in"):
-        seconds = int(data.get("expiresIn") or data.get("expires_in"))
-        _expires = datetime.now(timezone.utc) + timedelta(seconds=max(60, seconds - 60))
+        try:
+            seconds = int(data.get("expiresIn") or data.get("expires_in"))
+            _expires = datetime.now(timezone.utc) + timedelta(seconds=max(60, seconds - 60))
+        except (TypeError, ValueError):
+            log.warning("не разобрал срок токена: %r", data.get("expiresIn") or data.get("expires_in"))
 
     # refresh живёт неделю и на каждом продлении выдаётся новый: пока бот
     # обновляется чаще раза в неделю, доступ не прервётся
     if data.get("refreshTokenExpiresAt"):
-        log.info("refresh-токен действует до %s", data["refreshTokenExpiresAt"][:10])
+        log.info("refresh-токен действует до %s", str(data["refreshTokenExpiresAt"])[:10])
 
 
 async def login(session: aiohttp.ClientSession) -> None:
@@ -117,11 +152,11 @@ async def login(session: aiohttp.ClientSession) -> None:
         raise PortalError("не заданы IB_EMAIL и IB_PASSWORD")
     async with session.post(f"{API}{BASE}/Auth/login", headers=_headers(auth=False),
                             json={"email": EMAIL, "password": PASSWORD}) as r:
-        data = await r.json(content_type=None)
+        data = await _json(r)
         if r.status != 200:
             # пароль в текст ошибки не попадает — сообщение отдаёт сам кабинет
             raise PortalError(f"вход отклонён ({r.status}): {_message(data)}")
-        if _needs_mfa(data):
+        if isinstance(data, dict) and _needs_mfa(data):
             raise PortalError("кабинет требует подтверждение входа (2FA) — "
                               "выключи его для этого входа или заведи отдельный доступ")
         _remember(data)
@@ -139,7 +174,7 @@ def _message(data) -> str:
         for key in ("message", "errors", "title", "detail"):
             if data.get(key):
                 v = data[key]
-                return "; ".join(v) if isinstance(v, list) else str(v)
+                return "; ".join(map(str, v)) if isinstance(v, list) else str(v)
     return str(data)[:200]
 
 
@@ -151,7 +186,7 @@ async def _renew(session: aiohttp.ClientSession) -> None:
         try:
             async with session.post(f"{API}{BASE}/Auth/refresh", headers=_headers(auth=False),
                                     json={"refreshToken": _refresh}) as r:
-                data = await r.json(content_type=None)
+                data = await _json(r)
                 if r.status == 200:
                     _remember(data)
                     return
@@ -174,11 +209,11 @@ async def get(session: aiohttp.ClientSession, path: str, **params):
             await _renew(session)
             async with session.get(url, headers=_headers(), params=params or None) as retry:
                 if retry.status != 200:
-                    raise PortalError(f"{path}: {retry.status} {_message(await retry.json(content_type=None))}")
-                return await retry.json(content_type=None)
+                    raise PortalError(f"{path}: {retry.status} {_message(await _json(retry))}")
+                return await _json(retry)
         if r.status != 200:
-            raise PortalError(f"{path}: {r.status} {_message(await r.json(content_type=None))}")
-        return await r.json(content_type=None)
+            raise PortalError(f"{path}: {r.status} {_message(await _json(r))}")
+        return await _json(r)
 
 
 async def notifications(session: aiohttp.ClientSession, limit: int = 30) -> list[dict]:

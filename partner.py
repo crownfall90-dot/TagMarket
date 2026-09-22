@@ -9,6 +9,7 @@ import html
 import json
 import os
 import sqlite3
+import uuid
 from datetime import datetime, timezone
 
 THIN = "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
@@ -201,7 +202,9 @@ def site_move_add(db, cabinet: str, kind: str, amount: float, currency: str = "U
         return
     import trades
     stamp = trades.clock().replace(microsecond=0).isoformat()
-    kv_set(db, f"site_move:{cabinet}:{stamp}:{kind}:{amount:.2f}",
+    # случайный хвост ключа: два одинаковых пополнения в одну секунду иначе
+    # ложились в одну запись, и журнал терял второе
+    kv_set(db, f"site_move:{cabinet}:{stamp}:{kind}:{amount:.2f}:{uuid.uuid4().hex[:8]}",
            json.dumps({"kind": kind, "amount": round(float(amount), 2),
                        "currency": (currency or "USD").upper(), "time": stamp}))
 
@@ -292,7 +295,10 @@ def _event(head: str, row, name: str, note: str = "", sign: str = "", extra: str
         # время получения ботом всё равно понятнее, чем полное отсутствие строки
         import trades
         stamp = trades.clock().strftime("%d.%m.%Y  %H:%M:%S") + " · получено"
-    out = [f"🕒 <b>{stamp}</b>", head, THIN, f"<b>{pretty_money(row, bool(sign))}</b>",
+    # время и сумма приходят из параметров вебхука как есть — экранируем:
+    # «<» или «&» в них ломали разметку, и Telegram отвергал сообщение целиком
+    out = [f"🕒 <b>{html.escape(stamp)}</b>", head, THIN,
+           f"<b>{html.escape(pretty_money(row, bool(sign)))}</b>",
            f"👤 {html.escape(whose_label(row, name))}"]
     if note:
         out.append(f"<i>{note}</i>")
@@ -341,16 +347,19 @@ def client_deposits_add(db, cabinet: str, row: dict) -> tuple[int, float] | None
     return count, total
 
 
-def fmt_withdrawal(row):
-    _, mine = whose(row)
+def fmt_withdrawal(row, db=None):
+    # имя передаётся в _event явно (см. whose_label) — без него вызов падал
+    # TypeError на первом же выводе
+    name, mine = whose(row, db)
     return _event("💸 <b>Вывод с баланса кабинета</b>" if mine
-                  else "💸 <b>Вывод у клиента</b>", row)
+                  else "💸 <b>Вывод у клиента</b>", row, name)
 
 
 def fmt_lead(row):
     country = pick(row, "country", "country_name")
     tail = f"\n🌍 {html.escape(str(country))}" if country else ""
-    return f"👤 <b>Новый реферал</b>\n{THIN}\n{html.escape(who(row))}{tail}\n🕒 {when(row)}"
+    return (f"👤 <b>Новый реферал</b>\n{THIN}\n{html.escape(who(row))}{tail}"
+            f"\n🕒 {html.escape(when(row))}")
 
 
 def fmt_activity(row):
@@ -358,10 +367,10 @@ def fmt_activity(row):
     volume = pick(row, "volume", "lots", "traded_volume")
     lines = ["📈 <b>Активность клиента</b>", THIN, f"👤 {html.escape(who(row))}"]
     if profit:
-        lines.append(f"➕ Начислено: <b>{profit}</b>")
+        lines.append(f"➕ Начислено: <b>{html.escape(str(profit))}</b>")
     if volume:
-        lines.append(f"📊 Объём: {volume}")
-    lines.append(f"🕒 {when(row)}")
+        lines.append(f"📊 Объём: {html.escape(str(volume))}")
+    lines.append(f"🕒 {html.escape(when(row))}")
     return "\n".join(lines)
 
 
@@ -477,7 +486,7 @@ def fmt_portal(row: dict) -> str:
     if body:
         out.append(body)
     if when:
-        out.append(f"<i>{when}</i>")
+        out.append(f"<i>{html.escape(when)}</i>")
     return "\n".join(out)
 
 

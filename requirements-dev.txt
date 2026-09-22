@@ -1,0 +1,4 @@
+# Для разработки и проверок — на серверы и агентские машины не ставится
+-r requirements.txt
+ruff>=0.6
+playwright>=1.45        # tests/ui_smoke.py: python -m playwright install chromium

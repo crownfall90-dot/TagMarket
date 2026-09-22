@@ -102,6 +102,22 @@ class LeaseTests(unittest.TestCase):
         self.assertFalse(coordination.authorize(self.db, "old-reserve", None, 300))
         self.assertTrue(coordination.permits(self.db, "main", "m2", 300))
 
+    def test_retry_after_counts_the_takeover_window_of_own_expired_lease(self):
+        coordination.claim(self.db, "main", "m", "primary", 0)
+        result = coordination.claim(self.db, "main", "m", "primary", 200)
+        self.assertFalse(result["granted"])
+        # аренда истекла на 180-й секунде, своё окно перехвата — ещё 180
+        self.assertEqual(result["retry_after"], 160)
+        self.assertEqual(coordination.claim(self.db, "reserve", "r", "standby", 10)["retry_after"], 170)
+
+    def test_malformed_lease_is_treated_as_absent(self):
+        for broken in ('{"host": 1}', "[]", '"lease"', '{"host": "a", "session": "s", "expires": true}'):
+            with self.subTest(value=broken):
+                partner.kv_set(self.db, coordination.KEY, broken)
+                self.assertIsNone(coordination.read(self.db))
+                self.assertTrue(coordination.permits(self.db, "main", "m", 0))
+                self.assertTrue(coordination.claim(self.db, "main", "m", "primary", 0)["granted"])
+
 
 class MachineStateTests(unittest.TestCase):
     def test_service_panel_tells_polling_waiting_legacy_and_offline_apart(self):
@@ -128,10 +144,136 @@ class MachineStateTests(unittest.TestCase):
         # блокировку записали 60 с назад, проверка раз в 15 минут — осталось 840 с
         self.assertEqual(got["old"]["next_check"], 840)
         self.assertIsNone(got["main"]["next_check"])
+        # вторая половина получасового окна: до следующей проверки не «0 секунд»,
+        # а остаток текущего 15-минутного цикла
+        partner.kv_set(db, "machine_blocked:old", f"{iso(1000)}|dirty tree")
+        later = {m["host"]: m for m in miniapp.machine_states(db, now)}
+        self.assertEqual(later["old"]["next_check"], 800)
         # a stale block reason must not stay on screen forever
         partner.kv_set(db, "machine_blocked:old", f"{iso(4000)}|dirty tree")
         stale = {m["host"]: m for m in miniapp.machine_states(db, now)}
         self.assertEqual(stale["old"]["blocked"], "")
+
+
+class FormattingTests(unittest.TestCase):
+    def test_russian_plural_forms(self):
+        words = ("сделка", "сделки", "сделок")
+        for n, want in ((0, "сделок"), (1, "сделка"), (2, "сделки"), (5, "сделок"), (11, "сделок"),
+                        (12, "сделок"), (21, "сделка"), (22, "сделки"), (25, "сделок"), (101, "сделка"),
+                        (111, "сделок")):
+            with self.subTest(n=n):
+                self.assertEqual(trades.plural(n, *words), want)
+
+    def test_ticker_is_escaped_for_telegram_html(self):
+        self.assertEqual(trades.short("S&P500.cash", 6), "S&amp;P500")
+        self.assertEqual(trades.short(None), "")
+
+    def test_reinvest_halves_pair_within_a_few_seconds_only(self):
+        moment = datetime(2026, 9, 1, 12, 0, 0)
+        self.assertTrue(trades.same_moment(moment, moment + timedelta(seconds=1)))
+        self.assertFalse(trades.same_moment(moment, moment + timedelta(minutes=1)))
+
+    def test_withdrawal_formatter_names_the_cabinet(self):
+        text = partner.fmt_withdrawal({"customer_no": "CU404", "amount": "5<b>"})
+        self.assertIn("Кабинет CU404", text)
+        self.assertIn("5&lt;b&gt;", text)
+
+    def test_long_message_is_clipped_without_breaking_markup(self):
+        rows = [f"<b>{i:02d}.09</b> · +1.00 · <i>S&amp;P</i>" for i in range(400)]
+        text = "📊 <b>Отчёт</b>\n" + trades.quote(rows)
+        clipped = miniapp.logic.clip(text, 1000)
+        self.assertLessEqual(len(clipped), 1000)
+        self.assertTrue(clipped.endswith(miniapp.logic.CLIPPED))
+        body = clipped[:-len(miniapp.logic.CLIPPED)]
+        for tag in ("b", "i", "blockquote"):
+            with self.subTest(tag=tag):
+                self.assertEqual(body.count(f"<{tag}>") + body.count(f"<{tag} "), body.count(f"</{tag}>"))
+        self.assertEqual(miniapp.logic.clip("короткий <b>текст</b>", 1000), "короткий <b>текст</b>")
+        # одна длинная строка: обрывок тега или сущности в конце не остаётся
+        one_line = miniapp.logic.clip("<b>" + "x&amp;" * 400 + "</b>", 300)
+        self.assertNotRegex(one_line[:-len(miniapp.logic.CLIPPED)], r"&[a-z]*$|<[^>]*$")
+
+    def test_terminal_warning_without_terminal_path_and_with_markup_in_name(self):
+        text = miniapp.logic.no_mt5({"name": "SONIC <1>", "login": 42})
+        self.assertIn("SONIC &lt;1&gt;", text)
+        self.assertIn("42", text)
+
+    def test_cabinet_numbers_are_latin_and_short(self):
+        self.assertEqual(accounts.normalize_cabinet(" cu 228816 "), "CU228816")
+        for bad in ("СU228816", "CU:1", "", "C" * 25, None, "CU 2&8"):
+            with self.subTest(value=bad), self.assertRaises(ValueError):
+                accounts.normalize_cabinet(bad)
+
+    def test_same_second_site_deposits_are_both_kept(self):
+        db = partner.open_db(":memory:")
+        with patch.object(trades, "clock", return_value=datetime(2026, 9, 1, 12, 0, 0)):
+            partner.site_move_add(db, "CU1", "deposit", 100.0)
+            partner.site_move_add(db, "CU1", "deposit", 100.0)
+        self.assertEqual([m["amount"] for m in partner.site_moves(db, "CU1")], [100.0, 100.0])
+
+
+class PortalTests(unittest.IsolatedAsyncioTestCase):
+    """ibportal против подставного API кабинета — без сети и без настоящих токенов."""
+
+    async def asyncSetUp(self):
+        import aiohttp
+        import ibportal
+        self.portal = ibportal
+        self.tmp = tempfile.TemporaryDirectory()
+        base = ibportal.BASE
+        app = web.Application()
+
+        async def refresh(request):
+            # метка срока без зоны — так её отдаёт .NET
+            return web.json_response({"accessToken": "a1", "refreshToken": "r2",
+                                      "expiresAt": "2099-01-01T00:00:00"})
+
+        async def notifications(request):
+            if request.headers.get("Authorization") != "Bearer a1":
+                return web.json_response({"message": "unauthorized"}, status=401)
+            return web.json_response({"items": [{"id": 1, "title": "t"}]})
+
+        async def gateway_error(request):
+            return web.Response(text="<html>502 Bad Gateway</html>", status=502, content_type="text/html")
+
+        app.router.add_post(f"{base}/Auth/refresh", refresh)
+        app.router.add_get(f"{base}/Notifications", notifications)
+        app.router.add_get(f"{base}/Distributor/Status", gateway_error)
+        self.server = TestServer(app)
+        await self.server.start_server()
+        self.session = aiohttp.ClientSession()
+        self.token_file = str(Path(self.tmp.name) / "ib_token")
+        self.patches = [patch.object(ibportal, "API", str(self.server.make_url("")).rstrip("/")),
+                        patch.object(ibportal, "TOKEN_FILE", self.token_file),
+                        patch.object(ibportal, "_token", ""), patch.object(ibportal, "_refresh", ""),
+                        patch.dict(os.environ, {"IB_REFRESH_TOKEN": "r1"})]
+        for p in self.patches:
+            p.start()
+
+    async def asyncTearDown(self):
+        for p in reversed(self.patches):
+            p.stop()
+        await self.session.close()
+        await self.server.close()
+        self.tmp.cleanup()
+
+    async def test_token_without_timezone_does_not_break_the_next_request(self):
+        self.assertEqual(await self.portal.notifications(self.session), [{"id": 1, "title": "t"}])
+        # второй запрос сравнивает «сейчас» со сроком токена — раньше TypeError
+        self.assertEqual(len(await self.portal.notifications(self.session)), 1)
+
+    async def test_refresh_token_is_saved_atomically_and_privately(self):
+        await self.portal.notifications(self.session)
+        with open(self.token_file, encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), "r2")
+        self.assertFalse(os.path.exists(self.token_file + ".tmp"))
+        if os.name == "posix":
+            self.assertEqual(os.stat(self.token_file).st_mode & 0o777, 0o600)
+
+    async def test_html_error_page_becomes_portal_error(self):
+        with self.assertRaises(self.portal.PortalError) as caught:
+            await self.portal.status(self.session)
+        self.assertIn("502", str(caught.exception))
 
 
 class AuthTests(unittest.TestCase):
@@ -290,6 +432,13 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.app.router.add_post("/agent/claim", webhook_server.agent_claim)
         self.app.router.add_post("/agent/role_change", webhook_server.agent_role_change)
         self.app.router.add_get("/agent/accounts", webhook_server.agent_accounts)
+        self.app.router.add_post("/agent/heartbeat", webhook_server.agent_heartbeat)
+        self.app.router.add_post("/agent/update_report", webhook_server.agent_update_report)
+        self.app.router.add_get("/agent/update_status", webhook_server.agent_update_status)
+        self.app.router.add_post("/agent/update_notify", webhook_server.agent_update_notify)
+        self.app.router.add_get("/agent/machines_status", webhook_server.agent_machines_status)
+        self.app.router.add_get("/status", webhook_server.status)
+        self.app.router.add_route("*", "/hook/deposit", webhook_server.on_deposit)
         webhook_server.TOKEN = "agent-test"
         self.client = TestClient(TestServer(self.app))
         await self.client.start_server()
@@ -853,6 +1002,57 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(data["capital_series"]), 3)
         self.assertNotIn("PF Deduction", " ".join(str(d.get("comment")) for d in data["deals"]))
 
+    async def test_reinvest_split_by_a_second_is_one_move(self):
+        moment = trades.clock() - timedelta(days=1)
+        balance = {"is_balance": True, "is_closing": False, "is_opening": False, "volume": 0}
+        store.save_deals(self.tdb, 123, [
+            {**balance, "ticket": 902, "time": moment.isoformat(), "net": -5.0, "comment": "Adjust-5.00"},
+            {**balance, "ticket": 903, "time": (moment + timedelta(seconds=1)).isoformat(),
+             "net": 120.0, "comment": "Upgrade-120.00"}])
+        r = await self.call("GET", "/api/accounts/123/report?period=all&kind=moves")
+        data = await r.json()
+        self.assertEqual([(d["ticket"], d["move"]) for d in data["deals"]], [(903, "reinvest")])
+        # итоги дня для движений не считаются: интерфейс их не показывает
+        self.assertEqual(data["day_totals"], {})
+
+    async def test_capital_steps_reach_every_page_and_match_capital_around(self):
+        start = trades.clock() - timedelta(days=3)
+        store.save_deals(self.tdb, 123, [
+            {"ticket": 1000 + i, "time": (start + timedelta(minutes=i)).isoformat(), "is_balance": True,
+             "is_closing": False, "is_opening": False, "volume": 0,
+             "net": 240.0 if i % 3 else -48.0, "comment": "Deposit" if i % 3 else "Withdrawal"}
+            for i in range(320)])
+        r = await self.call("GET", "/api/accounts/123/report?period=all&kind=moves&offset=300")
+        data = await r.json()
+        self.assertEqual(len(data["deals"]), 20)
+        self.assertTrue(all("capital_was" in d for d in data["deals"]), data["deals"][-1])
+        self.assertEqual(len(data["capital_series"]), 321)
+        trades.use(accounts.load(1)[0])
+        moves = miniapp.moves_list(trades.fetch(datetime(2000, 1, 1), trades.clock() + timedelta(days=1)))
+        steps = miniapp.capital_steps(moves)
+        self.assertEqual(len(steps), 320)
+        for row in moves[::41]:
+            with self.subTest(ticket=row["ticket"]):
+                was, became = trades.capital_around(row)
+                self.assertAlmostEqual(steps[row["ticket"]][0], was, places=6)
+                self.assertAlmostEqual(steps[row["ticket"]][1], became, places=6)
+
+    async def test_status_command_counts_archived_months_like_the_report_head(self):
+        self.tdb.execute("INSERT INTO months (login, month, trades, gross, platform, wins, losses) "
+                         "VALUES (123, ?, 5, 100.0, 0, 4, 1)", (trades.REPORT_FROM.strftime("%Y-%m"),))
+        self.tdb.commit()
+        trades.use(accounts.load(1)[0])
+        status = trades.fmt_status("USD")
+        self.assertIn("Заработано <b>+70.00$</b>", status)
+        self.assertIn("всего <b>+70.00", trades.fmt_head("USD"))
+
+    async def test_broker_comment_cannot_break_notification_markup(self):
+        trades.use(accounts.load(1)[0])
+        row = {"ticket": 7, "time": trades.clock(), "is_balance": True, "is_closing": False,
+               "is_opening": False, "net": -3.0, "comment": "Fee <promo> & co", "symbol": "", "side": ""}
+        text = trades.fmt_notification(row, "USD")
+        self.assertIn("Fee &lt;promo&gt; &amp; co", text)
+
     async def test_site_deposits_are_listed_per_cabinet(self):
         partner.site_move_add(self.db, "CU1", "deposit", 250.0, "USD")
         partner.site_move_add(self.db, "CU2", "deposit", 999.0, "USD")
@@ -1087,6 +1287,202 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("report",await r.json())
         r = await self.call("GET","/api/cabinets/CU1/report",uid=2)
         self.assertEqual(r.status,404)
+
+    async def test_agent_endpoints_answer_400_on_malformed_bodies(self):
+        token = {"X-Token": "agent-test"}
+        for path, body in (("/agent/heartbeat", "not json"), ("/agent/heartbeat", "[1, 2]"),
+                           ("/agent/role_change", '"active"'), ("/agent/update_notify", "[]"),
+                           ("/agent/update_report", "null")):
+            with self.subTest(path=path, body=body):
+                r = await self.client.post(path, headers={**token, "Content-Type": "application/json"},
+                                           data=body)
+                self.assertEqual(r.status, 400, await r.text())
+        for body in ({"host": "h" * 129}, {"host": {"evil": 1}}):
+            r = await self.client.post("/agent/heartbeat", headers=token, json=body)
+            self.assertEqual(r.status, 400, await r.text())
+        # коммит становится частью шаблона LIKE — «%» и «_» в нём недопустимы
+        for commit in ("a%", "a_b", "", 7):
+            r = await self.client.post("/agent/update_report", headers=token,
+                                       json={"host": "reserve", "commit": commit})
+            self.assertEqual(r.status, 400, await r.text())
+        r = await self.client.get("/agent/machines_status?stale_after=abc", headers=token)
+        self.assertEqual(r.status, 400)
+
+    async def test_tokens_compare_safely_and_empty_setting_matches_nothing(self):
+        for headers, query in (({"X-Token": "пароль".encode().decode("latin-1")}, ""),
+                               ({}, "?token=%D0%BF%D0%B0%D1%80%D0%BE%D0%BB%D1%8C"), ({}, "")):
+            r = await self.client.get("/agent/accounts" + query, headers=headers)
+            self.assertEqual(r.status, 403, await r.text())
+        r = await self.client.get("/hook/deposit?token=wrong&customer_no=CU9&amount=5")
+        self.assertEqual(r.status, 403)
+        r = await self.client.get("/hook/deposit?token=agent-test&customer_no=CU9&amount=5")
+        self.assertEqual(r.status, 200, await r.text())
+        with patch.object(webhook_server, "TOKEN", ""):
+            r = await self.client.get("/agent/accounts?token=")
+            self.assertEqual(r.status, 403)
+            r = await self.client.get("/hook/deposit?customer_no=CU9&amount=5")
+            self.assertEqual(r.status, 403)
+
+    async def test_status_needs_token_and_survives_corrupt_heartbeat(self):
+        r = await self.client.get("/status")
+        self.assertEqual(r.status, 403)
+        partner.kv_set(self.db, "bot_heartbeat", "not-a-date")
+        r = await self.client.get("/status", headers={"X-Token": "agent-test"})
+        self.assertEqual(r.status, 200, await r.text())
+        data = await r.json()
+        self.assertEqual(data["bot"], "остановлен")
+        self.assertIsNone(data["bot_seconds_ago"])
+        self.assertEqual(data["accounts"], 1)
+
+    async def test_canary_counts_only_time_actually_lived_on_the_commit(self):
+        now = webhook_server.utcnow()
+        stamp = lambda ago: (now - timedelta(seconds=ago)).isoformat()
+        commit = "abc123"
+        # канарейка обновилась 4000 с назад, но замолчала через 100 с
+        partner.kv_set(self.db, f"canary:reserve:{commit}", stamp(4000))
+        partner.kv_set(self.db, "canary_latest_seen:reserve", stamp(3900))
+        partner.kv_set(self.db, "machine_commit:reserve", commit)
+        r = await self.client.get(f"/agent/update_status?commit={commit}", headers={"X-Token": "agent-test"})
+        self.assertAlmostEqual((await r.json())["canary_age_seconds"], 100, delta=2)
+        # живая канарейка — отчитывается до сих пор: засчитывается всё время
+        partner.kv_set(self.db, "canary_latest_seen:reserve", stamp(0))
+        self.assertAlmostEqual(webhook_server.canary_age(self.db, commit), 4000, delta=2)
+        # откатилась на прежний код — больше не свидетель этого коммита
+        partner.kv_set(self.db, "machine_commit:reserve", "0ld")
+        self.assertIsNone(webhook_server.canary_age(self.db, commit))
+        self.assertIsNone(webhook_server.canary_age(self.db, "a%"))
+        # отчёт о коммите через API пишет обе отметки, по которым считается возраст
+        r = await self.client.post("/agent/update_report", headers={"X-Token": "agent-test"},
+                                   json={"host": "fresh", "commit": "fff"})
+        self.assertEqual(r.status, 200, await r.text())
+        self.assertAlmostEqual(webhook_server.canary_age(self.db, "fff"), 0, delta=2)
+
+    async def test_rollback_report_is_not_announced_as_update(self):
+        sent = []
+
+        async def capture(_app, text):
+            sent.append(text)
+
+        with patch.object(webhook_server, "notify", capture):
+            r = await self.client.post("/agent/update_notify", headers={"X-Token": "agent-test"},
+                                       json={"host": "pc<1>", "commit": "a" * 40, "rollback_from": "b" * 40})
+            self.assertEqual(r.status, 200, await r.text())
+            r = await self.client.post("/agent/update_notify", headers={"X-Token": "agent-test"},
+                                       json={"host": "pc", "commit": "c" * 40})
+            await asyncio.sleep(0)
+        self.assertIn("откатил", sent[0])
+        self.assertIn("pc&lt;1&gt;", sent[0])
+        self.assertIn("bbbbbbbb", sent[0])
+        self.assertIn("подтянул новый код", sent[1])
+
+    async def test_account_logins_must_be_real_integers(self):
+        for login in (True, 123.9, "12a", "١٢٣", [1], None, 0, -5, "0", 2**63):
+            with self.subTest(login=login):
+                r = await self.call("POST", "/api/accounts", json={"login": login, "name": "X",
+                                                                    "password": "p", "cabinet": "CU5"})
+                self.assertEqual(r.status, 400, await r.text())
+        self.assertEqual([int(a["login"]) for a in accounts.load(1)], [123])
+        r = await self.call("POST", "/api/accounts", json={"login": "555", "name": "NEO",
+                                                            "password": "p", "cabinet": "CU5"})
+        self.assertEqual(r.status, 201, await r.text())
+        partner.kv_set(self.db, "guest_by:2", "1")
+        partner.kv_set(self.db, "guest:2", "1")
+        for logins in ("123", [True], [123.0], {"123": 1}):
+            r = await self.call("POST", "/api/guests/2", json={"action": "share", "logins": logins})
+            self.assertEqual(r.status, 400, await r.text())
+        self.assertEqual(accounts.load(2), [])
+        r = await self.call("POST", "/api/guests/2", json={"action": "share", "logins": [123, "123"]})
+        self.assertEqual(r.status, 200, await r.text())
+        self.assertEqual((await r.json())["added"], 1)
+
+    async def test_non_object_json_is_a_client_error(self):
+        partner.kv_set(self.db, "guest_by:2", "1")
+        for method, path, body in (("PUT", "/api/profile/partner-link", []),
+                                   ("POST", "/api/actions", "restart"),
+                                   ("POST", "/api/guests/2", ["share"]),
+                                   ("PATCH", "/api/accounts/123", ["name"]),
+                                   ("POST", "/api/onboarding", ["registered"]),
+                                   ("POST", "/api/accounts", [123])):
+            with self.subTest(path=path):
+                r = await self.call(method, path, json=body)
+                self.assertEqual(r.status, 400, await r.text())
+
+    async def test_one_broken_account_record_does_not_break_everyone(self):
+        with self.assertRaises(ValueError):
+            accounts.add({**self.acc, "login": 777, "name": "   ", "strategy": ""})
+        # запись, испорченная вручную или старым кодом, пропускается, а не
+        # роняет чтение счетов у всех пользователей
+        with open(accounts.PATH, encoding="utf-8") as handle:
+            raw = json.load(handle)
+        raw.append({"owner": "5", "login": 778, "name": "", "password": "x", "server": "Demo"})
+        with open(accounts.PATH, "w", encoding="utf-8") as handle:
+            json.dump(raw, handle)
+        with self.assertLogs("accounts", "ERROR"):
+            self.assertEqual([int(a["login"]) for a in accounts.load()], [123])
+        r = await self.call("GET", "/api/bootstrap")
+        self.assertEqual(r.status, 200, await r.text())
+        # мутации читают файл целиком — испорченную запись они не теряют
+        accounts.update("SONIC", 1, enabled=False)
+        with open(accounts.PATH, encoding="utf-8") as handle:
+            self.assertEqual(len(json.load(handle)), 2)
+
+    async def test_bot_keyboards_fit_telegram_callback_limit_with_long_names(self):
+        logic = miniapp.logic
+        accounts.add({**self.acc, "login": 1001, "name": "Константин Шаулюков · SONIC 2",
+                      "strategy": "SONIC 2", "holder": "Константин Шаулюков", "cabinet": "CU228816"})
+        partner.kv_set(self.db, "guest_by:2", "1")
+        partner.kv_set(self.db, "guest:2", "1")
+        accounts.share([1001], 1, 2)
+        acc = next(a for a in accounts.load(1) if int(a["login"]) == 1001)
+        self.assertEqual(len(acc["name"].encode()), 48)     # предел, до которого режется имя
+        keyboards = {"account_menu": logic.account_menu(acc["name"], 1)[1],
+                     "settings": logic.settings_menu(1, self.db)[1],
+                     "cabinet_settings": logic.cabinet_settings(1, "CU228816", self.db)[1],
+                     "dashboard": logic.dashboard(1)[1],
+                     "cabinet_view": logic.cabinet_view(1, "CU228816", "lastweek")[1],
+                     "account_view": logic.account_view(1, 1001, "lastmonth")[1],
+                     "guest": logic.guest_view(self.db, 1, "2", expand_take=True)[1],
+                     "invite": logic.invite_menu(1, [1001])[1]}
+        keyboards.update({f"menu:{key}": logic.menu(key, acc["name"], 1) for key, _ in logic.PERIODS_FULL})
+        for title, markup in keyboards.items():
+            for row in markup.inline_keyboard:
+                for button in row:
+                    if button.callback_data:
+                        with self.subTest(screen=title, data=button.callback_data):
+                            self.assertLessEqual(len(button.callback_data.encode()), 64)
+        # короткие коды переключателей и прежние полные названия понимаются одинаково
+        for kind, code in logic.TOGGLE_CODES.items():
+            self.assertEqual(logic.TOGGLE_KINDS.get(code, code), kind)
+            self.assertEqual(logic.TOGGLE_KINDS.get(kind, kind), kind)
+
+    async def test_new_cabinet_number_is_validated_like_in_the_bot(self):
+        r = await self.call("POST", "/api/accounts", json={"login": 556, "name": "NEO", "password": "p",
+                                                            "cabinet": "СU228816"})
+        self.assertEqual(r.status, 400, await r.text())
+        self.assertIn("латинские", (await r.json())["error"])
+        r = await self.call("POST", "/api/accounts", json={"login": 556, "name": "NEO", "password": "p",
+                                                            "cabinet": " cu 777 "})
+        self.assertEqual(r.status, 201, await r.text())
+        self.assertEqual(next(a["cabinet"] for a in accounts.load(1) if int(a["login"]) == 556), "CU777")
+        # уже существующий кабинет владельца принимается как есть
+        accounts.update("SONIC", 1, cabinet="old cab")
+        r = await self.call("POST", "/api/accounts", json={"login": 557, "name": "GOLD", "password": "p",
+                                                            "cabinet": "old cab"})
+        self.assertEqual(r.status, 201, await r.text())
+
+    async def test_partner_link_rejects_markup_and_spaces(self):
+        base = "https://exfusion.ibportal.io/auth/register?e=link"
+        for bad in (base + '&x="><img src=x onerror=alert(1)>', base + " x", base + "&x=`",
+                    base + "\n&x=1", "https://exfusion.ibportal.io/auth/register",
+                    "https://evil.example/auth/register?e=1"):
+            with self.subTest(url=bad):
+                r = await self.call("PUT", "/api/profile/partner-link", json={"url": bad})
+                self.assertEqual(r.status, 400, await r.text())
+        r = await self.call("PUT", "/api/profile/partner-link", json={"url": base + "&a=%D0%B1"})
+        self.assertEqual(r.status, 200, await r.text())
+        # уже сохранённое старым кодом значение с разметкой никуда не отдаётся
+        partner.kv_set(self.db, "partner_link:7", base + '&x="><b>')
+        self.assertEqual(miniapp.logic.partner_link(self.db, 7), "")
 
 
 if __name__ == "__main__":
