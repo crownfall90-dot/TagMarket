@@ -1244,6 +1244,16 @@ def invites_view(db, owner, username: str = "", inline_ok: bool = False
             InlineKeyboardMarkup(inline_keyboard=rows))
 
 
+# Короткие коды переключателей в callback_data. Имя счёта занимает до 48
+# байт, и с полным «withdrawals» кнопка «Выводы» выходила на 67 байт при
+# лимите Telegram 64 — клавиатура отвергалась целиком, экран настроек счёта
+# с длинным кириллическим именем не открывался. Старые кнопки в истории
+# чата с полными названиями по-прежнему понимаются (TOGGLE_KINDS.get).
+TOGGLE_CODES = {"enabled": "on", "all": "all", "trades": "tr",
+                "deposits": "dep", "withdrawals": "wd"}
+TOGGLE_KINDS = {code: kind for kind, code in TOGGLE_CODES.items()}
+
+
 def account_menu(name: str, owner) -> tuple[str, InlineKeyboardMarkup]:
     acc = accounts.by_name(name, owner)
     if not acc:
@@ -1257,15 +1267,15 @@ def account_menu(name: str, owner) -> tuple[str, InlineKeyboardMarkup]:
     # общего выключателя не работают отдельные типы. Показываем только то, что
     # сейчас действует — иначе половина кнопок ни на что не влияет
     rows = [[InlineKeyboardButton(text=("🔄 Опрос MT5: вкл" if live else "⏸ Опрос MT5: выкл"),
-                                  callback_data=f"cfg:tg:{name}:enabled")]]
+                                  callback_data=f"cfg:tg:{name}:{TOGGLE_CODES['enabled']}")]]
     if live:
         rows[0].append(InlineKeyboardButton(
             text=("🔔 Уведомления" if notify.get("all", True) else "🔕 Уведомления"),
-            callback_data=f"cfg:tg:{name}:all"))
+            callback_data=f"cfg:tg:{name}:{TOGGLE_CODES['all']}"))
     if talks:       # типы событий — одним рядом, а не тремя
         rows.append([InlineKeyboardButton(
             text=f"{'✅' if notify.get(k, True) else '❌'} {title}",
-            callback_data=f"cfg:tg:{name}:{k}") for k, title in accounts.NOTIFY_KINDS.items()])
+            callback_data=f"cfg:tg:{name}:{TOGGLE_CODES[k]}") for k, title in accounts.NOTIFY_KINDS.items()])
 
     base_txt = (f"💰 Invested {acc['base']:.0f}" if acc.get("base") is not None
                 else "💰 Указать Invested")
@@ -2205,7 +2215,13 @@ async def main():
 
     @dp.callback_query(F.data.startswith("cfg:tg:"))
     async def cfg_toggle(cb: CallbackQuery):
-        _, _, name, kind = cb.data.split(":", 3)
+        # тип — после последнего двоеточия: в самом имени счёта оно тоже бывает
+        head, code = cb.data.rsplit(":", 1)
+        name = head.split(":", 2)[2]
+        kind = TOGGLE_KINDS.get(code, code)
+        if kind not in TOGGLE_CODES:
+            await cb.answer("Неизвестная настройка", show_alert=True)
+            return
         try:
             value = accounts.toggle(name, cb.from_user.id, kind)
         except ValueError as e:

@@ -1347,6 +1347,35 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         with open(accounts.PATH, encoding="utf-8") as handle:
             self.assertEqual(len(json.load(handle)), 2)
 
+    async def test_bot_keyboards_fit_telegram_callback_limit_with_long_names(self):
+        logic = miniapp.logic
+        accounts.add({**self.acc, "login": 1001, "name": "Константин Шаулюков · SONIC 2",
+                      "strategy": "SONIC 2", "holder": "Константин Шаулюков", "cabinet": "CU228816"})
+        partner.kv_set(self.db, "guest_by:2", "1")
+        partner.kv_set(self.db, "guest:2", "1")
+        accounts.share([1001], 1, 2)
+        acc = next(a for a in accounts.load(1) if int(a["login"]) == 1001)
+        self.assertEqual(len(acc["name"].encode()), 48)     # предел, до которого режется имя
+        keyboards = {"account_menu": logic.account_menu(acc["name"], 1)[1],
+                     "settings": logic.settings_menu(1, self.db)[1],
+                     "cabinet_settings": logic.cabinet_settings(1, "CU228816", self.db)[1],
+                     "dashboard": logic.dashboard(1)[1],
+                     "cabinet_view": logic.cabinet_view(1, "CU228816", "lastweek")[1],
+                     "account_view": logic.account_view(1, 1001, "lastmonth")[1],
+                     "guest": logic.guest_view(self.db, 1, "2", expand_take=True)[1],
+                     "invite": logic.invite_menu(1, [1001])[1]}
+        keyboards.update({f"menu:{key}": logic.menu(key, acc["name"], 1) for key, _ in logic.PERIODS_FULL})
+        for title, markup in keyboards.items():
+            for row in markup.inline_keyboard:
+                for button in row:
+                    if button.callback_data:
+                        with self.subTest(screen=title, data=button.callback_data):
+                            self.assertLessEqual(len(button.callback_data.encode()), 64)
+        # короткие коды переключателей и прежние полные названия понимаются одинаково
+        for kind, code in logic.TOGGLE_CODES.items():
+            self.assertEqual(logic.TOGGLE_KINDS.get(code, code), kind)
+            self.assertEqual(logic.TOGGLE_KINDS.get(kind, kind), kind)
+
     async def test_new_cabinet_number_is_validated_like_in_the_bot(self):
         r = await self.call("POST", "/api/accounts", json={"login": 556, "name": "NEO", "password": "p",
                                                             "cabinet": "СU228816"})
