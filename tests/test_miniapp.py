@@ -176,6 +176,32 @@ class FormattingTests(unittest.TestCase):
         self.assertIn("Кабинет CU404", text)
         self.assertIn("5&lt;b&gt;", text)
 
+    def test_long_message_is_clipped_without_breaking_markup(self):
+        rows = [f"<b>{i:02d}.09</b> · +1.00 · <i>S&amp;P</i>" for i in range(400)]
+        text = "📊 <b>Отчёт</b>\n" + trades.quote(rows)
+        clipped = miniapp.logic.clip(text, 1000)
+        self.assertLessEqual(len(clipped), 1000)
+        self.assertTrue(clipped.endswith(miniapp.logic.CLIPPED))
+        body = clipped[:-len(miniapp.logic.CLIPPED)]
+        for tag in ("b", "i", "blockquote"):
+            with self.subTest(tag=tag):
+                self.assertEqual(body.count(f"<{tag}>") + body.count(f"<{tag} "), body.count(f"</{tag}>"))
+        self.assertEqual(miniapp.logic.clip("короткий <b>текст</b>", 1000), "короткий <b>текст</b>")
+        # одна длинная строка: обрывок тега или сущности в конце не остаётся
+        one_line = miniapp.logic.clip("<b>" + "x&amp;" * 400 + "</b>", 300)
+        self.assertNotRegex(one_line[:-len(miniapp.logic.CLIPPED)], r"&[a-z]*$|<[^>]*$")
+
+    def test_terminal_warning_without_terminal_path_and_with_markup_in_name(self):
+        text = miniapp.logic.no_mt5({"name": "SONIC <1>", "login": 42})
+        self.assertIn("SONIC &lt;1&gt;", text)
+        self.assertIn("42", text)
+
+    def test_cabinet_numbers_are_latin_and_short(self):
+        self.assertEqual(accounts.normalize_cabinet(" cu 228816 "), "CU228816")
+        for bad in ("СU228816", "CU:1", "", "C" * 25, None, "CU 2&8"):
+            with self.subTest(value=bad), self.assertRaises(ValueError):
+                accounts.normalize_cabinet(bad)
+
     def test_same_second_site_deposits_are_both_kept(self):
         db = partner.open_db(":memory:")
         with patch.object(trades, "clock", return_value=datetime(2026, 9, 1, 12, 0, 0)):
@@ -1237,6 +1263,40 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(path=path):
                 r = await self.call(method, path, json=body)
                 self.assertEqual(r.status, 400, await r.text())
+
+    async def test_one_broken_account_record_does_not_break_everyone(self):
+        with self.assertRaises(ValueError):
+            accounts.add({**self.acc, "login": 777, "name": "   ", "strategy": ""})
+        # запись, испорченная вручную или старым кодом, пропускается, а не
+        # роняет чтение счетов у всех пользователей
+        with open(accounts.PATH, encoding="utf-8") as handle:
+            raw = json.load(handle)
+        raw.append({"owner": "5", "login": 778, "name": "", "password": "x", "server": "Demo"})
+        with open(accounts.PATH, "w", encoding="utf-8") as handle:
+            json.dump(raw, handle)
+        with self.assertLogs("accounts", "ERROR"):
+            self.assertEqual([int(a["login"]) for a in accounts.load()], [123])
+        r = await self.call("GET", "/api/bootstrap")
+        self.assertEqual(r.status, 200, await r.text())
+        # мутации читают файл целиком — испорченную запись они не теряют
+        accounts.update("SONIC", 1, enabled=False)
+        with open(accounts.PATH, encoding="utf-8") as handle:
+            self.assertEqual(len(json.load(handle)), 2)
+
+    async def test_new_cabinet_number_is_validated_like_in_the_bot(self):
+        r = await self.call("POST", "/api/accounts", json={"login": 556, "name": "NEO", "password": "p",
+                                                            "cabinet": "СU228816"})
+        self.assertEqual(r.status, 400, await r.text())
+        self.assertIn("латинские", (await r.json())["error"])
+        r = await self.call("POST", "/api/accounts", json={"login": 556, "name": "NEO", "password": "p",
+                                                            "cabinet": " cu 777 "})
+        self.assertEqual(r.status, 201, await r.text())
+        self.assertEqual(next(a["cabinet"] for a in accounts.load(1) if int(a["login"]) == 556), "CU777")
+        # уже существующий кабинет владельца принимается как есть
+        accounts.update("SONIC", 1, cabinet="old cab")
+        r = await self.call("POST", "/api/accounts", json={"login": 557, "name": "GOLD", "password": "p",
+                                                            "cabinet": "old cab"})
+        self.assertEqual(r.status, 201, await r.text())
 
     async def test_partner_link_rejects_markup_and_spaces(self):
         base = "https://exfusion.ibportal.io/auth/register?e=link"

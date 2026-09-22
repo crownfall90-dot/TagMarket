@@ -161,7 +161,7 @@ async def api_errors(request, handler):
         if "/api/" not in request.path:
             raise
         response = web.json_response({"error": exc.text}, status=exc.status)
-    except (ValueError, TypeError, KeyError) as exc:
+    except (ValueError, TypeError, KeyError):
         if "/api/" not in request.path:
             raise
         response = web.json_response({"error": "Некорректные данные запроса"}, status=400)
@@ -605,6 +605,17 @@ async def add_account(request):
     uid, _ = authorize(request)
     data = await json_object(request)
     login = mt5_login(data.get("login"))
+    cabinet = bounded_text(data, "cabinet", 32)
+    # новый номер кабинета — в том же виде, что принимает бот (латиница и
+    # цифры): он уходит в callback_data кнопок бота и сверяется с порталом.
+    # Уже существующий кабинет владельца принимаем как есть, чтобы старые
+    # записи не откололись от своей группы
+    if cabinet and cabinet not in {a.get("cabinet") for a in accounts.load(uid)}:
+        try:
+            cabinet = accounts.normalize_cabinet(cabinet)
+        except ValueError as error:
+            raise web.HTTPBadRequest(text="Номер кабинета — латинские буквы и цифры, "
+                                          "например CU228816") from error
     # The terminal is the source of truth for broker server and account name.
     # Keep an optional deployment default only for the first login handshake;
     # agent_sync replaces it with the values reported by MT5.
@@ -624,7 +635,7 @@ async def add_account(request):
             "name": bounded_text(data, "name", 48, True),
             "strategy": bounded_text(data, "name", 48, True),
             "holder": bounded_text(data, "holder", 96),
-            "cabinet": bounded_text(data, "cabinet", 32),
+            "cabinet": cabinet,
             "password": bounded_text(data, "password", 128, True),
             "multiplier": logic.DEFAULT_MULTIPLIER})
     return web.json_response({"ok": True, "pending": True}, status=201)

@@ -12,9 +12,7 @@ import math
 import os
 import re
 import secrets
-import sqlite3
 import sys
-from collections import defaultdict
 from datetime import date, datetime, time, timedelta, timezone
 from urllib.parse import quote, urlsplit
 
@@ -148,7 +146,47 @@ DEMO_ON = bool(DEMO_LOGIN and DEMO_PASSWORD)
 # как _current в trades.py, дешевле и не меняет ни один вызывающий код
 _bot_db = None
 
+# Фоновые задачи держим здесь, пока они идут: цикл событий хранит на задачу
+# лишь слабую ссылку, и без своей её может собрать сборщик мусора на середине
+_tasks: set = set()
+
+
+def _background(coro) -> asyncio.Task:
+    task = asyncio.create_task(coro)
+    _tasks.add(task)
+    task.add_done_callback(_tasks.discard)
+    return task
+
+
 NOTIFY_HISTORY_LIMIT = int(os.getenv("NOTIFY_HISTORY_LIMIT", 30))
+CLIPPED = "\n<i>…сообщение обрезано</i>"
+
+
+def clip(text: str, limit: int = TG_LIMIT) -> str:
+    """Обрезать сообщение под лимит Telegram, не разрывая разметку.
+
+    Срез посреди тега, сущности (&amp;) или без закрывающего </blockquote>
+    Telegram отвергает целиком («can't parse entities»), и отчёт приходил
+    сырым текстом с тегами. Режем по концу строки и закрываем открытые теги.
+    """
+    if len(text) <= limit:
+        return text
+    room = limit - len(CLIPPED) - 64         # запас на закрывающие теги
+    cut = text.rfind("\n", 0, room)
+    body = text[:cut if cut > 0 else room]
+    # не оставляем обрывок тега или сущности в конце
+    if body.rfind("<") > body.rfind(">"):
+        body = body[:body.rfind("<")]
+    if body.rfind("&") > body.rfind(";"):
+        body = body[:body.rfind("&")]
+    opened = []
+    for closing, tag in re.findall(r"<(/?)([a-z]+)[^>]*>", body):
+        if not closing:
+            opened.append(tag)
+        elif tag in opened:
+            while opened.pop() != tag:
+                pass
+    return body + "".join(f"</{tag}>" for tag in reversed(opened)) + CLIPPED
 
 
 async def send(bot: Bot, chat_id, text: str, markup=None, track: bool = True):
@@ -161,8 +199,7 @@ async def send(bot: Bot, chat_id, text: str, markup=None, track: bool = True):
     руками где-то выше по чату.
     """
     markup = None if markup is NO_BUTTONS else (markup or DASHBOARD_BTN)
-    if len(text) > TG_LIMIT:
-        text = text[:TG_LIMIT] + "\n<i>…сообщение обрезано</i>"
+    text = clip(text)
     try:
         msg = await bot.send_message(chat_id, text, reply_markup=markup)
     except TelegramBadRequest as e:
@@ -683,7 +720,7 @@ def wipe_user(db, uid) -> dict:
     успел бы зайти снова и остаться с половиной стёртых настроек.
     """
     kv_set(db, f"left:{uid}", "1")          # перекрывает даже список в .env
-    kv_del(db, f"guest:{uid}")
+    kv_del_exact(db, f"guest:{uid}")
 
     killed = 0
     for token, inv in invite_list(db, uid):
@@ -692,10 +729,12 @@ def wipe_user(db, uid) -> dict:
         killed += 1
 
     removed = accounts.purge(uid)
-    for pattern in (f"mt5_last_ticket:{uid}:%", f"mt5_fails:{uid}:%",
-                    f"term_down:{uid}", f"restart_asked:{uid}",
-                    f"guest_name:{uid}", f"guest_by:{uid}", f"guest_since:{uid}"):
+    for pattern in (f"mt5_last_ticket:{uid}:%", f"mt5_fails:{uid}:%"):
         kv_del(db, pattern)
+    # точные ключи — без LIKE: «_» в нём означает любой символ
+    for key in (f"term_down:{uid}", f"restart_asked:{uid}",
+                f"guest_name:{uid}", f"guest_by:{uid}", f"guest_since:{uid}"):
+        kv_del_exact(db, key)
     log.info("пользователь %s отключился: счетов %d, ссылок отозвано %d",
              uid, removed, killed)
     return {"accounts": removed, "invites": killed}
@@ -718,8 +757,8 @@ def revoke_guest(db, inviter, guest) -> int:
            for a in accounts.load(guest)):
         raise ValueError("старые копии счетов требуют проверки владельцем сервиса")
     removed = accounts.unshare(inviter, guest)
-    kv_del(db, f"guest_by:{guest}")
-    kv_del(db, f"guest_since:{guest}")
+    kv_del_exact(db, f"guest_by:{guest}")
+    kv_del_exact(db, f"guest_since:{guest}")
     log.info("приглашение %s -> %s отозвано: общих счетов %d", inviter, guest, removed)
     return removed
 
@@ -1290,8 +1329,12 @@ def connect(acc: dict) -> bool:
 
 
 def no_mt5(acc: dict) -> str:
-    return (f"⚠️ <b>{acc['name']}: терминал не отвечает</b>\n{trades.THIN}\n"
-            f"Проверь, что MetaTrader 5 по пути <code>{acc['terminal']}</code> запущен "
+    # terminal есть только у счетов, заведённых через бот на машине с MT5:
+    # на сервере и у счетов из Mini App его нет, и acc['terminal'] падал KeyError
+    terminal = acc.get("terminal") or trades.TERMINAL
+    return (f"⚠️ <b>{html.escape(str(acc.get('name') or acc['login']))}: терминал не отвечает</b>\n"
+            f"{trades.THIN}\n"
+            f"Проверь, что MetaTrader 5 по пути <code>{html.escape(terminal)}</code> запущен "
             f"и счёт {acc['login']} доступен.")
 
 
@@ -1579,7 +1622,8 @@ async def poll_mt5(bot: Bot, db) -> int:
             continue
         if int(kv_get(db, fail_key, 0)) >= MT5_ALERT_AFTER:
             try:
-                await send(bot, owner, f"✅ <b>{acc['name']}</b>: связь с терминалом восстановлена.")
+                await send(bot, owner, f"✅ <b>{html.escape(acc['name'])}</b>: "
+                                       f"связь с терминалом восстановлена.")
             except Exception:
                 pass
         kv_set(db, fail_key, 0)
@@ -1684,6 +1728,7 @@ async def poll_mt5(bot: Bot, db) -> int:
 
 DEFAULT_SERVER = os.getenv("DEFAULT_SERVER", "TMFinancials-Server")
 DEFAULT_MULTIPLIER = float(os.getenv("AMPLIFY_MULTIPLIER", 24))
+NAME_LIMIT = 48         # название стратегии — как в Mini App (bounded_text(..., 48))
 
 
 class SetBase(StatesGroup):
@@ -1747,6 +1792,9 @@ async def finish_add(bot: Bot, chat_id, owner, data: dict) -> str:
         accounts.remove(acc["name"], owner)
         return ("❌ Войти не удалось — счёт удалён из настроек.\n"
                 "Проверь номер счёта, пароль и имя сервера и попробуй снова.")
+    # имя счёта ввёл человек, сервер и валюту прислал терминал — в HTML-ответе
+    # всё это экранируем, иначе «<» или «&» роняли сообщение целиком
+    name = html.escape(acc["name"])
 
     a = trades.account()
     if not acc["holder"] and getattr(a, "name", ""):
@@ -1761,18 +1809,18 @@ async def finish_add(bot: Bot, chat_id, owner, data: dict) -> str:
         # опрос ещё не дошёл до этого счёта — цикл раз в 15 секунд) — счёт
         # уже сохранён, но падать на a.login/a.currency было бы AttributeError,
         # и пользователь решил бы, что счёт вообще не добавился
-        asyncio.create_task(_await_first_sync(bot, chat_id, owner, acc))
-        return (f"✅ <b>Счёт {acc['name']} добавлен</b>\n{trades.THIN}\n"
+        _background(_await_first_sync(bot, chat_id, owner, acc))
+        return (f"✅ <b>Счёт {name} добавлен</b>\n{trades.THIN}\n"
                 f"Номер <b>{acc['login']}</b>\n"
-                f"<i>{acc['server']}</i>\n\n"
+                f"<i>{html.escape(acc['server'])}</i>\n\n"
                 f"⏳ <i>Данные ожидаются через некоторое время — ни одна машина "
                 f"с терминалом сейчас не на связи. Мы вас уведомим.</i>")
 
     my = trades.capital()       # реальные деньги, не торговый баланс ×плечо
-    return (f"✅ <b>Счёт {acc['name']} добавлен</b>\n{trades.THIN}\n"
+    return (f"✅ <b>Счёт {name} добавлен</b>\n{trades.THIN}\n"
             f"Номер <b>{a.login}</b>\n"
-            f"Мои деньги <b>{my:.2f} {a.currency}</b>\n"
-            f"<i>{a.server}</i>\n\nУведомления по нему пойдут с ближайшей сделки.")
+            f"Мои деньги <b>{my:.2f} {html.escape(a.currency)}</b>\n"
+            f"<i>{html.escape(a.server)}</i>\n\nУведомления по нему пойдут с ближайшей сделки.")
 
 
 AWAIT_FIRST_SYNC_TIMEOUT = int(os.getenv("AWAIT_FIRST_SYNC_TIMEOUT", 300))
@@ -1806,10 +1854,10 @@ async def _await_first_sync(bot: Bot, chat_id, owner, acc: dict) -> None:
             my = trades.capital()
             try:
                 await send(bot, owner,
-                          f"📡 <b>Счёт {acc['name']} на связи</b>\n{trades.THIN}\n"
+                          f"📡 <b>Счёт {html.escape(acc['name'])} на связи</b>\n{trades.THIN}\n"
                           f"Номер <b>{a.login}</b>\n"
-                          f"Мои деньги <b>{my:.2f} {a.currency}</b>\n"
-                          f"<i>{a.server}</i>\n\n"
+                          f"Мои деньги <b>{my:.2f} {html.escape(a.currency)}</b>\n"
+                          f"<i>{html.escape(a.server)}</i>\n\n"
                           f"Уведомления по нему пойдут с ближайшей сделки.")
             except Exception as e:
                 log.warning("не доставил уведомление о первом синке %s: %s", owner, e)
@@ -1818,7 +1866,7 @@ async def _await_first_sync(bot: Bot, chat_id, owner, acc: dict) -> None:
         return          # удалили ровно на последнем круге — тайм-аут не про что слать
     try:
         await send(bot, owner,
-                  f"⚠️ <b>{acc['name']}: всё ещё нет связи</b>\n{trades.THIN}\n"
+                  f"⚠️ <b>{html.escape(acc['name'])}: всё ещё нет связи</b>\n{trades.THIN}\n"
                   f"Ни одна машина с терминалом не ответила за "
                   f"{AWAIT_FIRST_SYNC_TIMEOUT // 60} мин. Счёт остался в настройках — "
                   f"данные подтянутся сами, когда терминал будет доступен.")
@@ -1957,11 +2005,23 @@ async def main():
         return await handler(event, data)
 
     async def swap(cb: CallbackQuery, text: str, markup):
-        """Меняем сообщение на месте, чтобы чат не засорялся."""
+        """Меняем сообщение на месте, чтобы чат не засорялся.
+
+        Молча глотаем только «message is not modified» — тот же экран, это
+        нормально. Раньше глотались любые отказы: битая разметка, слишком
+        старое сообщение — и кнопка просто «ничего не делала», без следа в
+        логе. Теперь такой экран приходит новым сообщением.
+        """
         try:
-            await cb.message.edit_text(text[:TG_LIMIT], reply_markup=markup)
-        except TelegramBadRequest:
-            pass  # текст не изменился — Telegram ругается, это нормально
+            await cb.message.edit_text(clip(text), reply_markup=markup)
+        except TelegramBadRequest as e:
+            if "not modified" in str(e).lower():
+                return
+            log.warning("не обновил сообщение на месте (%s) — присылаю новым", e)
+            try:
+                await send(bot, cb.message.chat.id, text, markup or NO_BUTTONS, track=False)
+            except Exception as again:
+                log.error("не отправил экран и новым сообщением: %s", again)
 
     @dp.message(Command("start", "help"))
     async def start(msg: Message, command: CommandObject = None):
@@ -2007,7 +2067,7 @@ async def main():
 
         who = msg.from_user.username or msg.from_user.full_name or str(uid)
         kv_set(db, f"guest:{uid}", "1")
-        kv_del(db, f"left:{uid}")           # вернулся по приглашению — доступ открыт
+        kv_del_exact(db, f"left:{uid}")     # вернулся по приглашению — доступ открыт
         # запоминаем, кто и от кого — иначе в «Гостях» будут одни номера
         kv_set(db, f"guest_name:{uid}", who)
         kv_set(db, f"guest_by:{uid}", inv["owner"])
@@ -2123,7 +2183,7 @@ async def main():
             return no_mt5(acc)
         report = trades.fmt_report(title, trades.fetch(a, b), trades.currency(), subtitle, a, until=b,
                                    with_deals=True)
-        return f"🏷 <b>{acc['name']}</b>\n{trades.fmt_head(trades.currency())}\n\n{report}"
+        return f"🏷 <b>{html.escape(acc['name'])}</b>\n{trades.fmt_head(trades.currency())}\n\n{report}"
 
     @dp.callback_query(F.data == "cfg")
     async def cfg_root(cb: CallbackQuery, state: FSMContext):
@@ -2209,7 +2269,7 @@ async def main():
         name = (await state.get_data()).get("name")
         await state.clear()
         try:
-            amount = float(msg.text.strip().replace(",", ".").replace("$", "").strip())
+            amount = float((msg.text or "").strip().replace(",", ".").replace("$", "").strip())
         except ValueError:
             await msg.answer("Нужно число, например <code>2470</code>. Попробуй ещё раз.")
             return
@@ -2244,14 +2304,18 @@ async def main():
     async def cfg_rename(msg: Message, state: FSMContext):
         old = (await state.get_data()).get("old")
         await state.clear()
+        wanted = (msg.text or "").strip()
+        if len(wanted) > NAME_LIMIT:
+            await msg.answer(f"❌ Название длиннее {NAME_LIMIT} символов — сократи его.")
+            return
         try:
-            new_name = accounts.rename(old, msg.from_user.id, msg.text)
+            new_name = accounts.rename(old, msg.from_user.id, wanted)
         except ValueError as e:
             await msg.answer(f"❌ {html.escape(str(e))}")
             return
         text, kb = settings_menu(msg.from_user.id, db)
         await send(bot, msg.chat.id,
-                   f"✅ Стратегия теперь <b>{html.escape(msg.text.strip())}</b>\n"
+                   f"✅ Стратегия теперь <b>{html.escape(wanted)}</b>\n"
                    f"<i>Счёт: {html.escape(new_name)}</i>")
         await send(bot, msg.chat.id, text, kb)
 
@@ -2661,14 +2725,21 @@ async def main():
 
     @dp.message(AddAcc.cabinet)
     async def add_cabinet(msg: Message, state: FSMContext):
-        cab = msg.text.strip().upper()
+        # номер уходит в callback_data кнопок и сверяется с порталом — только
+        # латиница и цифры; кириллическая «С» в «CU…» тут и отсекается
+        try:
+            cab = accounts.normalize_cabinet(msg.text or "")
+        except ValueError:
+            await msg.answer("Номер кабинета — латинские буквы и цифры, как в портале, "
+                             "например <code>CU228816</code>. Попробуй ещё раз.", reply_markup=CANCEL)
+            return
         await _after_cabinet(msg.answer, state, msg.from_user.id, cab)
 
     @dp.message(AddAcc.holder)
     async def add_holder(msg: Message, state: FSMContext):
-        holder = msg.text.strip()
-        if not holder:
-            await msg.answer("Имя не может быть пустым. Попробуй ещё раз.")
+        holder = (msg.text or "").strip()
+        if not holder or len(holder) > 96:
+            await msg.answer("Нужны имя и фамилия текстом, до 96 символов. Попробуй ещё раз.")
             return
         await state.update_data(holder=holder)
         await state.set_state(AddAcc.name)
@@ -2685,7 +2756,10 @@ async def main():
 
     @dp.message(AddAcc.name)
     async def add_name(msg: Message, state: FSMContext):
-        name = msg.text.strip()
+        name = (msg.text or "").strip()
+        if not name or len(name) > NAME_LIMIT:
+            await msg.answer(f"Нужно название текстом, до {NAME_LIMIT} символов. Попробуй ещё раз.")
+            return
         cabinet = (await state.get_data()).get("cabinet", "")
         if accounts.strategy_taken(msg.from_user.id, cabinet, name):
             await msg.answer("В этом кабинете счёт с таким названием уже есть. Выбери другое имя.")
@@ -2696,10 +2770,12 @@ async def main():
 
     @dp.message(AddAcc.login)
     async def add_login(msg: Message, state: FSMContext):
-        if not msg.text.strip().isdigit():
+        login = (msg.text or "").strip()
+        # isdigit() пропускает и «١٢٣», и «²»; номер MT5 — до 18 обычных цифр
+        if not (login.isascii() and login.isdigit() and 0 < int(login) < 2**63):
             await msg.answer("Номер счёта — это только цифры. Попробуй ещё раз.")
             return
-        await state.update_data(login=msg.text.strip())
+        await state.update_data(login=login)
         await state.set_state(AddAcc.password)
         await msg.answer("Пароль от счёта.\n\n<i>Хватит investor-пароля — бот только читает. "
                          "Сообщение с паролем я удалю сразу после сохранения.</i>",
@@ -2708,7 +2784,11 @@ async def main():
     @dp.message(AddAcc.password)
     async def add_password(msg: Message, state: FSMContext):
         # сервер у нас один — не переспрашиваем, сразу подключаем к нему
-        data = {**(await state.get_data()), "password": msg.text.strip(),
+        password = (msg.text or "").strip()
+        if not password or len(password) > 128:
+            await msg.answer("Пришли пароль текстом одним сообщением.", reply_markup=CANCEL)
+            return
+        data = {**(await state.get_data()), "password": password,
                 "server": DEFAULT_SERVER}
         await state.clear()
         try:    # пароль убираем из истории чата
@@ -2725,7 +2805,8 @@ async def main():
         if not accs:
             await msg.answer(NO_ACCOUNTS, reply_markup=menu("today", owner=me))
             return
-        lines = [f"🏷 <b>{a['name']}</b> — счёт {a['login']}, {a['server']}, ×{a['multiplier']:g}"
+        lines = [f"🏷 <b>{html.escape(a['name'])}</b> — счёт {a['login']}, "
+                 f"{html.escape(a['server'])}, ×{float(a['multiplier']):g}"
                  for a in accs]
         await send(bot, msg.chat.id, "<b>Твои счета</b>\n" + trades.THIN + "\n" +
                    "\n".join(lines) + "\n\n<i>удалить: /removeaccount ИМЯ</i>",
@@ -2735,7 +2816,7 @@ async def main():
     async def remove_cmd(msg: Message, command: CommandObject):
         name = (command.args or "").strip()
         if accounts.remove(name, msg.from_user.id):
-            await msg.answer(f"Счёт {name} удалён.")
+            await msg.answer(f"Счёт {html.escape(name)} удалён.")
         else:
             await msg.answer("Не нашёл такой счёт среди твоих. Список: /accounts")
 
@@ -2746,7 +2827,7 @@ async def main():
         if not accs:
             await msg.answer(NO_ACCOUNTS, reply_markup=menu("today", owner=me))
             return
-        blocks = [f"🏷 <b>{a['name']}</b>\n" +
+        blocks = [f"🏷 <b>{html.escape(a['name'])}</b>\n" +
                   (trades.fmt_status(trades.currency()) if connect(a) else no_mt5(a))
                   for a in accs]
         await send(bot, msg.chat.id, "\n\n".join(blocks), menu("today", owner=me))
@@ -3069,13 +3150,13 @@ async def main():
                 except Exception:
                     log.exception("не собрал ежедневную сводку")
 
-        asyncio.create_task(daily_digest())
-        asyncio.create_task(heartbeat())
-        asyncio.create_task(monthly_rollup())
-        asyncio.create_task(stale_invites_cleanup())
-        asyncio.create_task(telegram_watchdog())
-        asyncio.create_task(machines_watchdog())
-        asyncio.create_task(mt5_loop())
+        _background(daily_digest())
+        _background(heartbeat())
+        _background(monthly_rollup())
+        _background(stale_invites_cleanup())
+        _background(telegram_watchdog())
+        _background(machines_watchdog())
+        _background(mt5_loop())
         # кабинет IB Portal временно не опрашиваем — токен просрочен, а новый
         # брать пока не нужно: без этого только пропадает лента уведомлений
         # о лидах/депозитах партнёрской сети, счета и баланс кошелька не
