@@ -14,9 +14,11 @@
 """
 
 import asyncio
+import html
 import logging
 import math
 import os
+import re
 import sqlite3
 import secrets
 from datetime import datetime, timezone
@@ -47,6 +49,8 @@ TOKEN = os.getenv("WEBHOOK_TOKEN", "")
 # столько секунд считаем повтор тем же событием: портал шлёт зачисление и
 # перевод в стратегию порознь, а выглядят они одинаково
 HOOK_REPEAT = int(os.getenv("HOOK_REPEAT", 300))
+# хэш git-коммита от агента (или «unknown»): только буквы и цифры
+COMMIT_RE = re.compile(r"[0-9A-Za-z]{1,64}")
 
 
 def ensure_token() -> str:
@@ -74,6 +78,24 @@ def webhook_urls(host: str) -> dict[str, str]:
     }
 
 
+def token_matches(value) -> bool:
+    """Совпадает ли присланный токен с WEBHOOK_TOKEN.
+
+    Сравнение за постоянное время: обычное == отвечает тем быстрее, чем раньше
+    расходятся строки, — теоретическая утечка токена по времени ответа.
+    Сравниваем байты, а не str: compare_digest не умеет не-ASCII строки и
+    бросал TypeError (500 вместо 403). Пустая настройка не совпадает ни с
+    чем — иначе отсутствующий токен «совпал» бы с незаданным.
+    """
+    if not TOKEN or not isinstance(value, str) or not value:
+        return False
+    try:
+        supplied = value.encode("utf-8")
+    except UnicodeError:        # одиночные суррогаты из JSON или заголовка
+        return False
+    return secrets.compare_digest(supplied, TOKEN.encode("utf-8"))
+
+
 async def handle(request: web.Request, kind: str, fmt) -> web.Response:
     # портал шлёт POST (симулятор это показал), но URL с параметрами в доках
     # выглядит как GET — принимаем оба и собираем параметры отовсюду
@@ -87,7 +109,7 @@ async def handle(request: web.Request, kind: str, fmt) -> web.Response:
             except Exception:
                 pass
 
-    if row.get("token") != TOKEN:
+    if not token_matches(row.get("token")):
         log.warning("вебхук %s: неверный токен от %s", kind, request.remote)
         raise web.HTTPForbidden(text="bad token")
     row.pop("token", None)
@@ -230,11 +252,8 @@ async def status(request):
     даже когда SSH до сервера не отвечает."""
     check_token(request)
     db = request.app["db"]
-    beat = partner.kv_get(db, "bot_heartbeat")
-    alive, ago = False, None
-    if beat:
-        ago = (utcnow() - datetime.fromisoformat(beat)).total_seconds()
-        alive = ago < 120        # отметку бот ставит раз в 30 секунд
+    ago = _stamp_age(partner.kv_get(db, "bot_heartbeat"))
+    alive = ago is not None and ago < 120       # отметку бот ставит раз в 30 секунд
 
     trades_db = request.app["trades"]
     row = trades_db.execute("SELECT COUNT(*), MAX(synced) FROM state").fetchone()
@@ -243,8 +262,7 @@ async def status(request):
     # и рассинхрон часов агент/сервер ложно показывал то устаревший, то
     # свежий синк. sync_seconds_ago нейтрален к любому перекосу часов агента.
     last_sync = row[1] if row else None
-    sync_ago = (utcnow() - datetime.fromisoformat(last_sync)).total_seconds() \
-        if last_sync else None
+    sync_ago = _stamp_age(last_sync)
     return web.json_response({
         "bot": "работает" if alive else "остановлен",
         "bot_seconds_ago": round(ago) if ago is not None else None,
@@ -263,17 +281,48 @@ def check_token(request) -> None:
     # прислать оба или только один); ошибочный query не должен перекрывать
     # верный header — иначе неверная строка в одном месте отказывала бы
     # запросу, у которого верный токен лежит в другом.
-    # constant-time сравнение: обычное != отдаёт результат тем быстрее, чем
-    # раньше расходятся строки — теоретическая утечка токена по времени ответа
-    q = request.query.get("token") or ""
-    h = request.headers.get("X-Token") or ""
-    try:
-        ok = not TOKEN or secrets.compare_digest(q, TOKEN) or secrets.compare_digest(h, TOKEN)
-    except TypeError:  # compare_digest: не-ASCII строки сравнивать не умеет
-        ok = False
-    if not ok:
+    if not (token_matches(request.query.get("token"))
+            or token_matches(request.headers.get("X-Token"))):
         log.warning("агент: неверный токен от %s", request.remote)
         raise web.HTTPForbidden(text="bad token")
+
+
+async def _agent_json(request) -> dict:
+    """Тело агентского запроса: JSON-объект — или 400.
+
+    Эти маршруты не под /api/, и middleware Mini App их ошибки не ловит:
+    битый JSON или массив вместо объекта раньше давали 500 с трассировкой
+    в логе на каждый такой запрос.
+    """
+    try:
+        data = await request.json()
+    except ValueError as exc:       # JSONDecodeError и битая кодировка тела
+        raise web.HTTPBadRequest(text=f"bad payload: {exc}") from exc
+    if not isinstance(data, dict):
+        raise web.HTTPBadRequest(text="bad payload: object required")
+    return data
+
+
+def _agent_host(value, required: bool = True) -> str:
+    """Имя машины из запроса агента. Оно становится частью ключей в KV
+    (machine_seen:<host> и т.п.), поэтому только строка разумной длины."""
+    if value is not None and (not isinstance(value, str) or len(value) > 128
+                              or "\x00" in value):
+        raise web.HTTPBadRequest(text="invalid agent identity")
+    host = (value or "").strip()
+    if required and not host:
+        raise web.HTTPBadRequest(text="invalid agent identity")
+    return host
+
+
+def _stamp_age(stamp) -> float | None:
+    """Сколько секунд прошло с отметки из KV (UTC без зоны); None — если
+    отметки нет или она битая: одна испорченная запись не должна ронять
+    весь эндпоинт 500-й."""
+    try:
+        return (utcnow() - datetime.fromisoformat(stamp)).total_seconds()
+    except (TypeError, ValueError):
+        return None
 
 
 # Настройки, общие для всех агентских машин — раздаём тем же токеном, что и
@@ -331,8 +380,8 @@ async def agent_role_change(request):
     очередного agent_sync (тот тоже пишет active_machine, но не сразу).
     """
     check_token(request)
-    data = await request.json()
-    host = str(data.get("host") or "неизвестная машина")
+    data = await _agent_json(request)
+    host = _agent_host(data.get("host"), required=False) or "неизвестная машина"
     became = data.get("became")     # "active" | "standby"
     db = request.app["db"]
     if became == "active":
@@ -355,16 +404,30 @@ async def agent_update_notify(request):
     про чьи-то счета, и видна в боте только основателю.
     """
     check_token(request)
-    data = await request.json()
-    host = str(data.get("host") or "неизвестная машина")
+    data = await _agent_json(request)
+    host = _agent_host(data.get("host"), required=False) or "неизвестная машина"
     commit = str(data.get("commit") or "")[:8]
+    # агент шлёт сюда же и автоматический откат плохого обновления
+    # (_report_rollback): commit — рабочий, на который вернулся, rollback_from —
+    # тот, что не подтвердил себя. Раньше откат читался как «подтянул новый код»
+    rolled_back = str(data.get("rollback_from") or "")[:8]
     db = request.app["db"]
     if partner.kv_get(db, "update_alerts") != "0":
-        text = (f"🔄 <b>Агент обновился</b>\n{partner.THIN}\n"
-               f"<b>{host}</b> подтянул новый код"
-               + (f" ({commit})" if commit else "") + " и перезапустился.")
+        who = html.escape(host)
+        if rolled_back:
+            text = (f"⏪ <b>Агент откатил обновление</b>\n{partner.THIN}\n"
+                    f"<b>{who}</b>: код {html.escape(rolled_back)} не подтвердил себя "
+                    f"после перезапуска — вернулся на рабочий"
+                    + (f" {html.escape(commit)}" if commit else "") + ".")
+        else:
+            text = (f"🔄 <b>Агент обновился</b>\n{partner.THIN}\n"
+                    f"<b>{who}</b> подтянул новый код"
+                    + (f" ({html.escape(commit)})" if commit else "") + " и перезапустился.")
         fire(notify(request.app, text))
-    log.info("агент обновился: %s -> %s", host, commit or "?")
+    if rolled_back:
+        log.warning("агент откатился: %s %s -> %s", host, rolled_back, commit or "?")
+    else:
+        log.info("агент обновился: %s -> %s", host, commit or "?")
     return web.json_response({"ok": True})
 
 
@@ -378,10 +441,12 @@ async def agent_update_report(request):
     рабочий) — прежде чем самому рисковать активной сессией в терминале.
     """
     check_token(request)
-    data = await request.json()
-    host = str(data.get("host") or "")
-    commit = str(data.get("commit") or "")
-    if not host or not commit:
+    data = await _agent_json(request)
+    host = _agent_host(data.get("host"), required=False)
+    commit = data.get("commit")
+    # коммит становится частью ключа canary:<host>:<commit> и шаблона LIKE в
+    # agent_update_status — «%» или «_» в нём совпали бы с чужими записями
+    if not host or not isinstance(commit, str) or not COMMIT_RE.fullmatch(commit):
         return web.json_response({"ok": False}, status=400)
     db = request.app["db"]
     blocked = str(data.get("blocked") or "").strip()[:120]
@@ -400,18 +465,43 @@ async def agent_update_report(request):
     return web.json_response({"ok": True})
 
 
+def canary_age(db, commit: str) -> float | None:
+    """Сколько секунд какая-то машина подтверждённо прожила на этом коммите.
+
+    Раньше это было «сколько прошло с первого отчёта», и канарейка, упавшая
+    через минуту после обновления (или откатившаяся), через CANARY_DELAY всё
+    равно разрешала основной машине обновиться на тот же код — «обкатку»
+    засчитывало само время, а не работа. Теперь в зачёт идёт только отрезок
+    от первого до последнего отчёта машины, и только пока она всё ещё на
+    этом коммите. У живой канарейки последний отчёт — секунды назад, так что
+    для неё число то же, что и раньше.
+    """
+    if not commit or not COMMIT_RE.fullmatch(commit):
+        return None
+    best = None
+    for key in partner.kv_keys(db, f"canary:%:{commit}"):
+        host, sep, tail = key[len("canary:"):].rpartition(":")
+        if not sep or tail != commit or not host:
+            continue
+        if partner.kv_get(db, f"machine_commit:{host}") != commit:
+            continue        # машина ушла с этого кода: откатилась или обновилась дальше
+        try:
+            first = datetime.fromisoformat(partner.kv_get(db, key) or "")
+        except ValueError:
+            continue
+        try:
+            last = datetime.fromisoformat(partner.kv_get(db, f"canary_latest_seen:{host}") or "")
+        except ValueError:
+            last = first
+        lived = max(0.0, (max(last, first) - first).total_seconds())
+        best = lived if best is None else max(best, lived)
+    return best
+
+
 async def agent_update_status(request):
-    """Можно ли обновляться на этот коммит — и как давно кто-то на нём живёт."""
+    """Можно ли обновляться на этот коммит — и сколько кто-то на нём проработал."""
     check_token(request)
-    commit = request.query.get("commit", "")
-    db = request.app["db"]
-    since = None
-    if commit:
-        # берём самую раннюю метку среди всех машин, репортовавших этот коммит
-        stamps = [partner.kv_get(db, k) for k in partner.kv_keys(db, f"canary:%:{commit}")]
-        stamps = [s for s in stamps if s]
-        since = min(stamps) if stamps else None
-    age = (utcnow() - datetime.fromisoformat(since)).total_seconds() if since else None
+    age = canary_age(request.app["db"], request.query.get("commit", ""))
     return web.json_response({"canary_age_seconds": round(age) if age is not None else None})
 
 
@@ -419,8 +509,8 @@ async def agent_heartbeat(request):
     """Машина в резерве отмечается: жива, ждёт молча — она не шлёт agent_sync
     (терминал не опрашивает), и без этого сервер не знал бы её hostname."""
     check_token(request)
-    data = await request.json()
-    host = str(data.get("host") or "")
+    data = await _agent_json(request)
+    host = _agent_host(data.get("host"), required=False)
     if not host:
         return web.json_response({"ok": False}, status=400)
     db = request.app["db"]
@@ -435,19 +525,19 @@ async def agent_machines_status(request):
     """Кто из известных машин недавно был на связи — для /status и уведомлений."""
     check_token(request)
     db = request.app["db"]
-    stale_after = int(request.query.get("stale_after", 60))
+    try:
+        stale_after = int(request.query.get("stale_after", 60))
+    except ValueError:
+        raise web.HTTPBadRequest(text="stale_after: integer required") from None
     out = {}
     for key in partner.kv_keys(db, "machine_seen:%"):
         host = key.split(":", 1)[1]
         seen = partner.kv_get(db, key)
-        age = None
-        if seen:
-            try:
-                age = (utcnow() - datetime.fromisoformat(seen)).total_seconds()
-            except ValueError:
-                # битая метка не должна валить весь эндпоинт для всех машин —
-                # просто не знаем возраст этой конкретной записи
-                log.warning("machines_status: не разобрал метку времени %s=%r", key, seen)
+        age = _stamp_age(seen)
+        if seen and age is None:
+            # битая метка не должна валить весь эндпоинт для всех машин —
+            # просто не знаем возраст этой конкретной записи
+            log.warning("machines_status: не разобрал метку времени %s=%r", key, seen)
         out[host] = {"seconds_ago": round(age) if age is not None else None,
                     "alive": age is not None and age < stale_after}
     return web.json_response({"machines": out,
@@ -566,8 +656,13 @@ async def agent_sync(request):
     except sqlite3.DatabaseError as exc:
         log.warning("temporary database failure during sync for %s: %s", login, exc)
         raise web.HTTPServiceUnavailable(text="database temporarily busy")
-    reported_server = str(data.get("server") or "").strip()
-    reported_holder = str(data.get("holder") or "").strip()
+    reported_server = state["server"].strip()
+    # имя владельца из MT5 необязательно: непригодное (не строка, слишком
+    # длинное) просто не трогает accounts.json, а не отвергает весь пакет —
+    # из-за одной подписи не должен останавливаться поток сделок
+    holder = data.get("holder")
+    reported_holder = (holder.strip() if isinstance(holder, str) and len(holder) <= 128
+                       and "\x00" not in holder else "")
     if reported_server or reported_holder:
         # MT5 is authoritative for broker server and account owner label.
         # Update every legitimate owner copy atomically; a shared copy must

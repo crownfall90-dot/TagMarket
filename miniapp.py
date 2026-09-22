@@ -186,6 +186,37 @@ async def api_errors(request, handler):
     return response
 
 
+async def json_object(request) -> dict:
+    """Тело запроса — JSON-объект, иначе 400.
+
+    Массив или строка вместо объекта раньше доходили до data.get(...) и
+    падали AttributeError — 500 с трассировкой вместо понятного 400.
+    Битый JSON — ValueError, его middleware api_errors тоже превращает в 400.
+    """
+    data = await request.json()
+    if not isinstance(data, dict):
+        raise ValueError("object required")
+    return data
+
+
+def mt5_login(value) -> int:
+    """Номер счёта MT5 из тела запроса: целое число или строка из цифр.
+
+    int() молча принимал true (счёт 1) и 123.9 (счёт 123): опечаткой типа
+    можно было занять чужой номер, и настоящий владелец потом получал
+    «Счёт уже подключён».
+    """
+    if type(value) is int:
+        login = value
+    elif type(value) is str and value.isascii() and value.isdigit():
+        login = int(value)
+    else:
+        raise ValueError("login")
+    if not 0 < login < 2**63:
+        raise ValueError("login")
+    return login
+
+
 def owned(uid, login):
     acc = next((a for a in accounts.load(uid) if int(a["login"]) == int(login)), None)
     if not acc:
@@ -272,9 +303,9 @@ async def notifications(request):
 
 async def onboarding_progress(request):
     uid, _ = authorize(request)
-    data = await request.json()
+    data = await json_object(request)
     steps = ("registered", "verified", "broker_account")
-    step = data.get("step") if isinstance(data, dict) else None
+    step = data.get("step")
     if step not in steps or type(data.get("done")) is not bool:
         raise web.HTTPBadRequest(text="Некорректный шаг")
     db = request.app["db"]
@@ -552,10 +583,8 @@ def bounded_text(data, key, maximum=64, required=False):
 
 async def add_account(request):
     uid, _ = authorize(request)
-    data = await request.json()
-    login = int(data["login"])
-    if login <= 0 or login > 2**63 - 1:
-        raise ValueError("login")
+    data = await json_object(request)
+    login = mt5_login(data.get("login"))
     # The terminal is the source of truth for broker server and account name.
     # Keep an optional deployment default only for the first login handshake;
     # agent_sync replaces it with the values reported by MT5.
@@ -583,7 +612,7 @@ async def add_account(request):
 
 async def change_account(request):
     uid, _ = authorize(request)
-    data = await request.json() if request.method != "DELETE" else {}
+    data = await json_object(request) if request.method != "DELETE" else {}
     with locked(accounts.PATH):
         return _change_account(uid, request.match_info["login"], request.method, data, request.app["db"])
 
@@ -704,7 +733,7 @@ async def partner_profile(request):
     if request.method == "GET":
         return web.json_response({"url": logic.partner_link(db, uid),
                                   "portal": "https://exfusion.ibportal.io"})
-    data = await request.json()
+    data = await json_object(request)
     value = str(data.get("url", "")).strip()
     if not logic.valid_partner_link(value):
         raise ValueError("partner url")
@@ -718,14 +747,19 @@ async def guest_action(request):
     guest = request.match_info["guest"]
     if str(partner.kv_get(db, f"guest_by:{guest}")) != uid or logic.is_founder(guest) or guest == uid:
         raise web.HTTPForbidden(text="Нет доступа к этому гостю")
-    data = await request.json()
+    data = await json_object(request)
     if data.get("action") == "revoke":
         try:
             logic.revoke_guest(db, uid, guest)
         except ValueError as error:
             raise web.HTTPConflict(text=str(error)) from error
     elif data.get("action") == "share":
-        logins = list(dict.fromkeys(int(x) for x in data.get("logins", [])))[:50]
+        raw = data.get("logins", [])
+        # строка "123" раньше итерировалась посимвольно (счета 1, 2, 3), а
+        # [true] превращался в счёт 1 — только список номеров
+        if not isinstance(raw, list) or len(raw) > 50:
+            raise ValueError("logins")
+        logins = list(dict.fromkeys(mt5_login(x) for x in raw))
         for login in logins:
             acc = owned(uid, login)
             if acc.get("demo") or acc.get("shared_by"):
@@ -736,7 +770,7 @@ async def guest_action(request):
             raise web.HTTPConflict(text=str(error)) from error
         return web.json_response({"ok": True, "added": len(added)})
     elif data.get("action") == "take":
-        acc = owned(uid, data["login"])
+        acc = owned(uid, mt5_login(data.get("login")))
         shared = next((a for a in accounts.load(guest)
                        if int(a["login"]) == int(acc["login"])
                        and str(a.get("shared_by", "")) == uid
@@ -762,10 +796,10 @@ async def guest_detail(request):
 async def action(request):
     uid, _ = authorize(request)
     db = request.app["db"]
-    data = await request.json()
+    data = await json_object(request)
     kind = data.get("action")
     if kind == "restart":
-        acc = owned(uid, data["login"])
+        acc = owned(uid, mt5_login(data.get("login")))
         if acc.get("demo") or acc.get("shared_by"):
             raise web.HTTPForbidden(text="Общий терминал недоступен для управления гостю")
         store.set_command(request.app["trades"], acc["login"], "restart_terminal")
@@ -898,7 +932,7 @@ async def broadcast(request):
                 media_digest = digest.hexdigest()
         else:
             if request.content_type == "application/json":
-                data = await request.json()
+                data = await json_object(request)
             else:
                 # aiohttp FormData without a file is urlencoded, so accept it
                 # just like multipart submissions from the web form.

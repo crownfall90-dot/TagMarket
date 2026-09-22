@@ -211,6 +211,13 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.app.router.add_post("/agent/claim", webhook_server.agent_claim)
         self.app.router.add_post("/agent/role_change", webhook_server.agent_role_change)
         self.app.router.add_get("/agent/accounts", webhook_server.agent_accounts)
+        self.app.router.add_post("/agent/heartbeat", webhook_server.agent_heartbeat)
+        self.app.router.add_post("/agent/update_report", webhook_server.agent_update_report)
+        self.app.router.add_get("/agent/update_status", webhook_server.agent_update_status)
+        self.app.router.add_post("/agent/update_notify", webhook_server.agent_update_notify)
+        self.app.router.add_get("/agent/machines_status", webhook_server.agent_machines_status)
+        self.app.router.add_get("/status", webhook_server.status)
+        self.app.router.add_route("*", "/hook/deposit", webhook_server.on_deposit)
         webhook_server.TOKEN = "agent-test"
         self.client = TestClient(TestServer(self.app))
         await self.client.start_server()
@@ -1008,6 +1015,139 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("report",await r.json())
         r = await self.call("GET","/api/cabinets/CU1/report",uid=2)
         self.assertEqual(r.status,404)
+
+    async def test_agent_endpoints_answer_400_on_malformed_bodies(self):
+        token = {"X-Token": "agent-test"}
+        for path, body in (("/agent/heartbeat", "not json"), ("/agent/heartbeat", "[1, 2]"),
+                           ("/agent/role_change", '"active"'), ("/agent/update_notify", "[]"),
+                           ("/agent/update_report", "null")):
+            with self.subTest(path=path, body=body):
+                r = await self.client.post(path, headers={**token, "Content-Type": "application/json"},
+                                           data=body)
+                self.assertEqual(r.status, 400, await r.text())
+        for body in ({"host": "h" * 129}, {"host": {"evil": 1}}):
+            r = await self.client.post("/agent/heartbeat", headers=token, json=body)
+            self.assertEqual(r.status, 400, await r.text())
+        # коммит становится частью шаблона LIKE — «%» и «_» в нём недопустимы
+        for commit in ("a%", "a_b", "", 7):
+            r = await self.client.post("/agent/update_report", headers=token,
+                                       json={"host": "reserve", "commit": commit})
+            self.assertEqual(r.status, 400, await r.text())
+        r = await self.client.get("/agent/machines_status?stale_after=abc", headers=token)
+        self.assertEqual(r.status, 400)
+
+    async def test_tokens_compare_safely_and_empty_setting_matches_nothing(self):
+        for headers, query in (({"X-Token": "пароль".encode().decode("latin-1")}, ""),
+                               ({}, "?token=%D0%BF%D0%B0%D1%80%D0%BE%D0%BB%D1%8C"), ({}, "")):
+            r = await self.client.get("/agent/accounts" + query, headers=headers)
+            self.assertEqual(r.status, 403, await r.text())
+        r = await self.client.get("/hook/deposit?token=wrong&customer_no=CU9&amount=5")
+        self.assertEqual(r.status, 403)
+        r = await self.client.get("/hook/deposit?token=agent-test&customer_no=CU9&amount=5")
+        self.assertEqual(r.status, 200, await r.text())
+        with patch.object(webhook_server, "TOKEN", ""):
+            r = await self.client.get("/agent/accounts?token=")
+            self.assertEqual(r.status, 403)
+            r = await self.client.get("/hook/deposit?customer_no=CU9&amount=5")
+            self.assertEqual(r.status, 403)
+
+    async def test_status_needs_token_and_survives_corrupt_heartbeat(self):
+        r = await self.client.get("/status")
+        self.assertEqual(r.status, 403)
+        partner.kv_set(self.db, "bot_heartbeat", "not-a-date")
+        r = await self.client.get("/status", headers={"X-Token": "agent-test"})
+        self.assertEqual(r.status, 200, await r.text())
+        data = await r.json()
+        self.assertEqual(data["bot"], "остановлен")
+        self.assertIsNone(data["bot_seconds_ago"])
+        self.assertEqual(data["accounts"], 1)
+
+    async def test_canary_counts_only_time_actually_lived_on_the_commit(self):
+        now = webhook_server.utcnow()
+        stamp = lambda ago: (now - timedelta(seconds=ago)).isoformat()
+        commit = "abc123"
+        # канарейка обновилась 4000 с назад, но замолчала через 100 с
+        partner.kv_set(self.db, f"canary:reserve:{commit}", stamp(4000))
+        partner.kv_set(self.db, "canary_latest_seen:reserve", stamp(3900))
+        partner.kv_set(self.db, "machine_commit:reserve", commit)
+        r = await self.client.get(f"/agent/update_status?commit={commit}", headers={"X-Token": "agent-test"})
+        self.assertAlmostEqual((await r.json())["canary_age_seconds"], 100, delta=2)
+        # живая канарейка — отчитывается до сих пор: засчитывается всё время
+        partner.kv_set(self.db, "canary_latest_seen:reserve", stamp(0))
+        self.assertAlmostEqual(webhook_server.canary_age(self.db, commit), 4000, delta=2)
+        # откатилась на прежний код — больше не свидетель этого коммита
+        partner.kv_set(self.db, "machine_commit:reserve", "0ld")
+        self.assertIsNone(webhook_server.canary_age(self.db, commit))
+        self.assertIsNone(webhook_server.canary_age(self.db, "a%"))
+        # отчёт о коммите через API пишет обе отметки, по которым считается возраст
+        r = await self.client.post("/agent/update_report", headers={"X-Token": "agent-test"},
+                                   json={"host": "fresh", "commit": "fff"})
+        self.assertEqual(r.status, 200, await r.text())
+        self.assertAlmostEqual(webhook_server.canary_age(self.db, "fff"), 0, delta=2)
+
+    async def test_rollback_report_is_not_announced_as_update(self):
+        sent = []
+
+        async def capture(_app, text):
+            sent.append(text)
+
+        with patch.object(webhook_server, "notify", capture):
+            r = await self.client.post("/agent/update_notify", headers={"X-Token": "agent-test"},
+                                       json={"host": "pc<1>", "commit": "a" * 40, "rollback_from": "b" * 40})
+            self.assertEqual(r.status, 200, await r.text())
+            r = await self.client.post("/agent/update_notify", headers={"X-Token": "agent-test"},
+                                       json={"host": "pc", "commit": "c" * 40})
+            await asyncio.sleep(0)
+        self.assertIn("откатил", sent[0])
+        self.assertIn("pc&lt;1&gt;", sent[0])
+        self.assertIn("bbbbbbbb", sent[0])
+        self.assertIn("подтянул новый код", sent[1])
+
+    async def test_account_logins_must_be_real_integers(self):
+        for login in (True, 123.9, "12a", "١٢٣", [1], None, 0, -5, "0", 2**63):
+            with self.subTest(login=login):
+                r = await self.call("POST", "/api/accounts", json={"login": login, "name": "X",
+                                                                    "password": "p", "cabinet": "CU5"})
+                self.assertEqual(r.status, 400, await r.text())
+        self.assertEqual([int(a["login"]) for a in accounts.load(1)], [123])
+        r = await self.call("POST", "/api/accounts", json={"login": "555", "name": "NEO",
+                                                            "password": "p", "cabinet": "CU5"})
+        self.assertEqual(r.status, 201, await r.text())
+        partner.kv_set(self.db, "guest_by:2", "1")
+        partner.kv_set(self.db, "guest:2", "1")
+        for logins in ("123", [True], [123.0], {"123": 1}):
+            r = await self.call("POST", "/api/guests/2", json={"action": "share", "logins": logins})
+            self.assertEqual(r.status, 400, await r.text())
+        self.assertEqual(accounts.load(2), [])
+        r = await self.call("POST", "/api/guests/2", json={"action": "share", "logins": [123, "123"]})
+        self.assertEqual(r.status, 200, await r.text())
+        self.assertEqual((await r.json())["added"], 1)
+
+    async def test_non_object_json_is_a_client_error(self):
+        partner.kv_set(self.db, "guest_by:2", "1")
+        for method, path, body in (("PUT", "/api/profile/partner-link", []),
+                                   ("POST", "/api/actions", "restart"),
+                                   ("POST", "/api/guests/2", ["share"]),
+                                   ("PATCH", "/api/accounts/123", ["name"]),
+                                   ("POST", "/api/onboarding", ["registered"]),
+                                   ("POST", "/api/accounts", [123])):
+            with self.subTest(path=path):
+                r = await self.call(method, path, json=body)
+                self.assertEqual(r.status, 400, await r.text())
+
+    async def test_partner_link_rejects_markup_and_spaces(self):
+        base = "https://exfusion.ibportal.io/auth/register?e=link"
+        for bad in (base + '&x="><img src=x onerror=alert(1)>', base + " x", base + "&x=`",
+                    base + "\n&x=1", "https://exfusion.ibportal.io/auth/register",
+                    "https://evil.example/auth/register?e=1"):
+            with self.subTest(url=bad):
+                r = await self.call("PUT", "/api/profile/partner-link", json={"url": bad})
+                self.assertEqual(r.status, 400, await r.text())
+        r = await self.call("PUT", "/api/profile/partner-link", json={"url": base + "&a=%D0%B1"})
+        self.assertEqual(r.status, 200, await r.text())
+        # уже сохранённое старым кодом значение с разметкой никуда не отдаётся
+        partner.kv_set(self.db, "partner_link:7", base + '&x="><b>')
+        self.assertEqual(miniapp.logic.partner_link(self.db, 7), "")
 
 
 if __name__ == "__main__":

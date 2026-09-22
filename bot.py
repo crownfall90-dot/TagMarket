@@ -59,27 +59,36 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def _registration_url(value: str, need_query: bool = False) -> bool:
+    """Ссылка регистрации IB Portal — и ничего кроме неё.
+
+    Кроме адреса проверяем сами символы: ссылка уходит гостям в Mini App
+    (onboarding.registration_url) и в кнопку Telegram. Кавычки, угловые
+    скобки, пробелы и управляющие символы в query раньше проходили, и от
+    вставки разметки защищало только экранирование на стороне интерфейса.
+    """
+    if not value or len(value) > 1024 or not value.isascii() or not value.isprintable():
+        return False
+    if any(c in value for c in ' "<>\\`{}|^'):
+        return False
+    parts = urlsplit(value)
+    return (parts.scheme == "https" and parts.netloc == "exfusion.ibportal.io"
+            and parts.path == "/auth/register" and (bool(parts.query) or not need_query))
+
+
 def partner_registration_url() -> str:
     """Owner-provided IB Portal referral; never substitute a broker's generic signup URL."""
     value = os.getenv("PARTNER_REGISTRATION_URL", "").strip()
-    parts = urlsplit(value)
-    if parts.scheme != "https" or parts.netloc != "exfusion.ibportal.io" or parts.path != "/auth/register":
-        return ""
-    return value
+    return value if _registration_url(value) else ""
 
 
 def partner_link(db, uid) -> str:
     value = (kv_get(db, f"partner_link:{uid}") or "").strip()
-    parts = urlsplit(value)
-    if parts.scheme == "https" and parts.netloc == "exfusion.ibportal.io" and parts.path == "/auth/register":
-        return value
-    return ""
+    return value if _registration_url(value) else ""
 
 
 def valid_partner_link(value: str) -> bool:
-    parts = urlsplit((value or "").strip())
-    return (parts.scheme == "https" and parts.netloc == "exfusion.ibportal.io"
-            and parts.path == "/auth/register" and bool(parts.query) and len(value) <= 1024)
+    return _registration_url((value or "").strip(), need_query=True)
 
 
 def onboarding_status(db, uid) -> dict:
