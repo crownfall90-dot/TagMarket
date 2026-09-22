@@ -1071,7 +1071,11 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status, 200, await r.text())
 
     async def test_price_chart_returns_candles_and_trade_markers(self):
-        now = trades.clock()
+        # полдень сегодняшних суток, а не «сейчас»: период today отрезает всё
+        # до полуночи, и получасом после неё свечи «30 минут назад» попадали
+        # во вчера — тест падал, а с ним и выкладка с откатом (deploy_miniapp
+        # гоняет набор с check=True). Тот же дефект, что findings.md №9
+        now = trades.clock().replace(hour=12, minute=0, second=0, microsecond=0)
         store.save_candles(self.tdb, [
             {"time": (now - timedelta(minutes=30)).isoformat(), "open": 2400, "high": 2405, "low": 2398, "close": 2402},
             {"time": (now - timedelta(minutes=15)).isoformat(), "open": 2402, "high": 2410, "low": 2401, "close": 2408},

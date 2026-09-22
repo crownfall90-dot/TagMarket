@@ -8,8 +8,10 @@
 #   VPS_SSH_KEY     — закрытый ключ tagmarkets_vps, тот же, что у пульта;
 #   VPS_KNOWN_HOSTS — строка сервера из known_hosts на ПК: сверка, что это
 #                     наш сервер, а не подмена по дороге.
-# Без VPS_SSH_KEY выкладка просто пропускается. Вручную: вкладка Actions →
-# Deploy → Run workflow (выложит, даже если код сервера не менялся).
+# Оба секрета обязательны: без VPS_SSH_KEY выкладка тихо пропускается (CI не
+# краснеет), а вот при заданном ключе, но без VPS_KNOWN_HOSTS — останавливается
+# с ошибкой, иначе root-ключ ушёл бы на непроверенный хост. Вручную: вкладка
+# Actions → Deploy → Run workflow (выложит, даже если код сервера не менялся).
 name: Deploy
 
 on:
@@ -55,12 +57,16 @@ jobs:
           install -m 700 -d ~/.ssh
           printf '%s\n' "$KEY" > ~/.ssh/tagmarkets_vps
           chmod 600 ~/.ssh/tagmarkets_vps
-          if [ -n "$KNOWN" ]; then
-            printf '%s\n' "$KNOWN" > ~/.ssh/known_hosts
-          else
-            echo "::warning::VPS_KNOWN_HOSTS не задан — ключ сервера принят без сверки"
-            ssh-keyscan -p 2222 -T 15 89.44.86.228 > ~/.ssh/known_hosts 2>/dev/null
+          # Без сверки ключа хоста не выкладываем: ssh-keyscan принял бы
+          # ключ любого, кто ответит по адресу, и root-ключ от сервера ушёл
+          # бы туда же. Забытый секрет должен останавливать выкладку, а не
+          # превращаться в предупреждение, которое никто не читает.
+          if [ -z "$KNOWN" ]; then
+            echo "::error::VPS_KNOWN_HOSTS не задан — выкладка остановлена." \
+                 "Добавьте строку сервера из ~/.ssh/known_hosts в секреты."
+            exit 1
           fi
+          printf '%s\n' "$KNOWN" > ~/.ssh/known_hosts
       - name: Выложить
         if: steps.key.outputs.skip != '1'
         env:
