@@ -1,4 +1,4 @@
-"""Выкладка сервера с этого ПК: код из origin/main → VPS одной командой.
+"""Выкладка сервера: код из main → VPS одной командой, с ПК или из GitHub Actions.
 
 Агенты на ПК обновляются из main сами, а сервер (бот, вебхук, Mini App) —
 только выкладкой. Архив собирается из git, а не из рабочей папки: ни .env,
@@ -7,10 +7,17 @@ tools/deploy_miniapp.py той же ревизии; на сервере архи
 этот же deploy_miniapp.py — тесты, снимок для отката, автоматический возврат
 прежнего кода, если что-то не поднялось.
 
-    python tools/deploy_cli.py          # спросит подтверждение
-    python tools/deploy_cli.py --yes    # без вопросов
+После выкладки на сервере остаётся метка с коммитом. Если с тех пор файлы
+сервера не менялись (правили только документы или код агента), выкладывать
+нечего — сервисы зря не перезапускаются.
+
+    python tools/deploy_cli.py            # свежий main, спросит подтверждение
+    python tools/deploy_cli.py --yes      # без вопросов
+    python tools/deploy_cli.py --force    # даже если код сервера не менялся
+    python tools/deploy_cli.py --yes --ref SHA --only-latest   # так зовёт deploy.yml
 """
 
+import argparse
 import ast
 import io
 import subprocess
@@ -21,8 +28,8 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-REF = "origin/main"
 PYTHON = "/opt/tagmarkets/venv/bin/python"
+MARKER = "/opt/tagmarkets/.deployed_commit"
 # тот же сервер и ключ, что в пульте TagMarkets.bat; адрес tagvps из
 # ~/.ssh/config (им пользуется откат) важнее, если он настроен
 KEY = Path.home() / ".ssh" / "tagmarkets_vps"
@@ -68,38 +75,70 @@ def target() -> tuple[list[str], str]:
     return ["-o", "BatchMode=yes", "-o", f"Port={PORT}", "-i", str(KEY)], VPS
 
 
+def server_unchanged(options, host, sha: str) -> bool:
+    """Код сервера тот же, что уже выложен: файлы FILES не менялись с метки."""
+    found = subprocess.run(["ssh", *options, host, "cat", MARKER],
+                           capture_output=True, text=True)
+    deployed = found.stdout.strip()
+    if found.returncode or not deployed.isalnum():
+        return False        # метки нет (первая выкладка, откат) — выкладываем
+    try:
+        names = release_files(sha)
+        return subprocess.run(["git", "-C", str(ROOT), "diff", "--quiet", deployed, sha,
+                               "--", *names]).returncode == 0
+    except subprocess.CalledProcessError:
+        return False        # выложенного коммита нет в истории — выкладываем
+
+
 def main() -> int:
-    ask = "--yes" not in sys.argv[1:]
+    parser = argparse.ArgumentParser(description="Выкладка сервера из main")
+    parser.add_argument("--yes", action="store_true", help="не спрашивать подтверждение")
+    parser.add_argument("--force", action="store_true",
+                        help="выложить, даже если код сервера не менялся")
+    parser.add_argument("--ref", default="origin/main", help="что выкладывать (коммит)")
+    parser.add_argument("--only-latest", action="store_true",
+                        help="пропустить, если main уже ушёл дальше этого коммита")
+    args = parser.parse_args()
     try:
         git("fetch", "--quiet", "origin", "main")
-        commit = git("log", "-1", "--format=%h  %s", REF).decode("utf-8", "replace").strip()
+        sha = git("rev-parse", "--verify", f"{args.ref}^{{commit}}").decode().strip()
+        latest = git("rev-parse", "origin/main").decode().strip()
+        commit = git("log", "-1", "--format=%h  %s", sha).decode("utf-8", "replace").strip()
     except subprocess.CalledProcessError as exc:
-        print("Не получилось взять свежий main с GitHub:", exc.stderr.decode(errors="replace"))
+        print("Не получилось взять код с GitHub:", exc.stderr.decode(errors="replace"))
         return 1
-    print(f"\nВыкладываю на сервер версию main:\n  {commit}\n")
-    if ask:
+    if args.only_latest and sha != latest:
+        # два слияния подряд: выложит запуск более нового, этот устарел
+        print(f"main уже на {latest[:7]}, {sha[:7]} не выкладываю — выложит свежий запуск")
+        return 0
+
+    options, host = target()
+    if not args.force and server_unchanged(options, host, sha):
+        print(f"Код сервера с прошлой выкладки не менялся — {commit}\nВыкладывать нечего.")
+        return 0
+    print(f"\nВыкладываю на сервер версию:\n  {commit}\n")
+    if not args.yes:
         try:
             if input("Enter — выложить, любой текст — отмена: ").strip():
                 return 0
         except EOFError:
             return 0
 
-    options, host = target()
     stamp = time.strftime("%Y%m%d-%H%M%S")
     archive_remote = f"/tmp/tagmarkets-miniapp-{stamp}.tgz"
     script_remote = f"/tmp/tagmarkets-deploy-{stamp}.py"
     with tempfile.TemporaryDirectory() as tmp:
         archive = Path(tmp) / "tagmarkets-miniapp.tgz"
         script = Path(tmp) / "deploy_miniapp.py"
-        names = build(REF, archive)
-        script.write_bytes(git("show", f"{REF}:tools/deploy_miniapp.py"))
+        names = build(sha, archive)
+        script.write_bytes(git("show", f"{sha}:tools/deploy_miniapp.py"))
         print(f"Архив собран: {len(names)} файлов. Отправляю на сервер…")
         try:
             subprocess.run(["scp", "-q", *options, str(archive), f"{host}:{archive_remote}"],
                            check=True)
             subprocess.run(["scp", "-q", *options, str(script), f"{host}:{script_remote}"],
                            check=True)
-            print("Сервер проверяет и ставит (тесты, снимок для отката)…\n")
+            print("Сервер проверяет и ставит (тесты, снимок для отката)…\n", flush=True)
             result = subprocess.run(["ssh", *options, host, PYTHON, script_remote,
                                      archive_remote])
         except (OSError, subprocess.CalledProcessError) as exc:
@@ -112,7 +151,8 @@ def main() -> int:
     if result.returncode:
         print("\nВыкладка не прошла — сервер вернул прежнюю версию, данные не тронуты.")
         return result.returncode
-    print("\nГотово: сервер на версии", commit.split()[0])
+    subprocess.run(["ssh", *options, host, f"echo {sha} > {MARKER}"], capture_output=True)
+    print("\nГотово: сервер на версии", sha[:7])
     return 0
 
 

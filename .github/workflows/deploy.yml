@@ -1,0 +1,72 @@
+# Выкладка сервера (бот, вебхук, Mini App) после зелёного CI на main —
+# так же сама, как обновляются агенты на ПК. Выкладывает tools/deploy_cli.py:
+# архив строго из FILES, на сервере tools/deploy_miniapp.py — тесты, снимок
+# для отката и автоматический возврат прежнего кода при сбое. Если файлы
+# сервера не менялись (правили документы или агента), сервисы не трогаются.
+#
+# Нужны секреты репозитория (Settings → Secrets and variables → Actions):
+#   VPS_SSH_KEY     — закрытый ключ tagmarkets_vps, тот же, что у пульта;
+#   VPS_KNOWN_HOSTS — строка сервера из known_hosts на ПК: сверка, что это
+#                     наш сервер, а не подмена по дороге.
+# Без VPS_SSH_KEY выкладка просто пропускается. Вручную: вкладка Actions →
+# Deploy → Run workflow (выложит, даже если код сервера не менялся).
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# выкладки идут строго по одной; новая ждёт, а не обрывает начатую
+concurrency:
+  group: deploy-vps
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Выкладка на сервер
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Ключ сервера
+        id: key
+        env:
+          KEY: ${{ secrets.VPS_SSH_KEY }}
+          KNOWN: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "::notice::Секрет VPS_SSH_KEY не задан — выкладка пропущена"
+            echo "skip=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/tagmarkets_vps
+          chmod 600 ~/.ssh/tagmarkets_vps
+          if [ -n "$KNOWN" ]; then
+            printf '%s\n' "$KNOWN" > ~/.ssh/known_hosts
+          else
+            echo "::warning::VPS_KNOWN_HOSTS не задан — ключ сервера принят без сверки"
+            ssh-keyscan -p 2222 -T 15 89.44.86.228 > ~/.ssh/known_hosts 2>/dev/null
+          fi
+      - name: Выложить
+        if: steps.key.outputs.skip != '1'
+        env:
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && '--force' || '' }}
+        run: python3 tools/deploy_cli.py --yes --ref "$SHA" --only-latest $FORCE
+      - name: Убрать ключ
+        if: always()
+        run: rm -f ~/.ssh/tagmarkets_vps

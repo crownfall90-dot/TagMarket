@@ -49,7 +49,7 @@ Telegram-бот: сделки по счетам MT5 и события партн
 | `deploy_miniapp.py` | выкладка архива исходников на VPS с тестами и откатом (сервер) |
 | `rollback_miniapp.py` | список и восстановление последних совместимых версий кода (сервер) |
 | `rollback_cli.py`, `rollback-miniapp.bat` | тот же откат с ПК через SSH `tagvps` |
-| `deploy_cli.py`, `deploy-miniapp.bat` | выкладка сервера с ПК одним запуском: `origin/main` → архив → `deploy_miniapp.py` на VPS |
+| `deploy_cli.py`, `deploy-miniapp.bat` | выкладка сервера одним запуском: `main` → архив → `deploy_miniapp.py` на VPS; сама после зелёного CI (`.github/workflows/deploy.yml`) или вручную с ПК |
 | `audit.py` | сверка боевых данных: сходятся ли экраны между собой (сервер) |
 | `backup.sh` | ежедневная копия баз, счетов и `.env` (сервер, таймер systemd) |
 | `TagMarkets.bat` | пульт на ПК: состояние, запуск и остановка агента и сторожа |

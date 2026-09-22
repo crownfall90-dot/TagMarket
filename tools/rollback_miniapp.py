@@ -147,6 +147,9 @@ def restore(version: str) -> None:
         health()
         print("Restore failed; previous code returned and services are healthy", flush=True)
         raise
+    # код больше не тот, что выложен из main: автовыкладка (deploy_cli.py)
+    # сравнивает с этой меткой и иначе сочла бы, что выкладывать нечего
+    (ROOT / ".deployed_commit").unlink(missing_ok=True)
     print(f"Restored {version}; live data and settings preserved", flush=True)
 
 

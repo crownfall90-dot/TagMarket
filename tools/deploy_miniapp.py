@@ -5,6 +5,7 @@ No account data or secrets may be present in the source archive.
 """
 import os
 from pathlib import Path
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -24,10 +25,28 @@ FILES = {"accounts.py", "account_lock.py", "agent.py", "bot.py", "coordination.p
          "tests/test_miniapp.py", "tools/deploy_miniapp.py", "tools/rollback_miniapp.py",
          "tools/audit.py", "docs/AUDIT_HOWTO.md"}
 SERVICES = ["tagmarkets-bot", "tagmarkets-webhook"]
+# Выкладка идёт автоматически после каждого слияния в main (см.
+# .github/workflows/deploy.yml), и снимки с копиями баз копились бы без
+# предела. Откат предлагает последние 10 — храним с запасом; ежедневные
+# копии backup.sh (*.tar.gz) здесь не трогаются.
+KEEP_SNAPSHOTS = 15
+KEEP_RELEASES = 10
 
 
 def run(*args, **kwargs):
     return subprocess.run(args, check=True, text=True, **kwargs)
+
+
+def prune() -> None:
+    """Убрать старые снимки выкладок и распакованные архивы, кроме последних."""
+    for folder, pattern, keep in ((ROOT / "backup", r"\d{8}-\d{6}-miniapp", KEEP_SNAPSHOTS),
+                                  (ROOT / "releases", r"\d{8}-\d{6}", KEEP_RELEASES)):
+        if not folder.is_dir():
+            continue
+        found = sorted(p for p in folder.iterdir()
+                       if p.is_dir() and not p.is_symlink() and re.fullmatch(pattern, p.name))
+        for old in found[:-keep]:
+            shutil.rmtree(old, ignore_errors=True)
 
 
 def main():
@@ -147,6 +166,10 @@ def main():
         print("Warning: historical account backups still need credential migration", flush=True)
     print("Deployed. Backup:", backup)
     print("URL: https://crownfail.shop/tagmarkets/app/")
+    try:
+        prune()
+    except OSError as exc:
+        print("Warning: old snapshots were not pruned:", exc, flush=True)
 
 
 if __name__ == "__main__":
