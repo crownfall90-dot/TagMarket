@@ -373,7 +373,9 @@ async function navigate(){
  await refresh();
  tg?.BackButton?.[state.view==='account'?'show':'hide']();
 }
-const SCHEMES=[['lime','Графит и лайм','#111416',['#111416','#d0f29b','#b8a6e9']],['sapphire','Ночной сапфир','#0e1420',['#0e1420','#8fc4ff','#c3b5ff']],['velvet','Красный бархат','#170a0e',['#170a0e','#e8c576','#d999a8']]];
+// [id, название, цвет шапки Telegram, образцы]. Фон у всех схем один —
+// графитовый: гамма меняет только акценты, не всю тему
+const SCHEMES=[['lime','Лайм','#111416',['#111416','#d0f29b','#b8a6e9']],['sapphire','Сапфир','#111416',['#111416','#5eb3ff','#b18bff']],['velvet','Золото','#111416',['#111416','#e8c576','#d999a8']]];
 function currentScheme(){return document.documentElement.dataset.scheme||'lime';}
 function setScheme(id,persist=true){const sc=SCHEMES.find(x=>x[0]===id)||SCHEMES[0],root=document.documentElement;root.dataset.scheme=sc[0];try{if(persist)localStorage.setItem('tag-scheme',sc[0]);}catch{}document.querySelector('meta[name="theme-color"]').content=sc[2];try{tg?.setHeaderColor(sc[2]);tg?.setBackgroundColor(sc[2]);}catch{}if(state.data&&state.view==='settings')render();}
 function dialog(title,body,label='Сохранить'){return new Promise(resolve=>{const d=$('#dialog');$('#dialog-title').textContent=title;$('#dialog-body').innerHTML=body;$('#dialog-submit').textContent=label;const info=['Закрыть','Понятно','Готово'].includes(label);d.classList.toggle('info-only',info);d.onclick=e=>{if(info&&e.target===d)d.close('cancel');};d.returnValue='';d.onclose=()=>{const values=Object.fromEntries(new FormData($('form',d)));resolve(d.returnValue==='confirm'?values:null);};$('form',d).onsubmit=e=>{if(e.submitter?.value==='cancel')return;const fields=[...d.querySelectorAll('input,select,textarea')];if(!fields.every(f=>f.reportValidity()))e.preventDefault();};d.showModal();});}
