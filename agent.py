@@ -15,8 +15,9 @@
     STANDBY_TIMEOUT=90         — секунд без синка отовсюду, прежде чем
                                  standby сам включится (по умолчанию)
 Сервер выдаёт одному процессу исключительное право опроса на 180 секунд.
-Его продлевает успешная передача данных. Остальные машины ждут, даже если
-роль primary. Вернувшаяся машина не вытесняет исправно работающую резервную.
+Его продлевает успешная передача данных. Остальные машины ждут; исключение —
+основная (primary): вернувшись, она сразу забирает право у резервной
+(см. coordination.claim).
 STANDBY_TIMEOUT оставлен для совместимости старого диагностического метода.
 
 Автообновление (канареечный деплой между машинами):
@@ -121,7 +122,8 @@ SESSION = uuid.uuid4().hex
 def claim_terminal() -> bool:
     """Never touch MT5 without an exclusive server-issued polling lease.
 
-    A recovered primary waits for the current owner; no automatic preemption.
+    A recovered primary takes the lease back from a standby at once (see
+    coordination.claim); everyone else waits for the current owner.
     Network errors and an older server both fail closed.
     """
     try:

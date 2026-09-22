@@ -283,7 +283,9 @@ async def bootstrap(request):
                         "progress": logic.onboarding_status(db, uid),
                         "partner_url": logic.partner_link(request.app["db"], uid)},
         "founder": logic.is_founder(uid), "update_alerts": logic.update_alerts_on(db),
-        "server_time": logic.utcnow().isoformat() + "Z", "refresh_seconds": 15})
+        "server_time": logic.utcnow().isoformat() + "Z",
+        # интервал фонового обновления Mini App; клиент ждёт не меньше 30 с
+        "refresh_seconds": 60})
 
 
 async def notifications(request):
