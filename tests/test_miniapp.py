@@ -274,6 +274,220 @@ class PortalTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("502", str(caught.exception))
 
 
+class OneEventOneMessageTests(unittest.IsolatedAsyncioTestCase):
+    """Одно событие видно из двух источников — в чат приходит одно сообщение.
+
+    Вывод со стратегии на баланс Tag Markets (и заведение с баланса на
+    стратегию) сообщают и вебхук портала, и история MT5; реинвест приходит
+    двумя строками. Кто узнал первым, тот и пишет, а текст — всегда как у MT5.
+    """
+
+    async def asyncSetUp(self):
+        import bot
+        self.bot = bot
+        self.tmp = tempfile.TemporaryDirectory()
+        self.saved_path, accounts.PATH = accounts.PATH, str(Path(self.tmp.name) / "accounts.json")
+        self.db = partner.open_db(str(Path(self.tmp.name) / "state.db"))
+        self.tdb = store.open_db(str(Path(self.tmp.name) / "trades.db"))
+        trades._db = self.tdb
+        self.patches = [patch.dict(os.environ, {"TELEGRAM_CHAT_ID": "1"}),
+                        patch.object(webhook_server, "TOKEN", "hook-test"),
+                        patch.object(webhook_server, "notify", self.hook_send),
+                        patch.object(webhook_server, "edit_notification", self.hook_edit)]
+        for p in self.patches:
+            p.start()
+        self.acc = {"owner": "1", "name": "SONIC", "strategy": "SONIC", "login": 123,
+                    "password": "x", "server": "Demo", "multiplier": 24,
+                    "cabinet": "CU1", "holder": "DZMITRY"}
+        accounts.add(self.acc)
+        store.save_state(self.tdb, 123, 60000, 60000, "USD", "Demo")
+        partner.kv_set(self.db, "mt5_last_ticket:1:123", 1)
+        partner.kv_set(self.db, "mt5_last_ticket:2:123", 1)
+        partner.unseen(self.db, "deposit", [{"tx_id": "old"}])     # не первый запуск
+        self.app = web.Application()
+        self.app["db"] = self.db
+        self.app.router.add_route("*", "/hook/deposit", webhook_server.on_deposit)
+        self.client = TestClient(TestServer(self.app))
+        await self.client.start_server()
+        self.chat = []          # [кому, текст] — индекс + 1 и есть id сообщения
+        self.edits = 0
+        test = self
+
+        class Bot:
+            async def send_message(self, chat_id, text, reply_markup=None, **kwargs):
+                test.chat.append([str(chat_id), text])
+                return type("Msg", (), {"message_id": len(test.chat)})()
+
+            async def edit_message_text(self, text, chat_id=None, message_id=None, **kwargs):
+                await test.hook_edit(None, chat_id, message_id, text)
+
+        self.fake_bot = Bot()
+
+    async def asyncTearDown(self):
+        for p in reversed(self.patches):
+            p.stop()
+        await self.client.close()
+        trades._db = None
+        accounts.PATH = self.saved_path
+        self.db.close()
+        self.tdb.close()
+        self.tmp.cleanup()
+
+    async def hook_send(self, _app, text, markup=None):
+        self.chat.append(["1", text])
+        return len(self.chat)
+
+    async def hook_edit(self, _app, chat_id, message_id, text):
+        self.chat[int(message_id) - 1] = [str(chat_id), text]
+        self.edits += 1
+        return True
+
+    def deal(self, ticket, net, comment, moment=None):
+        store.save_deals(self.tdb, 123, [{
+            "ticket": ticket, "time": moment or trades.clock(), "symbol": "", "side": "",
+            "volume": 0, "price": 0, "profit": net, "swap": 0, "commission": 0, "net": net,
+            "is_balance": True, "is_closing": False, "is_opening": False, "comment": comment}])
+
+    async def hook(self, amount="12.74", tx="tx1"):
+        r = await self.client.get(f"/hook/deposit?token=hook-test&customer_no=CU1"
+                                  f"&amount={amount}&currency=USD&tx_id={tx}")
+        self.assertEqual(r.status, 200, await r.text())
+        await asyncio.gather(*list(webhook_server._background))
+
+    def feed(self, user="1"):
+        return partner.notifications_for(self.db, user)["items"]
+
+    async def test_hook_first_then_mt5_edits_the_same_message(self):
+        await self.hook()
+        self.assertEqual(len(self.chat), 1)
+        self.assertIn("Пополнение баланса Tag Markets", self.chat[0][1])
+        self.assertIn("+12.74$", self.chat[0][1])
+        self.assertIn("🏷 <b>SONIC</b>", self.chat[0][1], "шапка как у уведомлений MT5")
+
+        self.deal(10, -12.74, "Profit Withdrawal")
+        await self.bot.poll_mt5(self.fake_bot, self.db)
+        self.assertEqual(len(self.chat), 1, "второго сообщения нет")
+        self.assertEqual(self.edits, 1)
+        self.assertIn("Профит списан со стратегии", self.chat[0][1])
+        self.assertIn("-12.74$", self.chat[0][1])
+        self.assertIn("DZMITRY · <code>123</code>", self.chat[0][1])
+        items = self.feed()
+        self.assertEqual(len(items), 1, "и в ленте Mini App одно событие")
+        self.assertEqual((items[0]["title"], items[0]["kind"]), ("SONIC · Вывод", "withdrawals"))
+        self.assertEqual(partner.kv_get(self.db, "mt5_last_ticket:1:123"), "10")
+
+    async def test_mt5_first_then_hook_stays_silent(self):
+        self.deal(10, -12.74, "Profit Withdrawal")
+        await self.bot.poll_mt5(self.fake_bot, self.db)
+        self.assertEqual(len(self.chat), 1)
+        self.assertIn("Профит списан со стратегии", self.chat[0][1])
+        await self.hook()
+        self.assertEqual(len(self.chat), 1)
+        self.assertEqual(self.edits, 0)
+        self.assertEqual(len(self.feed()), 1)
+        # кошелёк считает приход по-прежнему — меняется только уведомление
+        self.assertEqual(partner.kv_get(self.db, "wallet_in:CU1"), "12.74")
+
+    async def test_hook_after_agent_synced_row_sends_exact_mt5_text(self):
+        self.deal(10, -12.74, "Profit Withdrawal")     # агент успел, бот ещё нет
+        await self.hook()
+        self.assertEqual(len(self.chat), 1)
+        first = self.chat[0][1]
+        self.assertIn("Профит списан со стратегии", first)
+        await self.bot.poll_mt5(self.fake_bot, self.db)
+        self.assertEqual(self.chat, [["1", first]], "бот не шлёт и не правит")
+        self.assertEqual([i["event_key"] for i in self.feed()], ["trade:123:10"])
+
+    async def test_capital_to_strategy_is_the_same_event_as_hook(self):
+        await self.hook(amount="100", tx="tx2")
+        self.deal(11, 2400.0, "Deposit")       # 2400 ÷ 24 = 100 своих денег
+        await self.bot.poll_mt5(self.fake_bot, self.db)
+        self.assertEqual(len(self.chat), 1)
+        self.assertIn("Заведено на стратегию", self.chat[0][1])
+
+    async def test_different_amounts_are_different_events(self):
+        await self.hook()
+        self.deal(10, -20.0, "Profit Withdrawal")
+        await self.bot.poll_mt5(self.fake_bot, self.db)
+        self.assertEqual(len(self.chat), 2)
+        self.assertIn("Пополнение баланса Tag Markets", self.chat[0][1])
+        self.assertEqual(self.edits, 0)
+
+    async def test_guest_copy_still_gets_its_own_message(self):
+        accounts.add({**self.acc, "owner": "2"})
+        await self.hook()
+        self.deal(10, -12.74, "Profit Withdrawal")
+        await self.bot.poll_mt5(self.fake_bot, self.db)
+        self.assertEqual([who for who, _ in self.chat], ["1", "2"])
+        self.assertIn("Профит списан со стратегии", self.chat[0][1])
+        self.assertIn("Профит списан со стратегии", self.chat[1][1])
+
+    async def test_mt5_during_hook_send_is_applied_after_it(self):
+        # строка MT5 заявлена, пока вебхук ещё ждёт ответа Telegram
+        when = trades.clock()
+
+        async def slow_send(text):
+            status = await partner.announce_once(
+                self.db, "CU1", 1274, when, "mt5", True, "ТОЧНЫЙ ТЕКСТ",
+                ("withdrawals", "trade:123:10", "SONIC · Вывод", "точный"), "1",
+                self.fail_send, self.edit_cb, ref="123:10")
+            self.assertEqual(status, "merged")
+            return await self.hook_send(None, text)
+
+        status = await partner.announce_once(
+            self.db, "CU1", 1274, when, "hook", False, "нейтральный",
+            ("deposit", "wallet:CU1:tx1", "SONIC · Пополнение", "нейтральный"), "1",
+            slow_send, self.edit_cb)
+        self.assertEqual(status, "sent")
+        self.assertEqual(self.chat, [["1", "ТОЧНЫЙ ТЕКСТ"]])
+        self.assertEqual(self.feed()[0]["body"], "точный")
+
+    async def test_failed_mt5_send_is_retried_by_the_same_ticket(self):
+        when = trades.clock()
+        args = (self.db, "CU1", 1274, when, "mt5", True, "текст",
+                ("withdrawals", "trade:123:10", "SONIC · Вывод", "текст"), "1")
+        self.assertEqual(await partner.announce_once(*args, self.none_send, self.edit_cb,
+                                                     ref="123:10"), "failed")
+        self.assertEqual(await partner.announce_once(*args, self.ok_send, self.edit_cb,
+                                                     ref="123:10"), "sent")
+        self.assertEqual(len(self.chat), 1)
+
+    async def fail_send(self, text):
+        raise AssertionError("второе сообщение не должно уходить")
+
+    async def none_send(self, text):
+        return None
+
+    async def ok_send(self, text):
+        return await self.hook_send(None, text)
+
+    async def edit_cb(self, chat, msg, text):
+        return await self.hook_edit(None, chat, msg, text)
+
+    async def test_reinvest_halves_from_different_rounds_become_one_message(self):
+        moment = trades.clock()
+        self.deal(20, -6.0, "Adjust-6.00", moment)
+        await self.bot.poll_mt5(self.fake_bot, self.db)
+        self.assertEqual(len(self.chat), 1)
+        self.assertIn("сейчас уйдёт в капитал", self.chat[0][1])
+        self.deal(21, 144.0, "Upgrade-144.00", moment)
+        await self.bot.poll_mt5(self.fake_bot, self.db)
+        self.assertEqual(len(self.chat), 1, "вторая половина не пишет отдельно")
+        self.assertIn("в тот же момент добавлено в капитал", self.chat[0][1])
+        self.assertEqual(len(self.feed()), 1)
+        self.assertEqual(partner.kv_get(self.db, "mt5_last_ticket:1:123"), "21")
+
+    async def test_reinvest_with_upgrade_ticket_first_is_one_message(self):
+        moment = trades.clock()
+        self.deal(30, 144.0, "Upgrade-144.00", moment)
+        self.deal(31, -6.0, "Adjust-6.00", moment)
+        await self.bot.poll_mt5(self.fake_bot, self.db)
+        self.assertEqual(len(self.chat), 1)
+        self.assertIn("в тот же момент добавлено в капитал", self.chat[0][1])
+        self.assertIn("-6.00$", self.chat[0][1])
+        self.assertEqual(partner.kv_get(self.db, "mt5_last_ticket:1:123"), "31")
+
+
 class AuthTests(unittest.TestCase):
     def test_authentication_and_tamper(self):
         self.assertEqual(miniapp.validate_init_data(signed(42), "test-token")["id"], 42)

@@ -15,6 +15,7 @@
 
 import asyncio
 import html
+import json
 import logging
 import math
 import os
@@ -127,13 +128,26 @@ async def handle(request: web.Request, kind: str, fmt) -> web.Response:
         # считанные секунды и по таймауту шлёт событие заново — поэтому
         # подтверждаем сразу, а сообщение отправляем следом
         recipient = os.getenv("FOUNDER_ID") or os.getenv("TELEGRAM_CHAT_ID", "")
-        if recipient:
-            title = "Новая регистрация" if kind == "registration" else "Пополнение"
-            detail = partner.who(row) if kind == "registration" else \
-                f"{partner.whose(row, db)[0]} · {partner.money(row)}"
-            partner.record_notification(db, recipient, f"hook:{kind}:{partner.row_id(row)}",
-                                        kind, title, detail)
-        fire(notify(request.app, fmt(row)))
+        # приход на свой кабинет — обычно вывод со стратегии или заведение на
+        # неё, о котором следом сообщит и MT5: одно событие — одно сообщение
+        try:
+            own = partner.own_income_notice(db, row) \
+                if kind == "deposit" and partner.whose(row)[1] else None
+        except Exception:
+            # событие уже отмечено увиденным: упасть здесь — потерять его
+            # насовсем, поэтому при сбое сообщаем по-старому
+            log.exception("не подготовил уведомление о приходе на свой кабинет")
+            own = None
+        if own:
+            fire(announce_own(request.app, own))
+        else:
+            if recipient:
+                title = "Новая регистрация" if kind == "registration" else "Пополнение"
+                detail = partner.who(row) if kind == "registration" else \
+                    f"{partner.whose(row, db)[0]} · {partner.money(row)}"
+                partner.record_notification(db, recipient, f"hook:{kind}:{partner.row_id(row)}",
+                                            kind, title, detail)
+            fire(notify(request.app, fmt(row)))
         _remember_wallet_income(db, kind, row)
     log.info("вебхук %s: %s", kind, row.get("customer_no", row.get("tx_id", "?")))
     return web.Response(text="ok")
@@ -185,8 +199,14 @@ NOTIFY_RETRIES = 3       # событие уже помечено виденны
 NOTIFY_BACKOFF = 5       # со стороны портала не будет, единственный шанс доставить
 
 
-async def notify(app, text: str) -> None:
-    """Шлёт уведомление в Telegram с повторами.
+# та же кнопка, что под уведомлениями бота (bot.DASHBOARD_BTN): нажатие
+# обрабатывает бот — токен у них один
+DASHBOARD_MARKUP = json.dumps({"inline_keyboard": [[{"text": "📊 Дашборд",
+                                                      "callback_data": "dash"}]]})
+
+
+async def notify(app, text: str, markup: str = None) -> int | None:
+    """Шлёт уведомление в Telegram с повторами; возвращает id сообщения.
 
     Событие уже отмечено как увиденное в partner.unseen() до вызова notify()
     (иначе портал, ретраящий по таймауту, продублировал бы сообщение) — то
@@ -196,25 +216,68 @@ async def notify(app, text: str) -> None:
     """
     chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
     if not chat_id:
-        return
+        return None
     url = f"https://api.telegram.org/bot{os.environ['TELEGRAM_BOT_TOKEN']}/sendMessage"
+    data = {"chat_id": chat_id, "parse_mode": "HTML", "text": text}
+    if markup:
+        data["reply_markup"] = markup
     for attempt in range(1, NOTIFY_RETRIES + 1):
         try:
-            async with app["tg"].post(
-                    url, data={"chat_id": chat_id, "parse_mode": "HTML", "text": text},
-                    proxy=app.get("proxy")) as resp:
+            async with app["tg"].post(url, data=data, proxy=app.get("proxy")) as resp:
                 if resp.status < 300:
-                    return
+                    try:
+                        return int((await resp.json(content_type=None))["result"]["message_id"])
+                    except Exception:
+                        return 0        # доставлено, но id не разобрать — править не выйдет
                 body = await resp.text()
                 raise RuntimeError(f"Telegram ответил {resp.status}: {body[:200]}")
         except Exception as e:
             if attempt == NOTIFY_RETRIES:
                 log.error("не доставил уведомление в Telegram за %d попыток, "
                          "теряю: %s — %r", NOTIFY_RETRIES, e, text[:200])
-                return
+                return None
             log.warning("не отправил в Telegram (попытка %d/%d): %s",
                        attempt, NOTIFY_RETRIES, e)
             await asyncio.sleep(NOTIFY_BACKOFF * attempt)
+
+
+async def edit_notification(app, chat_id, message_id, text: str) -> bool:
+    """Поправить уже отправленное уведомление — когда уточнились подробности."""
+    url = f"https://api.telegram.org/bot{os.environ['TELEGRAM_BOT_TOKEN']}/editMessageText"
+    data = {"chat_id": chat_id, "message_id": message_id, "parse_mode": "HTML",
+            "text": text, "reply_markup": DASHBOARD_MARKUP}
+    try:
+        async with app["tg"].post(url, data=data, proxy=app.get("proxy")) as resp:
+            if resp.status < 300:
+                return True
+            body = await resp.text()
+            if "not modified" in body:
+                return True
+            log.warning("не поправил уведомление %s: %s %s", message_id, resp.status, body[:200])
+    except Exception as e:
+        log.warning("не поправил уведомление %s: %s", message_id, e)
+    return False
+
+
+async def announce_own(app, own: dict) -> None:
+    """Приход на баланс своего кабинета: одно сообщение на один перевод.
+
+    Строка MT5 о том же переводе приходит к боту позже вебхука. Кто первый,
+    тот и сообщает (см. partner.announce_once); если первым был вебхук, а
+    строки MT5 ещё не было, бот потом поправит это сообщение до своего вида.
+    """
+    async def send(text):
+        return await notify(app, text, DASHBOARD_MARKUP)
+
+    async def edit(chat, msg, text):
+        return await edit_notification(app, chat, msg, text)
+
+    try:
+        await partner.announce_once(app["db"], own["cabinet"], own["cents"], own["when"],
+                                    "hook", own["exact"], own["text"], own["feed"],
+                                    own["chat"], send, edit)
+    except Exception:
+        log.exception("не сообщил о приходе на баланс кабинета %s", own["cabinet"])
 
 
 _background: set[asyncio.Task] = set()   # держит задачи, пока notify() ретраит

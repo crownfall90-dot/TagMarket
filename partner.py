@@ -8,9 +8,10 @@ import hashlib
 import html
 import json
 import os
+import re
 import sqlite3
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 THIN = "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
 DB = os.getenv("STATE_DB", os.path.join("data", "state.db"))
@@ -447,6 +448,251 @@ def read_notifications(db, user_id, ids=None) -> int:
                          (now, uid, *safe))
     db.commit()
     return cur.rowcount
+
+
+def update_notification(db, user_id, event_key, title, body, kind=None) -> bool:
+    """Переписать уже сохранённое событие ленты — когда уточнились подробности."""
+    cur = db.execute("UPDATE notifications SET title=?, body=?, kind=COALESCE(?, kind) "
+                     "WHERE user_id=? AND event_key=?",
+                     (str(title)[:160], str(body)[:1200], str(kind)[:32] if kind else None,
+                      str(user_id), str(event_key)[:180]))
+    db.commit()
+    return bool(cur.rowcount)
+
+
+# ── одно событие — одно сообщение ─────────────────────────────────────────
+# Перевод денег между стратегией и балансом Tag Markets виден с двух сторон:
+# вебхук портала «пополнение баланса кабинета» приходит через секунды, строка
+# истории MT5 («профит списан со стратегии», «заведено на стратегию») — когда
+# агент дойдёт до счёта, через минуту-две. Человеку это одно событие, а в чат
+# падали два сообщения. Теперь сообщает тот, кто увидел событие первым;
+# второй молчит, а если знает больше (MT5 точнее вебхука), доводит уже
+# отправленное сообщение до своего вида. Реестр общий для процессов вебхука
+# и бота — в KV, под BEGIN IMMEDIATE.
+TWIN_WINDOW = 600           # секунд между двумя сигналами одного перевода
+TWIN_KEEP = 7 * 86400       # столько помним сигналы (агент бывает офлайн днями)
+
+
+def _twin_items(db, key) -> list:
+    try:
+        items = json.loads(kv_get(db, key) or "[]")
+    except (TypeError, ValueError):
+        return []
+    return [i for i in items if isinstance(i, dict)] if isinstance(items, list) else []
+
+
+def _twin_time(item):
+    try:
+        return datetime.fromisoformat(item.get("t") or "")
+    except (TypeError, ValueError):
+        return None
+
+
+def _twin_write(db, key, change):
+    """Прочитать реестр, поправить и записать одной транзакцией: бот и вебхук
+    заявляют сигналы из разных процессов, и без BEGIN IMMEDIATE оба могли бы
+    прочитать пустой реестр и оба решить, что сообщают первыми."""
+    if db.in_transaction:
+        db.commit()
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        items = _twin_items(db, key)
+        result = change(items)
+        db.execute("INSERT OR REPLACE INTO kv VALUES (?, ?)", (key, json.dumps(items)))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return result
+
+
+def twin_claim(db, cabinet: str, cents: int, when: datetime, source: str, exact: bool,
+               ref: str = "", fields: dict = None, edit: dict = None) -> tuple[str, dict | None]:
+    """Заявить сигнал о переводе суммы cents (в центах) между стратегией и
+    балансом кабинета. source — "hook" или "mt5"; exact — текст сигнала уже
+    в точном виде MT5.
+
+    (id, None) — сигнал первый, вызывающий сообщает сам. Так же при повторе
+    своего сигнала с тем же ref (тикет MT5): прошлая отправка не удалась.
+    (id двойника, его запись до изменений) — другая сторона уже заявила этот
+    перевод в пределах TWIN_WINDOW, второе сообщение не нужно. Если свой
+    текст точнее, а двойник ещё не отправил сообщение, edit ложится в его
+    запись — двойник поправит текст сам, как только узнает id сообщения.
+    """
+    import trades
+    horizon = trades.clock() - timedelta(seconds=TWIN_KEEP)
+
+    def gap(item):
+        return abs((_twin_time(item) - when).total_seconds())
+
+    def change(items):
+        items[:] = [i for i in items if (_twin_time(i) or horizon) > horizon]
+        mine = next((i for i in items if ref and i.get("s") == source
+                     and i.get("ref") == ref), None)
+        if mine:
+            mine.pop("failed", None)
+            return mine["id"], None
+        twins = [i for i in items if i.get("c") == cents and i.get("s") != source
+                 and not i.get("m") and not i.get("failed") and _twin_time(i)
+                 and gap(i) <= TWIN_WINDOW]
+        if twins:
+            twin = min(twins, key=gap)      # ближайший по времени — тот же перевод
+            before = dict(twin)
+            twin["m"] = True
+            if exact and not twin.get("exact"):
+                twin["exact"] = True        # дальше текст — этого сигнала
+                if not twin.get("msg"):
+                    twin["edit"] = edit
+            return twin["id"], before
+        item = {**(fields or {}), "id": uuid.uuid4().hex[:10], "c": cents,
+                "t": when.isoformat(), "s": source, "ref": ref, "exact": bool(exact),
+                "m": False}
+        items.append(item)
+        return item["id"], None
+
+    return _twin_write(db, f"wallet_twins:{cabinet}", change)
+
+
+def twin_update(db, cabinet: str, twin_id: str, **changes) -> dict | None:
+    """Дописать в запись сигнала (id сообщения, снятый edit); вернуть её целиком."""
+    def change(items):
+        item = next((i for i in items if i.get("id") == twin_id), None)
+        if item is None:
+            return None
+        item.update(changes)
+        return dict(item)
+
+    return _twin_write(db, f"wallet_twins:{cabinet}", change)
+
+
+async def announce_once(db, cabinet: str, cents: int, when: datetime, source: str,
+                        exact: bool, text: str, feed: tuple, chat: str, send, edit,
+                        ref: str = "") -> str:
+    """Сообщить о переводе, если о нём ещё не сообщила другая сторона.
+
+    feed — (kind, event_key, title, body) для ленты Mini App; chat — кому:
+    и чат для Telegram, и владелец ленты. send(text) отправляет и возвращает
+    id сообщения (None — не удалось, 0 — ушло, но id неизвестен),
+    edit(chat, msg, text) правит уже отправленное. Транспорт у бота и у
+    вебхука свой, порядок — общий.
+    Возвращает "sent", "merged" (второй сигнал: промолчали или поправили
+    первое сообщение) или "failed".
+    """
+    kind, event_key, title, body = feed
+    target = {"text": text, "kind": kind, "title": title, "body": body}
+    tid, twin = twin_claim(db, cabinet, cents, when, source, exact, ref=ref,
+                           fields={"chat": str(chat), "feed": event_key}, edit=target)
+    if twin is not None:
+        if exact and not twin.get("exact") and twin.get("msg"):
+            await _twin_apply(db, edit, twin, target)
+        return "merged"
+    record_notification(db, chat, event_key, kind, title, body)
+    msg = await send(text)
+    rec = twin_update(db, cabinet, tid,
+                      **({"failed": True} if msg is None else {"msg": msg})) or {}
+    pending = rec.get("edit")
+    if pending:
+        # точный сигнал пришёл, пока это сообщение ещё отправлялось
+        twin_update(db, cabinet, tid, edit=None)
+        if msg:
+            await _twin_apply(db, edit, rec, pending)
+        elif msg is None:
+            # своё не ушло, а двойник молчит, полагаясь на нас, — шлём его текст
+            msg = await send(pending["text"])
+            if msg is not None:
+                twin_update(db, cabinet, tid, msg=msg, failed=False)
+                update_notification(db, chat, event_key, pending["title"],
+                                    pending["body"], pending["kind"])
+    return "failed" if msg is None else "sent"
+
+
+async def _twin_apply(db, edit, rec: dict, target: dict) -> None:
+    """Довести первое сообщение и запись ленты до точного вида."""
+    await edit(rec["chat"], rec["msg"], target["text"])
+    if rec.get("feed"):
+        update_notification(db, rec["chat"], rec["feed"], target["title"],
+                            target["body"], target["kind"])
+
+
+def own_income_notice(db, row: dict) -> dict | None:
+    """Приход на баланс своего кабинета — готовое к announce_once сообщение.
+
+    Если агент уже прислал строку MT5 об этом же переводе, текст сразу точный:
+    ровно такой, какой прислал бы бот (и под тем же ключом ленты). Иначе —
+    в том же стиле, но с нейтральным заголовком (fmt_wallet_income): бот
+    поправит сообщение, когда дойдёт до строки. None — сообщать некому или
+    сумму не разобрать, тогда вебхук пишет по-старому.
+    """
+    import accounts
+    import trades
+    chat = str(os.getenv("TELEGRAM_CHAT_ID", "")).strip()
+    cabinet = str(pick(row, "customer_no", "customer", "client_no") or "").strip()
+    parsed = parsed_amount(row)
+    if not chat or not cabinet or not parsed or parsed[0] <= 0:
+        return None
+    cents = round(parsed[0] * 100)
+    when = trades.clock()
+    accs = accounts.dedup([a for a in accounts.load()
+                           if str(a.get("cabinet") or "").strip() == cabinet
+                           and str(a.get("owner")) == chat])
+    notice = {"cabinet": cabinet, "cents": cents, "when": when, "chat": chat}
+    found = None
+    window = timedelta(seconds=TWIN_WINDOW)
+    try:
+        for acc in accs:
+            trades.use(acc)
+            for r in trades.fetch(when - window, when + window):
+                if round(trades.wallet_transfer(r) * 100) == cents:
+                    gap = abs((r["time"] - when).total_seconds())
+                    if found is None or gap < found[0]:
+                        found = (gap, acc, r)
+        if found:
+            _, acc, r = found
+            trades.use(acc)         # текст берёт капитал текущего счёта
+            text, title, body = trades.fmt_account_event(acc, r, trades.currency())
+            if text:
+                return {**notice, "exact": True, "text": text,
+                        "feed": (trades.event_kind(r), f"trade:{acc['login']}:{r['ticket']}",
+                                 title, body)}
+    except Exception:       # история недоступна — хватит и нейтрального текста
+        pass
+    text, title, body = fmt_wallet_income(row, whose(row, db)[0], when, accs)
+    return {**notice, "exact": False, "text": text,
+            "feed": ("deposits", f"wallet:{cabinet}:{row_id(row)}", title, body)}
+
+
+def fmt_wallet_income(row: dict, name: str, when: datetime,
+                      accs: list[dict]) -> tuple[str, str, str]:
+    """Приход на баланс своего кабинета — в том же виде, что уведомления MT5:
+    (текст для Telegram, заголовок и текст для ленты).
+
+    Пока строки MT5 нет, неизвестно, вывод это со стратегии или пополнение
+    с карты, — поэтому заголовок нейтральный. Когда агент пришлёт операцию,
+    это же сообщение правится до точного вида MT5 (см. announce_once).
+    accs — свои счета в этом кабинете: если он один, шапка та же, что у
+    уведомлений MT5 (стратегия, владелец и номер счёта).
+    """
+    import trades
+    parsed = parsed_amount(row)
+    cabinet = str(pick(row, "customer_no", "customer", "client_no") or "").strip()
+    holder = name if name != cabinet else ""
+    if len(accs) == 1:
+        acc = accs[0]
+        title = acc.get("strategy") or acc["name"]
+        sub = f"{html.escape(acc.get('holder') or holder or cabinet)} · <code>{acc['login']}</code>"
+    else:
+        title = holder or f"Кабинет {cabinet}"
+        sub = f"кабинет {html.escape(cabinet)}"
+    total = (f"{trades.money(parsed[0])}{trades.sign(parsed[1])}" if parsed else money(row))
+    body = [f"🕒 <b>{when:%d.%m.%Y  %H:%M:%S}</b>", "💰 <b>Пополнение баланса Tag Markets</b>",
+            THIN, f"<b>{html.escape(total)}</b>",
+            "➡️ На балансе Tag Markets — можно вывести или вернуть в стратегию"]
+    state = cabinet_state(row)
+    if state:
+        body.append(state)
+    body = "\n".join(body)
+    text = f"🏷 <b>{html.escape(title)}</b>\n<i>{sub}</i>\n{THIN}\n{body}"
+    return text, f"{title} · Пополнение", html.unescape(re.sub(r"<[^>]+>", "", body))
 
 
 def kv_get(db, key, default=None):

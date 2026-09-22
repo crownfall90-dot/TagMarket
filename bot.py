@@ -3,6 +3,7 @@
 """
 
 import asyncio
+import functools
 import hashlib
 import html
 import json
@@ -1608,6 +1609,85 @@ async def poll_portal(session, bot: Bot, db, chat_id: str) -> int:
 
 # ── опрос MT5 ─────────────────────────────────────────────────────────────
 
+async def _send_id(bot: Bot, chat_id, text: str, markup=None) -> int | None:
+    """send(), но вместо исключения — None: для partner.announce_once."""
+    try:
+        return (await send(bot, chat_id, text, markup)).message_id
+    except Exception as e:
+        log.warning("не доставил уведомление %s: %s", chat_id, e)
+        return None
+
+
+async def _edit_notice(bot: Bot, chat_id, message_id: int, text: str, markup=None) -> bool:
+    """Поправить отправленное уведомление: уточнились подробности события."""
+    try:
+        await bot.edit_message_text(clip(text), chat_id=int(chat_id), message_id=int(message_id),
+                                    reply_markup=markup or DASHBOARD_BTN)
+        return True
+    except TelegramBadRequest as e:
+        if "not modified" in str(e):
+            return True
+        log.warning("не поправил уведомление %s/%s: %s", chat_id, message_id, e)
+    except Exception as e:
+        log.warning("не поправил уведомление %s/%s: %s", chat_id, message_id, e)
+    return False
+
+
+HALVES_KEEP = 10        # сколько последних одиноких половин реинвеста помнить
+
+
+def remember_reinvest_half(db, owner, acc: dict, row: dict, message_id: int,
+                           feed_key: str) -> None:
+    """Половину реинвеста показали без пары — запомнить, где это сообщение.
+
+    Пара придёт следующим кругом (агент прислал половины разными пачками),
+    и тогда это сообщение правится до общего вида вместо второго.
+    """
+    key = f"reinvest_half:{owner}:{acc['login']}"
+    try:
+        items = json.loads(kv_get(db, key) or "[]")
+    except (TypeError, ValueError):
+        items = []
+    items.append({"ticket": row["ticket"], "half": trades.reinvest_half(row),
+                  "t": row["time"].isoformat(), "msg": message_id, "feed": feed_key})
+    kv_set(db, key, json.dumps(items[-HALVES_KEEP:]))
+
+
+async def merge_reinvest_half(bot: Bot, db, acc: dict, row: dict, cur: str) -> bool:
+    """Вторая половина реинвеста, первая уже показана отдельно: поправить то
+    сообщение до общего «профит → капитал» и не слать второе. False — пары
+    среди показанных нет (или сообщение не поправить), шлём как обычно.
+    """
+    owner = acc["owner"]
+    key = f"reinvest_half:{owner}:{acc['login']}"
+    try:
+        items = json.loads(kv_get(db, key) or "[]")
+    except (TypeError, ValueError):
+        return False
+    half = trades.reinvest_half(row)
+    for item in items:
+        try:
+            moment = datetime.fromisoformat(item["t"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if item.get("half") in (None, half) or not trades.same_moment(moment, row["time"]):
+            continue
+        near = timedelta(seconds=trades.REINVEST_PAIR_SECONDS)
+        first = next((r for r in trades.fetch(moment - near, moment + near)
+                      if r["ticket"] == item["ticket"]), None)
+        if first is None:
+            return False
+        adjust, upgrade = (first, row) if half == "upgrade" else (row, first)
+        text, title, body = trades.fmt_account_event(acc, adjust, cur, pair=upgrade)
+        if not text or not await _edit_notice(bot, owner, item["msg"], text):
+            return False
+        partner.update_notification(db, owner, item["feed"], title, body,
+                                    trades.event_kind(adjust))
+        kv_set(db, key, json.dumps([i for i in items if i is not item]))
+        return True
+    return False
+
+
 async def poll_mt5(bot: Bot, db) -> int:
     """Обходит счета всех пользователей: каждому уходят только его сделки."""
     sent = 0
@@ -1648,16 +1728,41 @@ async def poll_mt5(bot: Bot, db) -> int:
 
         cur = trades.currency()
         rows = trades.since_ticket(last)
-        skip_ticket = None      # Upgrade, уже показанный вместе со своим Adjust
+        # переводы между стратегией и балансом Tag Markets у своих счетов
+        # видит и вебхук портала — о них сообщает тот, кто узнал первым
+        operator = str(os.getenv("TELEGRAM_CHAT_ID", "")).strip()
+        cabinet = str(acc.get("cabinet") or "").strip() \
+            if operator and str(owner) == operator else ""
+        skip_ticket = None      # вторая половина реинвеста, уже показанная с первой
         for i, row in enumerate(rows):
             if row["ticket"] == skip_ticket:
                 kv_set(db, key, row["ticket"])
                 continue
 
+            # реинвест приходит парой строк одним моментом: Adjust списывает
+            # из профита, Upgrade тут же кладёт то же самое в капитал. Раньше
+            # это были два отдельных, спорящих друг с другом уведомления.
+            # Ищем пару в окне соседних строк, а не строго следующую: тикеты
+            # не гарантируют порядок при равном времени (Upgrade бывает и
+            # раньше Adjust), и между ними может затесаться третья сделка.
+            # Время сравниваем окном (trades.same_moment): половины бывают
+            # разнесены на секунду, и тогда приходили два сообщения
+            half = trades.reinvest_half(row)
+            pair = None
+            if half:
+                for nxt in rows[i + 1:i + 4]:
+                    other = trades.reinvest_half(nxt)
+                    if (other and other != half
+                            and trades.same_moment(nxt["time"], row["time"])):
+                        pair = nxt
+                        skip_ticket = nxt["ticket"]
+                        break
+            # текст реинвеста строится от Adjust, Upgrade — его пара
+            main, pair = (pair, row) if pair is not None and half == "upgrade" else (row, pair)
+
             # курсор двигаем всегда: выключенный тип уведомлений не должен
             # копиться и вывалиться пачкой, когда его снова включат
-            kind = ("deposits" if row["net"] >= 0 else "withdrawals") \
-                if row["is_balance"] else "trades"
+            kind = trades.event_kind(main)
             if not accounts.notifies(acc, kind):
                 kv_set(db, key, row["ticket"])
                 continue
@@ -1672,24 +1777,12 @@ async def poll_mt5(bot: Bot, db) -> int:
                 kv_set(db, key, row["ticket"])
                 continue
 
-            # реинвест приходит парой строк одним моментом: Adjust списывает
-            # из профита, Upgrade тут же кладёт то же самое в капитал. Раньше
-            # это были два отдельных, спорящих друг с другом уведомления.
-            # Ищем пару в окне соседних строк, а не строго следующую: тикеты
-            # не гарантируют порядок при равном времени, и между Adjust и
-            # Upgrade может затесаться третья сделка с той же секундой.
-            # Время сравниваем окном (trades.same_moment): половины бывают
-            # разнесены на секунду, и тогда приходили два сообщения
-            pair = None
-            if (row["is_balance"] and trades.is_profit_side(row)
-                    and "adjust" in (row["comment"] or "").lower()):
-                for nxt in rows[i + 1:i + 4]:
-                    if (nxt["is_balance"] and not trades.is_profit_side(nxt)
-                            and "upgrade" in (nxt["comment"] or "").lower()
-                            and trades.same_moment(nxt["time"], row["time"])):
-                        pair = nxt
-                        skip_ticket = nxt["ticket"]
-                        break
+            # половины реинвеста разъехались между кругами опроса (агент
+            # прислал их разными пачками): первую уже показали отдельно —
+            # доводим то сообщение до общего вида, второго не шлём
+            if half and pair is None and await merge_reinvest_half(bot, db, acc, row, cur):
+                kv_set(db, key, row["ticket"])
+                continue
 
             day_net = day_count = total_net = None
             if row["is_closing"]:
@@ -1702,33 +1795,45 @@ async def poll_mt5(bot: Bot, db) -> int:
                     trades.fetch(datetime(2000, 1, 1), trades.clock()))["total"])
 
             # Шапка как в карточке счёта: сверху стратегия, ниже владелец и
-            # номер. Раньше брали имя счёта, а в нём уже сидит владелец — он
-            # повторялся дважды, а у счетов без суффикса (ALA SHAULIUKOVA)
-            # стратегия не показывалась вовсе.
-            title = acc.get("strategy") or acc["name"]
-            who = acc.get("holder") or acc.get("cabinet") or ""
-            sub = " · ".join(x for x in (html.escape(who),
-                                         f"<code>{acc['login']}</code>") if x)
-            tag = f"🏷 <b>{html.escape(title)}</b>" + (f"\n<i>{sub}</i>" if sub else "")
-            body = trades.fmt_notification(row, cur, day_net, day_count, total_net, pair=pair)
-            if not body:            # форматтер решил, что писать не о чем
+            # номер (см. trades.fmt_account_event)
+            text, title, body = trades.fmt_account_event(acc, main, cur, day_net, day_count,
+                                                         total_net, pair=pair)
+            if not text:            # форматтер решил, что писать не о чем
                 kv_set(db, key, row["ticket"])
                 continue
-            text = f"{tag}\n{trades.THIN}\n{body}"
-            partner.record_notification(db, owner,
-                                        f"trade:{acc['login']}:{row['ticket']}", kind,
-                                        f"{title} · " + {"trades": "Сделка", "deposits": "Пополнение",
-                                                         "withdrawals": "Вывод"}[kind],
-                                        html.unescape(re.sub(r"<[^>]+>", "", body)))
+            feed_key = f"trade:{acc['login']}:{row['ticket']}"
+            markup = trade_notification_buttons() if kind == "trades" else DASHBOARD_BTN
+
+            cents = round(trades.wallet_transfer(main) * 100) if cabinet else 0
+            if cents:
+                status = await partner.announce_once(
+                    db, cabinet, cents, main["time"], "mt5", True, text,
+                    (kind, feed_key, title, body), str(owner),
+                    functools.partial(_send_id, bot, owner, markup=markup),
+                    functools.partial(_edit_notice, bot),
+                    ref=f"{acc['login']}:{main['ticket']}")
+                if status == "failed":
+                    break           # курсор стоит — повторим на следующем круге
+                kv_set(db, key, row["ticket"])
+                if status == "sent":
+                    sent += 1
+                    await asyncio.sleep(0.05)
+                continue
+
+            partner.record_notification(db, owner, feed_key, kind, title, body)
             try:
-                await send(bot, owner, text,
-                           trade_notification_buttons() if kind == "trades" else DASHBOARD_BTN)
+                msg = await send(bot, owner, text, markup)
             except Exception as e:
                 log.warning("не доставил уведомление %s: %s", owner, e)
                 break
+            # курсор — только до этой строки, вторую половину пары снимет
+            # skip_ticket. Раньше курсор прыгал сразу за пару и перескакивал
+            # сделку, затесавшуюся между половинами, если на ней отправка
+            # сорвалась. Если сорвётся так, вторая половина придёт следующим
+            # кругом одна — и merge_reinvest_half узнает её по этой записи
             kv_set(db, key, row["ticket"])
-            if pair is not None:
-                kv_set(db, key, pair["ticket"])     # курсор дальше пары целиком
+            if half:
+                remember_reinvest_half(db, owner, acc, row, msg.message_id, feed_key)
             sent += 1
             await asyncio.sleep(0.05)
     return sent

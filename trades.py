@@ -6,6 +6,7 @@
 import html
 import logging
 import os
+import re
 import subprocess
 import time
 from datetime import date, datetime, time as dtime, timedelta, timezone
@@ -544,6 +545,34 @@ def own_amount(row: dict) -> float:
     if is_profit_side(row):
         return net                      # прибыль — уже реальные деньги
     return net / _multiplier if _multiplier else net
+
+
+def reinvest_half(row: dict) -> str:
+    """Половина реинвеста: "adjust" (списано из профита) или "upgrade"
+    (добавлено в капитал); "" — строка не из реинвеста."""
+    if not row["is_balance"]:
+        return ""
+    note = (row["comment"] or "").lower()
+    if "adjust" in note:
+        return "adjust"
+    if "upgrade" in note and not is_profit_side(row):
+        return "upgrade"
+    return ""
+
+
+def wallet_transfer(row: dict) -> float:
+    """Сколько денег строка перевела между стратегией и балансом Tag Markets,
+    в любую сторону; 0 — это не такой перевод.
+
+    Вывод профита или капитала на баланс и заведение денег с баланса на
+    стратегию портал сообщает ещё и вебхуком «пополнение баланса кабинета» —
+    одно событие, увиденное с двух сторон (см. partner.twin_claim). Реинвест
+    из стратегии не выходит, удержание доли брокера — тоже.
+    """
+    if (not row["is_balance"] or not is_transfer(row) or is_perf_fee(row)
+            or reinvest_half(row)):
+        return 0.0
+    return round(abs(own_amount(row)), 2)
 
 
 def connect():
@@ -1366,6 +1395,37 @@ def late_note(row: dict) -> str:
     if behind < 600:
         return f"<i>пришло с опозданием на {behind / 60:.0f} ч — терминал был offline</i>"
     return f"<i>событие от {row['time']:%d.%m}, пришло после включения терминала</i>"
+
+
+EVENT_TITLES = {"trades": "Сделка", "deposits": "Пополнение", "withdrawals": "Вывод"}
+
+
+def event_kind(row: dict) -> str:
+    """Тип события для выключателей уведомлений: сделка, пополнение или вывод."""
+    if not row["is_balance"]:
+        return "trades"
+    return "deposits" if row["net"] >= 0 else "withdrawals"
+
+
+def fmt_account_event(acc: dict, row: dict, cur: str, day_net: float = None,
+                      day_count: int = None, total_net: float = None,
+                      pair: dict = None) -> tuple[str, str, str]:
+    """Уведомление о событии счёта: (текст для Telegram, заголовок и текст для
+    ленты Mini App). Пустой текст — писать не о чем.
+
+    Шапка как в карточке счёта: сверху стратегия, ниже владелец и номер.
+    Общая для бота и для вебхука: если о переводе первым узнал вебхук, а
+    строка MT5 уже есть в базе, сообщение выглядит ровно так же, как из бота.
+    """
+    body = fmt_notification(row, cur, day_net, day_count, total_net, pair=pair)
+    if not body:
+        return "", "", ""
+    title = acc.get("strategy") or acc["name"]
+    who = acc.get("holder") or acc.get("cabinet") or ""
+    sub = " · ".join(x for x in (html.escape(who), f"<code>{acc['login']}</code>") if x)
+    tag = f"🏷 <b>{html.escape(title)}</b>" + (f"\n<i>{sub}</i>" if sub else "")
+    plain = html.unescape(re.sub(r"<[^>]+>", "", body))
+    return (f"{tag}\n{THIN}\n{body}", f"{title} · {EVENT_TITLES[event_kind(row)]}", plain)
 
 
 def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int = None,
