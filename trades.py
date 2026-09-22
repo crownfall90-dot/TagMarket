@@ -3,6 +3,7 @@
 Свою базу не ведём: MT5 хранит историю сам и подтягивает её с сервера брокера.
 """
 
+import html
 import logging
 import os
 import subprocess
@@ -375,15 +376,19 @@ def capital_moves_after(rows: list[dict], when: datetime) -> float:
                and not is_profit_side(r))
 
 
-def capital_at(when: datetime, rows: list[dict]) -> float:
+def capital_at(when: datetime, rows: list[dict], current: float = None) -> float:
     """Капитал на дату: сегодняшний минус всё, что пришло после неё.
 
     Без этого проценты врут при пополнениях: прибыль заработана на прежнем,
     меньшем капитале, а делилась бы на нынешний. Счёт, куда в середине месяца
     завели денег, показывал +1.84% вместо честных +6.6% — при том, что копирует
     ту же стратегию, что и соседние счета.
+
+    current — уже посчитанный capital(): в циклах по сделкам он один и тот же,
+    а пересчёт на каждую строку заново читал баланс и историю из базы (сотни
+    запросов на один экран Mini App).
     """
-    return capital() - capital_moves_after(rows, when)
+    return (capital() if current is None else current) - capital_moves_after(rows, when)
 
 
 def capital_around(row: dict) -> tuple[float, float]:
@@ -425,11 +430,13 @@ def growth_pct(rows: list[dict], flows: list[dict] = None) -> float:
     вместо +7.1% при той же стратегии, что и соседние.
     """
     flows = rows if flows is None else flows
+    closed = [r for r in rows if r["is_closing"]]
+    if not closed:
+        return 0.0
+    current = capital()         # один раз на весь период, а не на каждую сделку
     total = 0.0
-    for r in rows:
-        if not r["is_closing"]:
-            continue
-        base = capital_at(r["time"], flows)
+    for r in closed:
+        base = capital_at(r["time"], flows, current)
         if base > 0:
             total += net_of_fee(mine(r["net"])) / base
     return total * 100
@@ -513,6 +520,17 @@ def is_profit_side(row: dict) -> bool:
     """
     note = (row.get("comment") or "").lower()
     return "profit" in note or "adjust" in note
+
+
+# Реинвест — пара строк Adjust (из профита) + Upgrade (в капитал). Брокер
+# проводит их одним моментом, но метки иногда расходятся на секунду, и при
+# сравнении на точное равенство одно событие показывалось двумя
+REINVEST_PAIR_SECONDS = 5
+
+
+def same_moment(a: datetime, b: datetime) -> bool:
+    """Одна ли это операция по времени — для склейки половин реинвеста."""
+    return abs((a - b).total_seconds()) <= REINVEST_PAIR_SECONDS
 
 
 def own_amount(row: dict) -> float:
@@ -781,13 +799,28 @@ def pct(v: float, signed: bool = True) -> str:
     return s.rstrip("0").rstrip(".") + "%"
 
 
+def plural(n: int, one: str, few: str, many: str) -> str:
+    """Слово в нужной форме после числа: 1 сделка, 3 сделки, 11 и 25 сделок.
+
+    Упрощённое «n < 5» давало «21 сделок» и «0 сделки».
+    """
+    n = abs(int(n))
+    if n % 10 == 1 and n % 100 != 11:
+        return one
+    if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14):
+        return few
+    return many
+
+
 def vol(v: float) -> str:
     """Объём: у копи-трейдинга лоты бывают микроскопические."""
     return f"{v:.2f}" if v >= 0.01 else f"{v:.4f}"
 
 
 def short(symbol: str, width: int = 9) -> str:
-    return symbol[:width]
+    """Тикер для сообщения: обрезанный и экранированный — «S&P500» без
+    экранирования Telegram отвергал как битую HTML-сущность."""
+    return html.escape((symbol or "")[:width])
 
 
 FIG = " "      # пробел шириной цифры
@@ -935,7 +968,7 @@ def fmt_report(title: str, rows: list[dict], cur: str, subtitle: str = "",
         # верна и для периодов, чьи сделки уже удалены из базы
         wins, losses = s["wins"] + old_wins, s["losses"] + old_losses
         rate = wins / count * 100
-        word = "сделка" if count % 10 == 1 and count % 100 != 11 else                "сделки" if count % 10 in (2, 3, 4) and count % 100 not in (12, 13, 14)                else "сделок"
+        word = plural(count, "сделка", "сделки", "сделок")
         out.append(f"📈 <b>{count}</b> {word}: {wins} в плюс, {losses} в минус "
                    f"<i>({rate:.0f}%)</i>")
     if s["put_in"] or s["took_out"]:
@@ -950,7 +983,6 @@ def fmt_report(title: str, rows: list[dict], cur: str, subtitle: str = "",
     if len(by_day) > 1:
         days = sorted(by_day)[-31:]
         totals = {d: net_of_fee(mine(sum(by_day[d]))) for d in days}
-        scale = max(abs(v) for v in totals.values())
         # процент дня — перемноженные доходности его сделок, каждая к капиталу
         # на свой момент: пополнение в середине дня иначе задирает весь день
         # доходности складываем, а не перемножаем: прибыль не остаётся на
@@ -959,7 +991,7 @@ def fmt_report(title: str, rows: list[dict], cur: str, subtitle: str = "",
         gains = {d: 0.0 for d in days}
         for r in rows:
             if r["is_closing"] and r["time"].date() in gains:
-                base = capital_at(r["time"], flows)
+                base = capital_at(r["time"], flows, cap)
                 if base > 0:
                     gains[r["time"].date()] += net_of_fee(mine(r["net"])) / base
         vals = {d: money(totals[d]) for d in days}
@@ -998,7 +1030,7 @@ def fmt_report(title: str, rows: list[dict], cur: str, subtitle: str = "",
         shown = [r for r in rows if r["is_closing"]]
         vals = [net_of_fee(mine(r["net"])) for r in shown[-40:]]
         wv = widest([money(v) for v in vals])
-        bases = [capital_at(r["time"], flows) or cap for r in shown[-40:]]
+        bases = [capital_at(r["time"], flows, cap) or cap for r in shown[-40:]]
         wp = widest([pct(v / b * 100) for v, b in zip(vals, bases) if b])
         lines = []
         for r, val, base in zip(shown[-40:], vals, bases):
@@ -1129,8 +1161,8 @@ def growth_all() -> float:
     return (g - 1) * 100
 
 
-def archived_before_now() -> tuple[float, int]:
-    """Валовый итог и число сделок месяцев, свёрнутых в архив.
+def archived_before_now() -> tuple[float, int, int, int]:
+    """Валовый итог, число сделок, прибыльных и убыточных — по месяцам, свёрнутым в архив.
 
     Свёртка удаляет сами сделки, оставляя только месячные суммы. Поэтому итог
     «за всё время», посчитанный по одним сделкам, терял всю прошлую историю —
@@ -1281,8 +1313,13 @@ def fmt_status(cur: str) -> str:
     floating = mine(sum(p["net"] for p in pos))
 
     cap = capital()
-    earned = net_of_fee(mine(summary(fetch(datetime(2000, 1, 1), clock()))["total"]))
-    roi = f" ({pct(earned / cap * 100)})" if cap else ""
+    # та же мера, что в шапке отчёта (fmt_head): со свёрнутыми месяцами и
+    # процентом по капиталу на момент каждой сделки. Раньше здесь были одни
+    # живые сделки текущего месяца и «профит ÷ капитал» — /status спорил
+    # с отчётом «за всё время» по тому же счёту
+    gross = summary(fetch(datetime(2000, 1, 1), clock()))["total"] + archived_before_now()[0]
+    earned = net_of_fee(mine(gross))
+    roi = f" ({pct(growth_all())})" if cap else ""
 
     out = [f"💼 <b>Счёт {a.login}</b>", THIN,
            f"На стратегии <b>{cap:.2f}{sign(cur)}</b>",
@@ -1349,7 +1386,9 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
         # Adjust — это списание из профита в пару к Upgrade: те же деньги через
         # секунду вернутся капиталом. Называть это «выводом» неверно
         moved_in = "adjust" in (row["comment"] or "").lower()
-        note = f"<i>{row['comment']}</i>" if row["comment"] else ""
+        # комментарий пишет брокер: «<» или «&» в нём ломали разметку, и
+        # Telegram отвергал всё уведомление
+        note = f"<i>{html.escape(row['comment'])}</i>" if row["comment"] else ""
 
         if is_profit and is_transfer(row) and moved_in and pair is not None:
             # обе половины сразу: профит списан и в тот же момент добавлен
@@ -1418,7 +1457,7 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
     # вырасти депозитом, процент к текущему капиталу занижен — тот же счёт,
     # что и соседние по стратегии, показывал бы другое число на ту же сделку
     try:
-        cap_then = capital_at(row["time"], fetch(datetime(2000, 1, 1), clock() + timedelta(days=1)))
+        cap_then = capital_at(row["time"], fetch(datetime(2000, 1, 1), clock() + timedelta(days=1)), cap)
     except Exception as e:
         # история недоступна (терминал занят/переподключается) — не падаем,
         # но это откат ровно к той просадке процента, ради которой и
@@ -1447,7 +1486,7 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
     # профит за все сделки дня
     day_profit = net_of_fee(mine(day_net)) if day_net is not None else profit
     n = day_count if day_count is not None else 1
-    word = "сделка" if n == 1 else "сделки" if n < 5 else "сделок"
+    word = plural(n, "сделка", "сделки", "сделок")
     out.append(f"💵 За день: <b>{money(day_profit)}{sign(cur)}</b> <i>({n} {word})</i>")
 
     # Накопленный профит: пока его не вывели и не реинвестировали, он лежит на

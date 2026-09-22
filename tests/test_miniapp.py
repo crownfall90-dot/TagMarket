@@ -100,6 +100,22 @@ class LeaseTests(unittest.TestCase):
         self.assertFalse(coordination.authorize(self.db, "old-reserve", None, 300))
         self.assertTrue(coordination.permits(self.db, "main", "m2", 300))
 
+    def test_retry_after_counts_the_takeover_window_of_own_expired_lease(self):
+        coordination.claim(self.db, "main", "m", "primary", 0)
+        result = coordination.claim(self.db, "main", "m", "primary", 200)
+        self.assertFalse(result["granted"])
+        # аренда истекла на 180-й секунде, своё окно перехвата — ещё 180
+        self.assertEqual(result["retry_after"], 160)
+        self.assertEqual(coordination.claim(self.db, "reserve", "r", "standby", 10)["retry_after"], 170)
+
+    def test_malformed_lease_is_treated_as_absent(self):
+        for broken in ('{"host": 1}', "[]", '"lease"', '{"host": "a", "session": "s", "expires": true}'):
+            with self.subTest(value=broken):
+                partner.kv_set(self.db, coordination.KEY, broken)
+                self.assertIsNone(coordination.read(self.db))
+                self.assertTrue(coordination.permits(self.db, "main", "m", 0))
+                self.assertTrue(coordination.claim(self.db, "main", "m", "primary", 0)["granted"])
+
 
 class MachineStateTests(unittest.TestCase):
     def test_service_panel_tells_polling_waiting_legacy_and_offline_apart(self):
@@ -126,10 +142,46 @@ class MachineStateTests(unittest.TestCase):
         # блокировку записали 60 с назад, проверка раз в 15 минут — осталось 840 с
         self.assertEqual(got["old"]["next_check"], 840)
         self.assertIsNone(got["main"]["next_check"])
+        # вторая половина получасового окна: до следующей проверки не «0 секунд»,
+        # а остаток текущего 15-минутного цикла
+        partner.kv_set(db, "machine_blocked:old", f"{iso(1000)}|dirty tree")
+        later = {m["host"]: m for m in miniapp.machine_states(db, now)}
+        self.assertEqual(later["old"]["next_check"], 800)
         # a stale block reason must not stay on screen forever
         partner.kv_set(db, "machine_blocked:old", f"{iso(4000)}|dirty tree")
         stale = {m["host"]: m for m in miniapp.machine_states(db, now)}
         self.assertEqual(stale["old"]["blocked"], "")
+
+
+class FormattingTests(unittest.TestCase):
+    def test_russian_plural_forms(self):
+        words = ("сделка", "сделки", "сделок")
+        for n, want in ((0, "сделок"), (1, "сделка"), (2, "сделки"), (5, "сделок"), (11, "сделок"),
+                        (12, "сделок"), (21, "сделка"), (22, "сделки"), (25, "сделок"), (101, "сделка"),
+                        (111, "сделок")):
+            with self.subTest(n=n):
+                self.assertEqual(trades.plural(n, *words), want)
+
+    def test_ticker_is_escaped_for_telegram_html(self):
+        self.assertEqual(trades.short("S&P500.cash", 6), "S&amp;P500")
+        self.assertEqual(trades.short(None), "")
+
+    def test_reinvest_halves_pair_within_a_few_seconds_only(self):
+        moment = datetime(2026, 9, 1, 12, 0, 0)
+        self.assertTrue(trades.same_moment(moment, moment + timedelta(seconds=1)))
+        self.assertFalse(trades.same_moment(moment, moment + timedelta(minutes=1)))
+
+    def test_withdrawal_formatter_names_the_cabinet(self):
+        text = partner.fmt_withdrawal({"customer_no": "CU404", "amount": "5<b>"})
+        self.assertIn("Кабинет CU404", text)
+        self.assertIn("5&lt;b&gt;", text)
+
+    def test_same_second_site_deposits_are_both_kept(self):
+        db = partner.open_db(":memory:")
+        with patch.object(trades, "clock", return_value=datetime(2026, 9, 1, 12, 0, 0)):
+            partner.site_move_add(db, "CU1", "deposit", 100.0)
+            partner.site_move_add(db, "CU1", "deposit", 100.0)
+        self.assertEqual([m["amount"] for m in partner.site_moves(db, "CU1")], [100.0, 100.0])
 
 
 class AuthTests(unittest.TestCase):
@@ -780,6 +832,57 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(reinvest["capital_now"] - reinvest["capital_was"], 6.0)
         self.assertEqual(len(data["capital_series"]), 3)
         self.assertNotIn("PF Deduction", " ".join(str(d.get("comment")) for d in data["deals"]))
+
+    async def test_reinvest_split_by_a_second_is_one_move(self):
+        moment = trades.clock() - timedelta(days=1)
+        balance = {"is_balance": True, "is_closing": False, "is_opening": False, "volume": 0}
+        store.save_deals(self.tdb, 123, [
+            {**balance, "ticket": 902, "time": moment.isoformat(), "net": -5.0, "comment": "Adjust-5.00"},
+            {**balance, "ticket": 903, "time": (moment + timedelta(seconds=1)).isoformat(),
+             "net": 120.0, "comment": "Upgrade-120.00"}])
+        r = await self.call("GET", "/api/accounts/123/report?period=all&kind=moves")
+        data = await r.json()
+        self.assertEqual([(d["ticket"], d["move"]) for d in data["deals"]], [(903, "reinvest")])
+        # итоги дня для движений не считаются: интерфейс их не показывает
+        self.assertEqual(data["day_totals"], {})
+
+    async def test_capital_steps_reach_every_page_and_match_capital_around(self):
+        start = trades.clock() - timedelta(days=3)
+        store.save_deals(self.tdb, 123, [
+            {"ticket": 1000 + i, "time": (start + timedelta(minutes=i)).isoformat(), "is_balance": True,
+             "is_closing": False, "is_opening": False, "volume": 0,
+             "net": 240.0 if i % 3 else -48.0, "comment": "Deposit" if i % 3 else "Withdrawal"}
+            for i in range(320)])
+        r = await self.call("GET", "/api/accounts/123/report?period=all&kind=moves&offset=300")
+        data = await r.json()
+        self.assertEqual(len(data["deals"]), 20)
+        self.assertTrue(all("capital_was" in d for d in data["deals"]), data["deals"][-1])
+        self.assertEqual(len(data["capital_series"]), 321)
+        trades.use(accounts.load(1)[0])
+        moves = miniapp.moves_list(trades.fetch(datetime(2000, 1, 1), trades.clock() + timedelta(days=1)))
+        steps = miniapp.capital_steps(moves)
+        self.assertEqual(len(steps), 320)
+        for row in moves[::41]:
+            with self.subTest(ticket=row["ticket"]):
+                was, became = trades.capital_around(row)
+                self.assertAlmostEqual(steps[row["ticket"]][0], was, places=6)
+                self.assertAlmostEqual(steps[row["ticket"]][1], became, places=6)
+
+    async def test_status_command_counts_archived_months_like_the_report_head(self):
+        self.tdb.execute("INSERT INTO months (login, month, trades, gross, platform, wins, losses) "
+                         "VALUES (123, ?, 5, 100.0, 0, 4, 1)", (trades.REPORT_FROM.strftime("%Y-%m"),))
+        self.tdb.commit()
+        trades.use(accounts.load(1)[0])
+        status = trades.fmt_status("USD")
+        self.assertIn("Заработано <b>+70.00$</b>", status)
+        self.assertIn("всего <b>+70.00", trades.fmt_head("USD"))
+
+    async def test_broker_comment_cannot_break_notification_markup(self):
+        trades.use(accounts.load(1)[0])
+        row = {"ticket": 7, "time": trades.clock(), "is_balance": True, "is_closing": False,
+               "is_opening": False, "net": -3.0, "comment": "Fee <promo> & co", "symbol": "", "side": ""}
+        text = trades.fmt_notification(row, "USD")
+        self.assertIn("Fee &lt;promo&gt; &amp; co", text)
 
     async def test_site_deposits_are_listed_per_cabinet(self):
         partner.site_move_add(self.db, "CU1", "deposit", 250.0, "USD")

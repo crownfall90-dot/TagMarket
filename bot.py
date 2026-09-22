@@ -433,8 +433,9 @@ def dashboard(owner) -> tuple[str, InlineKeyboardMarkup]:
             f"{mark} {MONTHS[trades.clock().month].lower()} <b>{trades.amount(month, cur, signed=True)}</b>"
             f" · <i>{trades.pct(month_pct)}</i>\n"
             f"◆ всего <b>{trades.amount(pnl, cur, signed=True)}</b> · <i>{trades.pct(roi)}</i>\n"
-            f"{line}<i>{n} счёт{'а' if 1 < n < 5 else 'ов' if n != 1 else ''} · "
-            f"{month_trades} сделок</i></blockquote>{note}")
+            f"{line}<i>{n} {trades.plural(n, 'счёт', 'счёта', 'счетов')} · "
+            f"{month_trades} {trades.plural(month_trades, 'сделка', 'сделки', 'сделок')}"
+            f"</i></blockquote>{note}")
         rows.append([InlineKeyboardButton(text=f"👤 {who[:28]}",
                                           callback_data=f"cab:{cab}:today")])
 
@@ -1622,14 +1623,16 @@ async def poll_mt5(bot: Bot, db) -> int:
             # это были два отдельных, спорящих друг с другом уведомления.
             # Ищем пару в окне соседних строк, а не строго следующую: тикеты
             # не гарантируют порядок при равном времени, и между Adjust и
-            # Upgrade может затесаться третья сделка с той же секундой
+            # Upgrade может затесаться третья сделка с той же секундой.
+            # Время сравниваем окном (trades.same_moment): половины бывают
+            # разнесены на секунду, и тогда приходили два сообщения
             pair = None
             if (row["is_balance"] and trades.is_profit_side(row)
                     and "adjust" in (row["comment"] or "").lower()):
                 for nxt in rows[i + 1:i + 4]:
                     if (nxt["is_balance"] and not trades.is_profit_side(nxt)
                             and "upgrade" in (nxt["comment"] or "").lower()
-                            and nxt["time"] == row["time"]):
+                            and trades.same_moment(nxt["time"], row["time"])):
                         pair = nxt
                         skip_ticket = nxt["ticket"]
                         break
