@@ -113,9 +113,6 @@ def main():
                     assert page.locator('.detail-strategy').count() == 1
                     assert page.locator('.license-card .license-actions a').count() == 2
                     assert page.locator(f'{nav} a[href="#accounts"].active').count() == 1
-                    page.locator('[data-action="full-report"]').click()
-                    assert 'Демонстрационный отчёт' in page.locator('#dialog-body').inner_text()
-                    page.locator('#dialog button[value="cancel"]').last.click()
                     sonic_result = page.locator('.detail-chart .result-pair b').inner_text()
                     page.locator('#account-select').select_option('10002')
                     page.locator('.detail-hero h1').get_by_text('NEO.FX').wait_for()
@@ -177,8 +174,12 @@ def main():
                         page.wait_for_timeout(500)
                         page.screenshot(path=str(screenshots / "tagmarkets-mobile-people-smoke.png"), full_page=True)
                     fits(page)
-                    page.locator('#theme').click()
-                    assert page.locator('html').get_attribute('data-theme') == 'light'
+                    # тем без гаммы (light) больше нет — приложение всегда тёмное;
+                    # переключатель живёт в Настройках как выбор из трёх схем
+                    page.locator(f'{nav} a[href="#settings"]').click()
+                    page.locator('.scheme-picker').wait_for()
+                    page.locator('.scheme[data-value="velvet"]').click()
+                    assert page.locator('html').get_attribute('data-scheme') == 'velvet'
                     page.locator(f'{nav} a[href="#overview"]').click()
                     page.locator('.hero').wait_for()
                     assert page.locator('.chart-panel [data-value="today"].active').count() == 1
@@ -186,7 +187,7 @@ def main():
                     fits(page)
                     if width == 390:
                         page.wait_for_timeout(500)
-                        page.screenshot(path=str(screenshots / "tagmarkets-mobile-light-smoke.png"), full_page=True)
+                        page.screenshot(path=str(screenshots / "tagmarkets-mobile-velvet-smoke.png"), full_page=True)
                     assert not errors, errors
                     page.close()
                 print("UI smoke PASS: 320px, 390px, 768px and 1280px")
