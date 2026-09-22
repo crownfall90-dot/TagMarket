@@ -1518,20 +1518,29 @@ async def poll_portal(session, bot: Bot, db, chat_id: str) -> int:
         return 0
 
     sent, income, trades_n = 0, 0.0, 0
-    for row in fresh:
-        if row.get("eventType") == partner.PORTAL_INCOME:
-            # доход с сети капает по копейке — копим на сводку, а не спамим
-            income += partner.portal_amount(row)
-            trades_n += 1
-            continue
-        if _repeat_of_recent(db, row):
-            continue
-        partner.record_notification(db, FOUNDER or chat_id, "portal:" + partner.row_id(row),
-                                    "portal", str(row.get("title") or "Событие кабинета"),
-                                    str(row.get("body") or ""))
-        await send(bot, chat_id, partner.fmt_portal(row), DASHBOARD_BTN)
-        sent += 1
-        await asyncio.sleep(0.05)
+    undelivered, i = [], 0
+    try:
+        for i, row in enumerate(fresh):
+            if row.get("eventType") == partner.PORTAL_INCOME:
+                # доход с сети капает по копейке — копим на сводку, а не спамим
+                income += partner.portal_amount(row)
+                trades_n += 1
+                continue
+            if _repeat_of_recent(db, row):
+                continue
+            partner.record_notification(db, FOUNDER or chat_id, "portal:" + partner.row_id(row),
+                                        "portal", str(row.get("title") or "Событие кабинета"),
+                                        str(row.get("body") or ""))
+            await send(bot, chat_id, partner.fmt_portal(row), DASHBOARD_BTN)
+            sent += 1
+            await asyncio.sleep(0.05)
+    except Exception:
+        # Telegram недоступен: всё, начиная с упавшего, снимаем с отметки
+        # «видели» — иначе событие потеряно навсегда, ретраев здесь нет.
+        # Хвост цикла не обработан вовсе, поэтому доход из него тоже не
+        # зачтён и должен вернуться; посчитанное до падения уже в income
+        undelivered = fresh[i:]
+        log.exception("кабинет: не доставил событие, верну его следующим кругом")
 
     if income:
         day = str(trades.clock().date())
@@ -1540,6 +1549,8 @@ async def poll_portal(session, bot: Bot, db, chat_id: str) -> int:
         kv_set(db, f"net_trades:{day}",
                str(int(kv_get(db, f"net_trades:{day}", 0) or 0) + trades_n))
         log.info("доход с сети: +%.4f за %d сделок сети", income, trades_n)
+    if undelivered:
+        partner.forget_seen(db, "portal", undelivered)
     return sent
 
 
