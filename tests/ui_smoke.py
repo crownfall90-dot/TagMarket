@@ -27,6 +27,18 @@ def fits(page):
     assert width <= viewport + 1, f"horizontal overflow: {width}px in {viewport}px"
 
 
+def glider_on_active(page, nav):
+    """Подсветка вкладки доехала и стоит ровно под активной ссылкой панели."""
+    page.wait_for_function(
+        "nav => { const g = document.querySelector(nav + ' .nav-glider');"
+        " return g && !g.classList.contains('is-hidden') && g.getAnimations().length === 0; }", arg=nav)
+    glider, link = page.evaluate(
+        "nav => [document.querySelector(nav + ' .nav-glider').getBoundingClientRect().toJSON(),"
+        " document.querySelector(nav + ' a.active').getBoundingClientRect().toJSON()]", nav)
+    for key in ("x", "y", "width", "height"):
+        assert abs(glider[key] - link[key]) <= 1.5, (nav, key, glider, link)
+
+
 def close_dialog(page):
     """Закрыть диалог крестиком в шапке: у информационных окон кнопка
     «Отмена» спрятана, а крестик есть у всех."""
@@ -84,8 +96,10 @@ def main():
                     page.locator('.hero').wait_for()
 
                     nav = "#mobile-nav" if width < 740 else "#desktop-nav"
+                    glider_on_active(page, nav)
                     page.locator(f'{nav} a[href="#accounts"]').click()
                     page.locator('.account-list').first.wait_for()
+                    glider_on_active(page, nav)
                     # два личных кабинета и общий счёт для наблюдения
                     assert page.locator('.account-group').count() == 3
                     if width == 390:
@@ -141,6 +155,7 @@ def main():
                         print("Mobile account screenshot:", shot)
                     page.locator(f'{nav} a[href="#settings"]').click()
                     page.locator('[data-action="broadcast"]').wait_for()
+                    glider_on_active(page, nav)
                     page.locator('.machine-row').first.wait_for()     # /admin подгружается следом
                     assert page.locator('.machine-row').count() == 2
                     if width == 390:
@@ -174,6 +189,7 @@ def main():
                     close_dialog(page)
                     page.locator(f'{nav} a[href="#people"]').click()
                     page.locator('.people-card').first.wait_for()
+                    glider_on_active(page, nav)
                     page.locator('[data-action="guest-detail"]').first.click()
                     page.get_by_text('Карточка гостя').wait_for()
                     close_dialog(page)
@@ -195,6 +211,18 @@ def main():
                     page.locator(f'{nav} a[href="#overview"]').click()
                     page.locator('.hero').wait_for()
                     assert page.locator('.chart-panel [data-value="today"].active').count() == 1
+                    glider_on_active(page, nav)
+                    # «уменьшить движение» в системе: подсветка и экран меняются без анимаций
+                    page.emulate_media(reduced_motion="reduce")
+                    page.locator(f'{nav} a[href="#people"]').click()
+                    page.locator('.people-card').first.wait_for()
+                    assert page.evaluate(
+                        "nav => document.querySelector(nav + ' .nav-glider').getAnimations().length"
+                        " + document.querySelector('#main').getAnimations().length", nav) == 0
+                    glider_on_active(page, nav)
+                    page.emulate_media(reduced_motion="no-preference")
+                    page.locator(f'{nav} a[href="#overview"]').click()
+                    page.locator('.hero').wait_for()
                     fits(page)
                     if width == 390:
                         page.wait_for_timeout(500)

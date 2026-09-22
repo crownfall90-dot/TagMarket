@@ -40,7 +40,64 @@ function fileSize(bytes){return `${number(bytes/1024/1024)} МБ`;}
 async function mediaKind(file){const b=new Uint8Array(await file.slice(0,12).arrayBuffer());if(b[0]===255&&b[1]===216&&b[2]===255)return 'photo';if([137,80,78,71,13,10,26,10].every((v,i)=>b[i]===v))return 'photo';if(b[4]===102&&b[5]===116&&b[6]===121&&b[7]===112)return 'video';return null;}
 const tabs=[['overview','Обзор'],['accounts','Счета'],['people','Гости'],['settings','Настройки']];
 const periods=[['today','Сегодня'],['yesterday','Вчера'],['week','Эта неделя'],['lastweek','Прошлая неделя'],['month','Этот месяц'],['lastmonth','Прошлый месяц'],['all','Всё время'],['custom','Свои даты']];
-function nav(){const active=state.view==='account'?'accounts':state.view;const html=tabs.map(([id,label])=>`<a href="#${id}" aria-label="${label}" class="${active===id?'active':''}" ${active===id?'aria-current="page"':''}>${icon(id)}<span>${label}</span></a>`).join('');$('#desktop-nav').innerHTML=html;$('#mobile-nav').innerHTML=html;$('#crumb').textContent=state.view==='account'?'Счета / Счёт':state.view==='faq'?'Частые вопросы':tabs.find(([id])=>id===state.view)?.[1]||'Счёт';}
+// Панель навигации строится один раз и дальше только переключает активную
+// вкладку: если пересобирать разметку на каждый render(), подсветке не из
+// чего «перетечь» — узлы каждый раз новые. Подсветка — отдельный слой
+// .nav-glider под ссылками; он едет к новой вкладке, передний край чуть
+// впереди заднего, как капля. Одна функция обслуживает и нижнюю панель
+// телефона (горизонтальную), и боковую на десктопе (вертикальную).
+const NAV_ROOTS=['#desktop-nav','#mobile-nav'];
+function reducedMotion(){return !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;}
+function nav(){
+ const active=state.view==='account'?'accounts':state.view==='faq'?'overview':state.view;
+ for(const selector of NAV_ROOTS){
+  const root=$(selector);
+  if(!root.dataset.ready){
+   root.innerHTML='<span class="nav-glider" aria-hidden="true"></span>'+tabs.map(([id,label])=>`<a href="#${id}" data-tab="${id}" aria-label="${label}">${icon(id,'nav-icon')}<span>${label}</span></a>`).join('');
+   root.dataset.ready='1';root.classList.add('has-glider');
+  }
+  root.querySelectorAll('a[data-tab]').forEach(link=>{const on=link.dataset.tab===active;link.classList.toggle('active',on);if(on)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');});
+  moveGlider(root);
+ }
+ $('#crumb').textContent=state.view==='account'?'Счета / Счёт':state.view==='faq'?'Частые вопросы':tabs.find(([id])=>id===state.view)?.[1]||'Счёт';
+}
+function moveGlider(root,instant=false){
+ const glider=root.querySelector('.nav-glider'),link=root.querySelector('a.active');
+ if(!glider)return;
+ // скрытая панель (нижняя на десктопе, боковая на телефоне) размеров не имеет —
+ // её подсветку поставим на место, когда панель появится (ResizeObserver ниже)
+ if(!link||!root.offsetWidth){glider.classList.toggle('is-hidden',!link);glider._rect=null;return;}
+ const to={x:link.offsetLeft,y:link.offsetTop,w:link.offsetWidth,h:link.offsetHeight};
+ let from=glider._rect;
+ // нажали новую вкладку, пока подсветка ещё едет: продолжаем с того места,
+ // где она сейчас, а не прыгаем в конец прежнего пути
+ if(from&&glider.getAnimations().length){const r=glider.getBoundingClientRect(),o=root.getBoundingClientRect();from={x:r.left-o.left-root.clientLeft,y:r.top-o.top-root.clientTop,w:r.width,h:r.height};}
+ const place=r=>({transform:`translate(${r.x}px,${r.y}px)`,width:`${r.w}px`,height:`${r.h}px`});
+ glider.getAnimations().forEach(a=>a.cancel());
+ glider._rect=to;glider.classList.remove('is-hidden');Object.assign(glider.style,place(to));
+ if(instant||!from||reducedMotion()||(from.x===to.x&&from.y===to.y&&from.w===to.w&&from.h===to.h))return;
+ // середина пути: ведущий край прошёл 80%, отстающий — 25%, поэтому подсветка
+ // на миг вытягивается в сторону движения и догоняет себя у цели
+ const edge=(a,b,A,B)=>{const ahead=b>=a;return [a+(b-a)*(ahead?.25:.8),A+(B-A)*(ahead?.8:.25)];};
+ const [x0,x1]=edge(from.x,to.x,from.x+from.w,to.x+to.w),[y0,y1]=edge(from.y,to.y,from.y+from.h,to.y+to.h);
+ glider.animate([place(from),{...place({x:x0,y:y0,w:x1-x0,h:y1-y0}),offset:.42},place(to)],{duration:560,easing:'cubic-bezier(.3,.75,.25,1)'});
+}
+// Порядок разделов для направления перехода: вглубь и вправо по панели —
+// новый экран въезжает справа, назад — слева
+const VIEW_ORDER={overview:0,faq:.5,accounts:1,account:1.5,people:2,settings:3};
+// Въезд — CSS-классом, который снимается по окончании: после WAAPI-анимации
+// transform Chromium держал устаревшую карту попаданий, и первое нажатие в
+// новом разделе уходило «мимо» кнопки, пока стиль #main не изменится
+function enterView(direction){
+ if(reducedMotion())return;
+ const main=$('#main');
+ main.classList.remove('view-enter');
+ main.style.setProperty('--enter-x',direction?`${direction*22}px`:'0px');
+ main.style.setProperty('--enter-y',direction?'0px':'10px');
+ void main.offsetWidth;      // перезапуск, если прошлый въезд ещё идёт
+ main.classList.add('view-enter');
+}
+$('#main').addEventListener('animationend',event=>{if(event.target===event.currentTarget)event.currentTarget.classList.remove('view-enter');});
 function header(title,subtitle='',action=''){return `<div class="page-head"><div><h1>${esc(title)}</h1>${subtitle?`<p>${esc(subtitle)}</p>`:''}</div>${action}</div>`;}
 function empty(title,text,action=''){return `<div class="empty">${icon('chart')}<h2>${esc(title)}</h2>${text?`<p>${esc(text)}</p>`:''}${action}</div>`;}
 function skeleton(kind='list',rows=3){if(kind==='chart')return `<div class="skel skel-chart" aria-busy="true" aria-label="Загружаем"><i class="skel-line w40"></i><i class="skel-line w25 tall"></i><div class="skel-bars">${[40,62,35,78,52,90,44,66,30,58].map(h=>`<i style="height:${h}%"></i>`).join('')}</div></div>`;return `<div class="skel skel-list" aria-busy="true" aria-label="Загружаем">${Array.from({length:rows},()=>`<div class="skel-card"><i class="skel-ico"></i><span><i class="skel-line w55"></i><i class="skel-line w35"></i></span><i class="skel-line w20"></i></div>`).join('')}</div>`;}
@@ -192,7 +249,7 @@ function serviceSummary(machines){return machines.some(m=>m.state==='polling')?'
 function servicePanel(){const machines=state.admin?.machines||[];return `<section class="panel service-panel"><div class="service-head"><div><span class="eyebrow">ДЛЯ ВЛАДЕЛЬЦА</span><h2>Сервис</h2></div>${button('refresh','Обновить','secondary small','refresh')}</div>${state.admin?`${serviceSummary(machines)}<div class="machine-list">${machines.map(machineRow).join('')||'<p class="muted">Машины не отвечали.</p>'}</div>`:'<p class="muted mt">Загружаем состояние…</p>'}${toggle('Уведомления о сервисе','','alerts',state.data.update_alerts)}<div class="settings-row"><div><p>Сообщение пользователям</p></div>${button('broadcast','Написать','secondary small')}</div></section>`;}
 const BRAND_SVG='<svg viewBox="0 0 64 64" aria-hidden="true"><path class="logo-halo" d="M14.5 19a24 24 0 0 1 32-3M50.5 22a24 24 0 0 1-2 23M43 50.5a24 24 0 0 1-27-3"></path><path class="logo-letter" d="M20 22h24M32 22v22"></path><path class="logo-trend" d="m18 43 8-8 6 4 14-16"></path><circle class="logo-node" cx="46" cy="23" r="2.8"></circle><circle class="logo-seed" cx="18" cy="43" r="1.8"></circle></svg>';
 function schemePicker(){const cur=currentScheme();return `<div class="scheme-picker" role="radiogroup" aria-label="Цветовая гамма">${SCHEMES.map(([id,name,,sw])=>`<button type="button" role="radio" aria-checked="${cur===id}" class="scheme ${cur===id?'active':''}" data-action="scheme" data-value="${id}"><span class="swatch" style="background:${sw[0]}"><i style="background:${sw[1]}"></i><i style="background:${sw[2]}"></i></span><b>${name}</b></button>`).join('')}</div>`;}
-function settingsView(){const personal=state.data.accounts.filter(a=>!a.demo&&!a.shared),demo=state.data.accounts.find(a=>a.demo);return header('Настройки')+`<div class="two-column"><section class="panel"><span class="eyebrow">ЦВЕТОВАЯ ГАММА</span>${schemePicker()}<button class="shortcut-card" type="button" data-action="shortcut"><span class="shortcut-tile">${BRAND_SVG}</span><span class="shortcut-copy"><b>Ярлык на экран</b><small>Открывать Tag Markets в один тап</small></span><span class="pill">Добавить</span></button></section><section class="panel"><h2>Мои счета</h2>${personal.map(a=>`<div class="settings-row"><div><p>${esc(a.holder||a.strategy||a.name)}</p><small>${esc(a.strategy||a.name)} · ${esc(a.cabinet||a.login)}</small></div>${button('account-settings','Настроить','secondary small','',`data-login="${esc(a.login)}"`)}</div>`).join('')||'<p class="muted mt">Счетов пока нет.</p>'}</section></div>${demo?`<section class="panel demo-panel settings-demo-panel"><span class="eyebrow">Общий счёт · просмотр</span><h3>Копитрейдинг 45k</h3><div class="demo-number">${demo.totals?money(demo.totals.now,demo.totals.cur):'—'}</div><div class="inline-actions">${button('account-settings','Уведомления','secondary small','settings',`data-login="${esc(demo.login)}"`)}<a class="button secondary small" href="#account/${esc(demo.login)}">Открыть ${icon('arrow')}</a></div></section>`:''}${state.data.founder?servicePanel():`<section class="panel leave-card"><div><b>Доступ</b><small>Счета и данные будут удалены</small></div><button type="button" class="leave-btn" data-action="leave">${icon('exit')}<span>Отключить мой доступ</span></button></section>`}`;}
+function settingsView(){const personal=state.data.accounts.filter(a=>!a.demo&&!a.shared),demo=state.data.accounts.find(a=>a.demo);return header('Настройки')+`<div class="two-column"><section class="panel"><span class="eyebrow">ЦВЕТОВАЯ ГАММА</span>${schemePicker()}<button class="shortcut-card" type="button" data-action="shortcut"><span class="shortcut-tile">${BRAND_SVG}</span><span class="shortcut-copy"><b>Ярлык на экран</b><small>Открывать Tag Markets в один тап</small></span><span class="pill">Добавить</span></button></section><section class="panel"><h2>Мои счета</h2>${personal.map(a=>`<div class="settings-row"><div><p>${esc(a.holder||a.strategy||a.name)}</p><small>${esc(a.strategy||a.name)} · ${esc(a.cabinet||a.login)}</small></div>${button('account-settings','Настроить','secondary small','',`data-login="${esc(a.login)}"`)}</div>`).join('')||'<p class="muted mt">Счетов пока нет.</p>'}</section></div>${demo?`<section class="panel settings-demo" aria-label="Общий счёт копитрейдинга"><span class="settings-demo-icon">${icon('chart')}</span><div class="settings-demo-copy"><b>Копитрейдинг 45k</b><small><span class="settings-demo-sum">${demo.totals?money(demo.totals.now,demo.totals.cur):'—'}</span> · общий счёт, просмотр</small></div><div class="settings-demo-actions"><button type="button" class="icon-btn" data-action="account-settings" data-login="${esc(demo.login)}" aria-label="Уведомления общего счёта" title="Уведомления">${icon('bell')}</button><a class="icon-btn" href="#account/${esc(demo.login)}" aria-label="Открыть общий счёт" title="Открыть">${icon('arrow')}</a></div></section>`:''}${state.data.founder?servicePanel():`<section class="panel leave-card"><div><b>Доступ</b><small>Счета и данные будут удалены</small></div><button type="button" class="leave-btn" data-action="leave">${icon('exit')}<span>Отключить мой доступ</span></button></section>`}`;}
 function render(){nav();
  // FLIP: #main.innerHTML заменяется целиком на каждый render(), поэтому
  // .segmented-thumb каждый раз новый DOM-узел без истории — обычный CSS
@@ -366,12 +423,15 @@ async function refresh(quiet=false){
 async function navigate(){
  const [view,login]=location.hash.slice(1).split('/');
  const next=['overview','accounts','account','people','settings','faq'].includes(view)?view:'overview';
+ const direction=Math.sign((VIEW_ORDER[next]??0)-(VIEW_ORDER[state.view]??0));
+ const moved=next!==state.view||(!!login&&Number(login)!==state.login);
  if(state.filters[state.view])state.filters[state.view]={period:state.period,from:state.from,to:state.to};
  if(next!==state.view&&state.filters[next])Object.assign(state,state.filters[next]);
  state.view=next;
  if(login)state.login=Number(login);
  state.offset=0;state.kind='trades';state.report=null;state.reportError='';
- nav();if(state.data)render();
+ nav();
+ if(state.data){if(moved)window.scrollTo(0,0);render();if(moved)enterView(direction);}
  await refresh();
  tg?.BackButton?.[state.view==='account'?'show':'hide']();
 }
@@ -454,7 +514,14 @@ document.addEventListener('input',event=>{if(event.target.matches('#dialog texta
 $('#notifications').innerHTML=icon('bell');$('#refresh').innerHTML=icon('refresh');$('#refresh').addEventListener('click',()=>refresh());
 let savedScheme;try{savedScheme=localStorage.getItem('tag-scheme');}catch{}setScheme(savedScheme||'lime',false);
 try{tg?.ready();tg?.expand();tg?.BackButton?.onClick(()=>{location.hash='accounts';});tg?.onEvent('homeScreenAdded',()=>toast('Ярлык Tag Markets добавлен на экран'));tg?.onEvent('homeScreenChecked',e=>{if(e?.status==='added')toast('Ярлык уже добавлен');});tg?.onEvent('homeScreenFailed',()=>toast('Telegram не смог добавить ярлык'));}catch{}
-window.addEventListener('hashchange',navigate);document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh(true);});
+window.addEventListener('hashchange',navigate);
+// подсветка вкладки следует за размерами панели: смена ориентации, переход
+// через 740px (боковая ↔ нижняя), свёрнутая боковая панель — без анимации
+if(window.ResizeObserver){const watcher=new ResizeObserver(entries=>entries.forEach(e=>moveGlider(e.target,true)));NAV_ROOTS.forEach(s=>watcher.observe($(s)));}
+else window.addEventListener('resize',()=>NAV_ROOTS.forEach(s=>moveGlider($(s),true)));
+// лёгкий отклик Telegram на смену вкладки — как у родных панелей
+document.addEventListener('click',event=>{const link=event.target.closest('nav a[data-tab]');if(link&&!link.classList.contains('active'))try{tg?.HapticFeedback?.selectionChanged();}catch{}});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh(true);});
  // интервал фонового обновления задаёт сервер (refresh_seconds в /api/bootstrap);
  // не чаще раза в 30 секунд — каждый круг это четыре запроса и перерисовка
  function scheduleRefresh(){const every=Math.max(30,Number(state.data?.refresh_seconds)||60)*1000;if(scheduleRefresh.every===every)return;scheduleRefresh.every=every;clearInterval(refreshTimer);refreshTimer=setInterval(()=>{if(!document.hidden&&!$('#dialog').open&&state.period!=='custom')refresh(true);},every);}

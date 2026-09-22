@@ -276,3 +276,65 @@ dialog.info-only #dialog-body{padding-bottom:22px}
 .risk-line p{margin:0;font-size:12px;line-height:1.5;color:var(--text)}
 .strategy-links{display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px 16px;margin-top:12px}.faq-link{margin-top:14px}.faq-link svg{transform:rotate(90deg)}.strategy-faq{margin-top:20px}.faq-group{margin-top:18px}.faq-group:first-of-type{margin-top:16px}.faq-group>.eyebrow{color:var(--muted)}.faq-item{border-bottom:1px solid var(--line);padding:13px 0}.faq-item:last-child{border-bottom:0}.faq-item summary{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12px;font-weight:550;cursor:pointer;list-style:none}.faq-item summary::-webkit-details-marker{display:none}.faq-item summary svg{width:14px;height:14px;color:var(--muted);flex-shrink:0;transition:transform .15s}.faq-item[open] summary svg{transform:rotate(90deg)}.faq-item p{font-size:11px;color:var(--muted);margin-top:10px;line-height:1.6}
 @media(max-width:740px){.balance-row strong{font-size:26px}.extremes{gap:8px}.scheme b{font-size:10px}}
+
+/* ── Панель навигации: «перетекающая» подсветка активной вкладки ─────────────
+   Разметку строит nav() один раз, а подсветка .nav-glider — отдельный слой
+   под ссылками: JS ставит её под активную вкладку и ведёт к новой через
+   Web Animations (передний край чуть впереди заднего). Цвета берутся из
+   --accent, поэтому все три гаммы получают свою подсветку без правок. */
+/* боковой панели нужен контейнер для подсветки; нижняя и так position:fixed */
+.rail nav.has-glider{position:relative}
+nav.has-glider a{position:relative;z-index:1}
+nav.has-glider a.active,nav.has-glider a.active:hover{background:transparent;color:var(--accent)}
+nav.has-glider a:not(.active):hover{background:rgb(255 255 255 / .035)}
+.nav-glider{position:absolute;left:0;top:0;width:0;height:0;z-index:0;border-radius:12px;background:var(--raised);pointer-events:none;will-change:transform,width,height;transition:opacity .25s ease}
+.nav-glider.is-hidden{opacity:0}
+.rail .nav-glider{background:linear-gradient(90deg,rgb(var(--accent-rgb) / .13),rgb(var(--accent-rgb) / .03) 70%),var(--raised);box-shadow:inset 0 0 0 1px rgb(var(--accent-rgb) / .12)}
+.rail .nav-glider:before{content:"";position:absolute;left:0;top:50%;width:3px;height:44%;transform:translateY(-50%);border-radius:0 3px 3px 0;background:var(--accent);box-shadow:0 0 12px rgb(var(--accent-rgb) / .6)}
+nav a .nav-icon{transition:transform .35s cubic-bezier(.3,1.4,.5,1)}
+nav a.active .nav-icon{animation:nav-pop .5s cubic-bezier(.3,1.4,.5,1)}
+@keyframes nav-pop{0%{transform:scale(.8)}55%{transform:scale(1.16)}100%{transform:scale(1)}}
+
+/* Телефон: плавающая стеклянная панель над контентом, отступ от краёв и от
+   системной полосы (safe-area iOS и Telegram) */
+@media(max-width:740px){
+ .mobile-nav{left:12px;right:12px;bottom:max(10px,calc(env(safe-area-inset-bottom,0px) + 6px),calc(var(--tg-safe-area-inset-bottom,0px) + 6px));padding:6px;gap:2px;background:rgb(26 30 33 / .86);border:1px solid rgb(255 255 255 / .07);border-radius:24px;box-shadow:0 16px 40px rgb(0 0 0 / .5),0 2px 6px rgb(0 0 0 / .3),inset 0 1px 0 rgb(255 255 255 / .05);-webkit-backdrop-filter:blur(20px) saturate(1.6);backdrop-filter:blur(20px) saturate(1.6)}
+ .mobile-nav a{flex:1 1 0;min-width:0;gap:3px;padding:8px 2px 7px;border-radius:18px;font-size:10.5px;font-weight:560;letter-spacing:-.01em;color:var(--muted);transition:color .3s ease}
+ .mobile-nav a:active{transform:none}
+ .mobile-nav a.active{transform:none;color:var(--accent)}
+ .mobile-nav a.active:before{content:none}
+ .mobile-nav a svg{width:21px;height:21px}
+ .mobile-nav a:active .nav-icon{transform:scale(.88)}
+ .mobile-nav .nav-glider{border-radius:18px;background:linear-gradient(180deg,rgb(var(--accent-rgb) / .17),rgb(var(--accent-rgb) / .07));box-shadow:inset 0 0 0 1px rgb(var(--accent-rgb) / .2),0 6px 18px rgb(var(--accent-rgb) / .1)}
+ .mobile-nav .nav-glider:before{content:"";position:absolute;top:-1px;left:50%;width:18px;height:3px;margin-left:-9px;border-radius:0 0 3px 3px;background:var(--accent);box-shadow:0 0 12px rgb(var(--accent-rgb) / .75)}
+}
+/* прокрутка к элементу (фокус с клавиатуры, scrollIntoView, поиск по странице)
+   оставляет его над плавающей панелью, а не под ней */
+@media(max-width:740px){html{scroll-padding-bottom:calc(96px + var(--safe-bottom))}}
+@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
+ @media(max-width:740px){.mobile-nav{background:var(--panel)}}
+}
+
+/* Настройки: общий счёт копитрейдинга — одна компактная строка вместо
+   карточки с крупной суммой и двумя широкими кнопками */
+.settings-demo{display:grid;grid-template-columns:40px minmax(0,1fr) auto;align-items:center;gap:12px;margin-top:16px;padding:12px 14px;border-color:rgb(var(--purple-rgb) / .16);background:linear-gradient(110deg,rgb(var(--purple-rgb) / .08),var(--panel) 60%)}
+.settings-demo-icon{display:grid;place-items:center;width:40px;height:40px;border-radius:12px;background:rgb(var(--purple-rgb) / .12);color:var(--purple)}
+.settings-demo-icon svg{width:19px;height:19px}
+.settings-demo-copy{display:grid;gap:1px;min-width:0}
+.settings-demo-copy b{font-size:14px;font-weight:600;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.settings-demo-copy small{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.settings-demo-sum{color:var(--text);font-weight:600}
+.settings-demo-actions{display:flex;gap:6px}
+.settings-demo .icon-btn{width:34px;height:34px;color:var(--purple);border-color:rgb(var(--purple-rgb) / .22);background:rgb(var(--purple-rgb) / .05)}
+.settings-demo .icon-btn:hover{color:var(--text);border-color:rgb(var(--purple-rgb) / .45)}
+.settings-demo .icon-btn svg{width:16px;height:16px}
+@media(max-width:370px){.settings-demo{grid-template-columns:34px minmax(0,1fr) auto;gap:9px;padding:11px 12px}.settings-demo-icon{width:34px;height:34px;border-radius:10px}.settings-demo .icon-btn{width:32px;height:32px}}
+
+/* Смена раздела: новый экран въезжает по направлению перехода (вправо —
+   дальше по панели или вглубь, влево — назад, снизу — тот же раздел) */
+#main.view-enter{animation:view-enter .38s cubic-bezier(.22,1,.36,1)}
+@keyframes view-enter{from{opacity:0;transform:translate(var(--enter-x,0px),var(--enter-y,10px))}to{opacity:1;transform:none}}
+
+/* Верхняя панель: пока идёт обновление, значок «обновить» вращается */
+body.is-loading #refresh svg{animation:refresh-spin .9s linear infinite}
+@keyframes refresh-spin{to{transform:rotate(360deg)}}
