@@ -75,6 +75,68 @@ def topbar_sticks(page):
     page.wait_for_function("!document.body.classList.contains('is-scrolled')")
 
 
+def revisit_is_instant(page, nav):
+    """Возврат в раздел, где уже были, не ходит на сервер и не перерисовывает
+    экран второй раз — раньше каждый переход заново тянул все данные."""
+    page.evaluate("""() => { window.__calls = [];
+        const real = window.api;
+        window.api = (...a) => { window.__calls.push(a[0]); return real(...a); }; }""")
+    page.locator(f'{nav} a[href="#accounts"]').click()
+    page.locator('.account-list').first.wait_for()
+    page.locator(f'{nav} a[href="#overview"]').click()
+    page.locator('.hero').wait_for()
+    page.wait_for_timeout(900)          # переход и возможная загрузка успели бы пройти
+    calls = page.evaluate("window.__calls")
+    assert calls == [], f"возврат в раздел снова загрузил данные: {calls}"
+
+
+def quiet_refresh_keeps_screen(page):
+    """Фоновое обновление с теми же данными не пересобирает экран."""
+    page.evaluate("refresh(true)")
+    page.wait_for_function("!state.busy")
+    page.evaluate("document.querySelector('#main > *').__mark = 1")
+    page.evaluate("refresh(true)")
+    page.wait_for_function("!state.busy")
+    kept = page.evaluate("document.querySelector('#main > *').__mark === 1")
+    assert kept, "фоновое обновление без изменений перерисовало экран"
+
+
+def rapid_taps_render_once(page, nav):
+    """Два нажатия подряд, пока старый экран ещё уезжает: отрисовывается
+    только последний раздел, и один раз — раньше новый экран мигал дважды."""
+    # оба раздела уже открывались: данные в памяти, догрузки не будет
+    page.evaluate("""() => { window.__realRender = window.render; window.__renders = 0;
+        window.render = (...a) => { window.__renders++; return window.__realRender(...a); }; }""")
+    page.locator(f'{nav} a[href="#accounts"]').click()
+    page.wait_for_timeout(80)          # второе нажатие, пока старый экран уезжает
+    page.locator(f'{nav} a[href="#overview"]').click()
+    page.wait_for_timeout(1200)
+    renders, view = page.evaluate("[window.__renders, state.view]")
+    page.evaluate("window.render = window.__realRender")
+    assert view == "overview", f"открылся не последний раздел: {view}"
+    assert renders == 1, f"быстрые нажатия дали {renders} отрисовки вместо одной"
+
+
+def rapid_switching_stays_under_limit(page, nav):
+    """Частые переключения разделов и периодов не упираются в лимит сервера
+    (120 запросов в минуту): раньше каждое нажатие тянуло до 4 запросов, и
+    через ~30 переключений приходило «Слишком много запросов. Подождите минуту»."""
+    page.evaluate("""() => { window.__calls = []; const real = window.api;
+        window.api = (...a) => { window.__calls.push(a[0]); return real(...a); }; }""")
+    for _ in range(10):
+        page.locator(f'{nav} a[href="#accounts"]').click()
+        page.locator('.account-list').first.wait_for()
+        page.locator(f'{nav} a[href="#overview"]').click()
+        page.locator('.hero').wait_for()
+    for _ in range(10):
+        for value in ("yesterday", "today"):
+            page.locator(f'.segmented button[data-value="{value}"]').first.click()
+            page.wait_for_function("!document.body.classList.contains('is-loading')")
+    calls = page.evaluate("window.__calls")
+    # 40 нажатий: догружается только «Вчера» в первый раз (отчёт и график)
+    assert len(calls) <= 4, f"{len(calls)} запросов на 40 нажатий: {calls}"
+
+
 def close_dialog(page):
     """Закрыть диалог крестиком в шапке: у информационных окон кнопка
     «Отмена» спрятана, а крестик есть у всех."""
@@ -135,6 +197,11 @@ def main():
                     glider_on_active(page, nav)
                     glider_survives_rerender(page, nav)
                     topbar_sticks(page)
+                    revisit_is_instant(page, nav)
+                    quiet_refresh_keeps_screen(page)
+                    rapid_taps_render_once(page, nav)
+                    page.locator('.hero').wait_for()
+                    rapid_switching_stays_under_limit(page, nav)
                     page.locator(f'{nav} a[href="#accounts"]').click()
                     page.locator('.account-list').first.wait_for()
                     glider_on_active(page, nav)

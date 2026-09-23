@@ -330,12 +330,12 @@ nav a.active .nav-icon{animation:nav-pop .5s cubic-bezier(.3,1.4,.5,1)}
 .settings-demo .icon-btn svg{width:16px;height:16px}
 @media(max-width:370px){.settings-demo{grid-template-columns:34px minmax(0,1fr) auto;gap:9px;padding:11px 12px}.settings-demo-icon{width:34px;height:34px;border-radius:10px}.settings-demo .icon-btn{width:32px;height:32px}}
 
-/* Смена раздела: старый экран уезжает (leaveView в app.js, 170 мс), новый
+/* Смена раздела: старый экран уезжает (leaveView в app.js, 260 мс), новый
    въезжает по направлению перехода (вправо — дальше по панели или вглубь,
-   влево — назад, снизу — тот же раздел). Въезд короче прежних 380 мс: вместе
-   с уходом переход должен укладываться в ~400 мс, иначе он читается как
-   задержка, а не как плавность */
-#main.view-enter{animation:view-enter .26s cubic-bezier(.22,1,.36,1)}
+   влево — назад, снизу — тот же раздел). Вместе ~0.75 с: при ~0.4 с смена
+   выглядела резкой. Кривая въезда с долгим мягким торможением — экран не
+   останавливается, а «садится» на место */
+#main.view-enter{animation:view-enter .48s cubic-bezier(.16,1,.3,1)}
 @keyframes view-enter{from{opacity:0;transform:translate(var(--enter-x,0px),var(--enter-y,10px))}to{opacity:1;transform:none}}
 
 /* Верхняя панель: пока идёт обновление, значок «обновить» вращается */
@@ -412,3 +412,10 @@ body:not(.is-loading) #refresh svg{animation:refresh-settle .4s cubic-bezier(.3,
 .mobile-brandmark .logo-node{fill:var(--accent);stroke:none}
 .mobile-brandmark .logo-seed{fill:var(--accent)}
 .mobile-brand:hover .mobile-brandmark{background:rgb(var(--accent-rgb) / .24);box-shadow:inset 0 0 0 1px rgb(var(--accent-rgb) / .45)}
+
+/* Уведомления поверх липкой верхней панели (z-index 30): с z-index 10 они
+   прятались под ней — событие при входе приходило сверху, и его закрывала
+   сама панель. Ниже полосы загрузки (60). Верхнее событие отступает и от
+   шапки Telegram, а не только от выреза экрана */
+#toast{z-index:50}
+#toast.has-event{top:calc(12px + max(env(safe-area-inset-top,0px),var(--tg-content-safe-area-inset-top,0px) + var(--tg-safe-area-inset-top,0px)))}

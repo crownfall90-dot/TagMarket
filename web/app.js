@@ -106,24 +106,24 @@ function enterView(direction){
  if(reducedMotion())return;
  const main=$('#main');
  main.classList.remove('view-enter');
- main.style.setProperty('--enter-x',direction?`${direction*22}px`:'0px');
+ main.style.setProperty('--enter-x',direction?`${direction*18}px`:'0px');
  main.style.setProperty('--enter-y',direction?'0px':'10px');
  void main.offsetWidth;      // перезапуск, если прошлый въезд ещё идёт
  main.classList.add('view-enter');
 }
 // Уход старого экрана: без него переход был односторонним — старое исчезало
 // мгновенно, новое въезжало, и глаз читал это как рывок. Уезжаем в ту же
-// сторону, куда потом въедет новое, и вдвое короче въезда: ожидание между
-// нажатием и новым экраном должно оставаться незаметным
+// сторону, куда потом въедет новое. Короче въезда почти вдвое: уход — только
+// подготовка, главное — как новый экран садится на место
 function leaveView(direction){
  if(reducedMotion())return Promise.resolve();
  const main=$('#main');
  main.classList.remove('view-enter');
- const shift=direction?`translateX(${-direction*14}px)`:'translateY(-6px)';
+ const shift=direction?`translateX(${-direction*12}px)`:'translateY(-5px)';
  const anim=main.animate([{opacity:1,transform:'none'},{opacity:0,transform:shift}],
-                         {duration:170,easing:'cubic-bezier(.4,0,.7,.2)',fill:'forwards'});
+                         {duration:260,easing:'cubic-bezier(.45,0,.55,1)',fill:'forwards'});
  // не ждём дольше самой анимации: если вкладка ушла в фон, finished не придёт
- return Promise.race([anim.finished.catch(()=>{}),new Promise(r=>setTimeout(r,200))])
+ return Promise.race([anim.finished.catch(()=>{}),new Promise(r=>setTimeout(r,320))])
   .then(()=>anim.cancel());
 }
 $('#main').addEventListener('animationend',event=>{if(event.target===event.currentTarget)event.currentTarget.classList.remove('view-enter');});
@@ -279,7 +279,11 @@ function servicePanel(){const machines=state.admin?.machines||[];return `<sectio
 const BRAND_SVG='<svg viewBox="0 0 64 64" aria-hidden="true"><path class="logo-halo" d="M14.5 19a24 24 0 0 1 32-3M50.5 22a24 24 0 0 1-2 23M43 50.5a24 24 0 0 1-27-3"></path><path class="logo-letter" d="M20 22h24M32 22v22"></path><path class="logo-trend" d="m18 43 8-8 6 4 14-16"></path><circle class="logo-node" cx="46" cy="23" r="2.8"></circle><circle class="logo-seed" cx="18" cy="43" r="1.8"></circle></svg>';
 function schemePicker(){const cur=currentScheme();return `<div class="scheme-picker" role="radiogroup" aria-label="Цветовая гамма">${SCHEMES.map(([id,name,,sw])=>`<button type="button" role="radio" aria-checked="${cur===id}" class="scheme ${cur===id?'active':''}" data-action="scheme" data-value="${id}"><span class="swatch" style="background:${sw[0]}"><i style="background:${sw[1]}"></i><i style="background:${sw[2]}"></i></span><b>${name}</b></button>`).join('')}</div>`;}
 function settingsView(){const personal=state.data.accounts.filter(a=>!a.demo&&!a.shared),demo=state.data.accounts.find(a=>a.demo);return header('Настройки')+`<div class="two-column"><section class="panel"><span class="eyebrow">ЦВЕТОВАЯ ГАММА</span>${schemePicker()}<button class="shortcut-card" type="button" data-action="shortcut"><span class="shortcut-tile">${BRAND_SVG}</span><span class="shortcut-copy"><b>Ярлык на экран</b><small>Открывать Tag Markets в один тап</small></span><span class="pill">Добавить</span></button></section><section class="panel"><h2>Мои счета</h2>${personal.map(a=>`<div class="settings-row"><div><p>${esc(a.holder||a.strategy||a.name)}</p><small>${esc(a.strategy||a.name)} · ${esc(a.cabinet||a.login)}</small></div>${button('account-settings','Настроить','secondary small','',`data-login="${esc(a.login)}"`)}</div>`).join('')||'<p class="muted mt">Счетов пока нет.</p>'}</section></div>${demo?`<section class="panel settings-demo" aria-label="Общий счёт копитрейдинга"><span class="settings-demo-icon">${icon('chart')}</span><div class="settings-demo-copy"><b>Копитрейдинг 45k</b><small><span class="settings-demo-sum">${demo.totals?money(demo.totals.now,demo.totals.cur):'—'}</span> · общий счёт, просмотр</small></div><div class="settings-demo-actions"><button type="button" class="icon-btn" data-action="account-settings" data-login="${esc(demo.login)}" aria-label="Уведомления общего счёта" title="Уведомления">${icon('bell')}</button><a class="icon-btn" href="#account/${esc(demo.login)}" aria-label="Открыть общий счёт" title="Открыть">${icon('arrow')}</a></div></section>`:''}${state.data.founder?servicePanel():`<section class="panel leave-card"><div><b>Доступ</b><small>Счета и данные будут удалены</small></div><button type="button" class="leave-btn" data-action="leave">${icon('exit')}<span>Отключить мой доступ</span></button></section>`}`;}
-function render(){nav();
+// отпечаток всего, из чего строится экран; server_time меняется на каждом
+// запросе и на вид не влияет — без него одинаковые данные дают одинаковый ключ
+let paintedKey='';
+function paintKey(){const {server_time,...data}=state.data||{};return JSON.stringify([state.view,state.login,state.period,state.from,state.to,state.currency,state.kind,state.offset,data,state.report,state.reportError,state.priceChart,state.people,state.admin]);}
+function render(){paintedKey='';nav();
  // FLIP: #main.innerHTML заменяется целиком на каждый render(), поэтому
  // .segmented-thumb каждый раз новый DOM-узел без истории — обычный CSS
  // transition не увидел бы «откуда» ехать. Снимаем позицию активной кнопки
@@ -363,9 +367,11 @@ function previewBounds(period,params){
  return ['0000-01-01','9999-12-31'];
 }
 function previewCandles(){
- const n=48,step=15*60000,now=Date.now(),start=now-n*step;
+ // сетка 15 минут и детерминированный шум: с Date.now() и Math.random() демо-график
+ // менялся на каждом фоновом обновлении и перерисовывал экран без причины
+ const n=48,step=15*60000,now=Math.floor(Date.now()/step)*step,start=now-n*step;
  let price=2400,candles=[];
- for(let i=0;i<n;i++){const drift=Math.sin(i/9)*3,noise=(Math.sin(i*7)+Math.sin(i*2.3))*1.2;const open=price;price=2400+drift+noise+i*0.15;const close=price;const high=Math.max(open,close)+Math.random()*1.5;const low=Math.min(open,close)-Math.random()*1.5;candles.push({time:new Date(start+i*step).toISOString(),open,high,low,close});}
+ for(let i=0;i<n;i++){const drift=Math.sin(i/9)*3,noise=(Math.sin(i*7)+Math.sin(i*2.3))*1.2;const open=price;price=2400+drift+noise+i*0.15;const close=price;const high=Math.max(open,close)+(1+Math.sin(i*12.9))*.75;const low=Math.min(open,close)-(1+Math.cos(i*7.7))*.75;candles.push({time:new Date(start+i*step).toISOString(),open,high,low,close});}
  const at=i=>candles[i].time,px=i=>candles[i].close;
  return {title:'Выбранный период',symbol:'XAUUSD',candles,
   trades:[{time:at(14),side:'buy',price:px(14),kind:'in',symbol:'XAUUSD'},{time:at(22),side:'buy',price:px(22),kind:'out',symbol:'XAUUSD'},
@@ -430,50 +436,101 @@ async function api(path,options={}){
  return d;
 }
 async function loadReport(){const params=new URLSearchParams({period:state.period});if(state.period==='custom'){if(!state.from||!state.to)return null;params.set('from',state.from);params.set('to',state.to);}if(state.view==='overview'){params.set('currency',state.currency||Object.keys(state.data.totals)[0]||'USD');return api(`/overview/report?${params}`);}const acc=currentAccount();if(!acc)return null;state.login=acc.login;params.set('kind',state.kind);params.set('offset',state.offset);return api(`/accounts/${acc.login}/report?${params}`);}
+// Данные самого раздела сверх общих /bootstrap: отчёт, график цены, гости,
+// сервисная панель. Нужны и фоновому обновлению, и переходу между разделами
+async function viewParts(){
+ const out={};
+ if(['overview','account'].includes(state.view)){try{out.report=await loadReport();out.reportError='';}catch(error){out.report=null;out.reportError=error.message;}}
+ if(state.view==='overview'){const sonic=state.data.accounts.find(a=>!a.demo&&/sonic|sonik/i.test(`${a.strategy||''} ${a.name||''}`));out.priceChart=sonic?await api(`/accounts/${sonic.login}/candles?period=${state.period==='custom'?'week':state.period}`).catch(()=>null):null;}
+ if(state.view==='people')out.people=await api('/people');
+ if(state.view==='settings'&&state.data.founder)out.admin=await api('/admin');
+ return out;
+}
+// Переход в раздел, где уже были, показывает запомненное сразу — без запроса
+// к серверу и второй перерисовки: раньше каждый переход заново тянул все
+// данные и перерисовывал экран, и раздел заметно «обновлялся» на глазах.
+// Свежесть держит фоновое обновление; старше его интервала — грузим заново
+const viewCache=new Map();
+function viewKey(){return [state.view,state.login,state.period,state.from,state.to,state.currency,state.kind,state.offset].join('|');}
+function remember(){viewCache.set(viewKey(),{report:state.report,reportError:state.reportError,priceChart:state.priceChart,at:Date.now()});}
+function refreshEvery(){return Math.max(30,Number(state.data?.refresh_seconds)||60)*1000;}
+const VIEW_NEEDS_DATA=view=>['overview','account','people'].includes(view)||(view==='settings'&&!!state.data?.founder);
+// Смена периода, вкладки истории, страницы, валюты: то же, что переход —
+// из памяти, если свежее, иначе догружаем только отчёт раздела. Раньше каждое
+// такое нажатие перегружало всё (4 запроса), и частые переключения упирались
+// в лимит сервера — «Слишком много запросов. Подождите минуту»
+async function showCached(){
+ const c=viewCache.get(viewKey());
+ if(c&&Date.now()-c.at<refreshEvery()){state.report=c.report;state.reportError=c.reportError||'';if(state.view==='overview')state.priceChart=c.priceChart;render();return;}
+ state.report=null;state.reportError='';render();
+ await loadView();
+}
+async function loadView(){
+ const gen=++generation;document.body.classList.add('is-loading');
+ try{const parts=await viewParts();if(gen!==generation)return;Object.assign(state,parts);remember();render();}
+ catch(error){if(gen===generation)toast('Не удалось обновить данные. Показаны последние полученные значения.');}
+ finally{if(gen===generation)document.body.classList.remove('is-loading');}
+}
 async function refresh(quiet=false){
  if(state.busy){if(!quiet){state.pendingRefresh=true;generation++;}return;}
  state.busy=true;document.body.classList.add('is-loading');const gen=++generation;
  try{
   const data=await api('/bootstrap');if(gen!==generation)return;state.data=data;scheduleRefresh();
-  let report,people,admin;
-   if(['overview','account'].includes(state.view)){try{report=await loadReport();state.reportError='';state.report=report;}catch(error){state.report=null;state.reportError=error.message;}}
-  if(state.view==='overview'){const sonic=data.accounts.find(a=>!a.demo&&/sonic|sonik/i.test(`${a.strategy||''} ${a.name||''}`));state.priceChart=sonic?await api(`/accounts/${sonic.login}/candles?period=${state.period==='custom'?'week':state.period}`).catch(()=>null):null;}
-  if(state.view==='people')people=await api('/people');
-  if(state.view==='settings'&&data.founder)admin=await api('/admin');
+  const parts=await viewParts();
   const notifications=await api('/notifications').catch(()=>state.notifications);
   if(gen!==generation)return;
-   if(people)state.people=people;if(admin)state.admin=admin;
+  // явное обновление (кнопка, сохранение, отзыв гостя) — данные могли
+  // измениться везде, запомненное в других разделах больше не верно
+  if(!quiet)viewCache.clear();
+  Object.assign(state,parts);remember();
   state.notifications=notifications;updateNotificationBadge();
   const newest=notifications.items?.[0];
   if(newest&&notifications.unread&&(!notificationsStarted||newest.id>lastNotificationId))
    eventToast(newest,notifications.unread);
   notificationsStarted=true;lastNotificationId=Math.max(lastNotificationId,newest?.id||0);
-  if(!quiet||!document.querySelector('input:focus,textarea:focus,select:focus'))render();
+  // фоновое обновление перерисовывает экран, только если данные изменились:
+  // раньше раз в 30-60 с весь #main пересобирался с теми же цифрами — экран
+  // мигал, анимации перезапускались, полосы периодов теряли прокрутку
+  const key=quiet?paintKey():'';
+  if(!quiet)render();
+  else if(key!==paintedKey&&!document.querySelector('input:focus,textarea:focus,select:focus')){render();paintedKey=key;}
  }catch(error){
   if(!state.data){if(!preview&&!tg?.initData){$('#main').innerHTML=authScreen();}else $('#main').innerHTML=empty('Не удалось открыть кабинет',error.message,button('refresh','Попробовать снова','primary','refresh'));}
   else if(!quiet)toast('Не удалось обновить данные. Показаны последние полученные значения.');
  }finally{state.busy=false;document.body.classList.remove('is-loading');if(state.pendingRefresh){state.pendingRefresh=false;await refresh();}}
 }
+let navSeq=0;
 async function navigate(){
+ const seq=++navSeq;
  const [view,login]=location.hash.slice(1).split('/');
  const next=['overview','accounts','account','people','settings','faq'].includes(view)?view:'overview';
  const direction=Math.sign((VIEW_ORDER[next]??0)-(VIEW_ORDER[state.view]??0));
  const moved=next!==state.view||(!!login&&Number(login)!==state.login);
+ // тот же раздел (повторное событие hashchange) — экран уже верный
+ if(state.data&&!moved)return;
  if(state.filters[state.view])state.filters[state.view]={period:state.period,from:state.from,to:state.to};
  if(next!==state.view&&state.filters[next])Object.assign(state,state.filters[next]);
  state.view=next;
  if(login)state.login=Number(login);
- state.offset=0;state.kind='trades';state.report=null;state.reportError='';
+ state.offset=0;state.kind='trades';
+ const cached=state.data&&viewCache.get(viewKey());
+ const fresh=!!state.data&&(!VIEW_NEEDS_DATA(next)||(!!cached&&Date.now()-cached.at<refreshEvery()));
+ state.report=cached?cached.report:null;state.reportError=cached?.reportError||'';
+ if(cached&&next==='overview')state.priceChart=cached.priceChart;
  // подсветка панели едет сразу по нажатию, а старый экран уходит параллельно:
  // ждать отрисовки нового значило бы показать задержку на самом заметном месте
  nav();
  if(state.data){
   if(moved)await leaveView(direction);
+  // пока старый экран уезжал, нажали другой раздел: отрисует тот переход,
+  // иначе новый экран появлялся дважды подряд
+  if(seq!==navSeq)return;
   if(moved)window.scrollTo(0,0);
   render();
   if(moved)enterView(direction);
  }
- await refresh();
+ if(!state.data)await refresh();
+ else if(!fresh)await loadView();
  tg?.BackButton?.[state.view==='account'?'show':'hide']();
 }
 // [id, название, цвет шапки Telegram, образцы]. Фон у всех схем один —
@@ -504,10 +561,10 @@ document.addEventListener('click',async event=>{const el=event.target.closest('[
  else if(action==='share-accounts'){const g=state.people.guests.find(x=>x.id===el.dataset.guest),have=new Set(g.accounts.filter(a=>a.shared).map(a=>String(a.login))),list=(state.people.shareable||[]).filter(a=>!have.has(String(a.login)));const d=await dialog('Открыть счета гостю',`${list.map(a=>`<label class="check"><input name="login-${a.login}" type="checkbox">${esc(a.name)}${a.cabinet?` · ${esc(a.cabinet)}`:''}</label>`).join('')}<p class="stat-note">Гость увидит их только для просмотра.</p>`,'Открыть');if(d){const logins=Object.keys(d).filter(k=>k.startsWith('login-')).map(k=>Number(k.slice(6)));if(logins.length)await mutate('/guests/'+el.dataset.guest,{action:'share',logins});}}
  else if(action==='toast-close')$('#toast').classList.remove('visible');
  else if(action==='shortcut')await addShortcut();
- else if(action==='period'){if(state.period===el.dataset.value)return;state.period=el.dataset.value;state.offset=0;state.report=null;state.reportError='';if(state.period==='custom')render();else await refresh();}
- else if(action==='kind'){state.kind=el.dataset.value;state.offset=0;await refresh();}
- else if(action==='next'||action==='prev'){state.offset=Math.max(0,state.offset+(action==='next'?50:-50));await refresh();}
- else if(action==='apply-period'){state.from=$('#from-date').value;state.to=$('#to-date').value;if(!state.from||!state.to||state.from>state.to)throw new Error('Укажите корректные даты начала и конца');await refresh();}
+ else if(action==='period'){if(state.period===el.dataset.value)return;state.period=el.dataset.value;state.offset=0;state.report=null;state.reportError='';if(state.period==='custom')render();else await showCached();}
+ else if(action==='kind'){state.kind=el.dataset.value;state.offset=0;await showCached();}
+ else if(action==='next'||action==='prev'){state.offset=Math.max(0,state.offset+(action==='next'?50:-50));await showCached();}
+ else if(action==='apply-period'){state.from=$('#from-date').value;state.to=$('#to-date').value;if(!state.from||!state.to||state.from>state.to)throw new Error('Укажите корректные даты начала и конца');await showCached();}
  else if(action==='add')await addAccount();
  else if(action==='onboard-step')await mutate('/onboarding',{step:el.dataset.step,done:true});
  else if(action==='account-settings')await configureAccount(el.dataset.login);
@@ -551,7 +608,7 @@ document.addEventListener('click',async event=>{const el=event.target.closest('[
  }catch(error){toast(error.message);}finally{el.disabled=false;}});
 document.addEventListener('click',event=>{const tool=event.target.closest('[data-format]');if(!tool)return;event.preventDefault();const area=$('#dialog textarea[name="text"]');if(!area)return;const start=area.selectionStart,end=area.selectionEnd,selected=area.value.slice(start,end);const tags={bold:['<b>','</b>'],italic:['<i>','</i>'],mono:['<code>','</code>'],quote:['<blockquote>','</blockquote>']}[tool.dataset.format];if(!tags)return;area.setRangeText(tags[0]+selected+tags[1],start,end,'end');area.focus();area.setSelectionRange(start+tags[0].length,start+tags[0].length+selected.length);area.dispatchEvent(new Event('input',{bubbles:true}));});
 document.addEventListener('input',event=>{if(event.target.matches('#dialog textarea[name="text"]')){const area=event.target,preview=$('#compose-live'),count=$('#compose-count');if(preview)preview.innerHTML=area.value?broadcastPreview(area.value):'<span class="muted">Сообщение появится здесь</span>';if(count)count.textContent=`${area.value.length} / 4096`;}});
- document.addEventListener('change',async event=>{try{if(event.target.matches('#dialog input[name="media"]')){const info=$('#compose-file-name');if(info)info.textContent=event.target.files?.[0]?`${event.target.files[0].name} · ${fileSize(event.target.files[0].size)}`:'JPG/PNG до 10 МБ · MP4 до 20 МБ';}if(event.target.id==='add-cabinet-choice'){const fresh=$('#add-new-cabinet');fresh.hidden=event.target.value!=='new';fresh.querySelector('input').disabled=fresh.hidden;}if(event.target.id==='account-select'){state.login=Number(event.target.value);state.offset=0;if(state.view==='account'){location.hash='account/'+state.login;}else await refresh();}if(event.target.id==='currency'){state.currency=event.target.value;state.report=null;await refresh();}}catch(error){toast(error.message);}});
+ document.addEventListener('change',async event=>{try{if(event.target.matches('#dialog input[name="media"]')){const info=$('#compose-file-name');if(info)info.textContent=event.target.files?.[0]?`${event.target.files[0].name} · ${fileSize(event.target.files[0].size)}`:'JPG/PNG до 10 МБ · MP4 до 20 МБ';}if(event.target.id==='add-cabinet-choice'){const fresh=$('#add-new-cabinet');fresh.hidden=event.target.value!=='new';fresh.querySelector('input').disabled=fresh.hidden;}if(event.target.id==='account-select'){state.login=Number(event.target.value);state.offset=0;if(state.view==='account'){location.hash='account/'+state.login;}else await refresh();}if(event.target.id==='currency'){state.currency=event.target.value;await showCached();}}catch(error){toast(error.message);}});
 $('#notifications').innerHTML=icon('bell');$('#refresh').innerHTML=icon('refresh');$('#refresh').addEventListener('click',()=>refresh());
 let savedScheme;try{savedScheme=localStorage.getItem('tag-scheme');}catch{}setScheme(savedScheme||'lime',false);
 try{tg?.ready();tg?.expand();tg?.BackButton?.onClick(()=>{location.hash='accounts';});tg?.onEvent('homeScreenAdded',()=>toast('Ярлык Tag Markets добавлен на экран'));tg?.onEvent('homeScreenChecked',e=>{if(e?.status==='added')toast('Ярлык уже добавлен');});tg?.onEvent('homeScreenFailed',()=>toast('Telegram не смог добавить ярлык'));}catch{}
@@ -565,7 +622,7 @@ document.addEventListener('click',event=>{const link=event.target.closest('nav a
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh(true);});
  // интервал фонового обновления задаёт сервер (refresh_seconds в /api/bootstrap);
  // не чаще раза в 30 секунд — каждый круг это четыре запроса и перерисовка
- function scheduleRefresh(){const every=Math.max(30,Number(state.data?.refresh_seconds)||60)*1000;if(scheduleRefresh.every===every)return;scheduleRefresh.every=every;clearInterval(refreshTimer);refreshTimer=setInterval(()=>{if(!document.hidden&&!$('#dialog').open&&state.period!=='custom')refresh(true);},every);}
+ function scheduleRefresh(){const every=refreshEvery();if(scheduleRefresh.every===every)return;scheduleRefresh.every=every;clearInterval(refreshTimer);refreshTimer=setInterval(()=>{if(!document.hidden&&!$('#dialog').open&&state.period!=='custom')refresh(true);},every);}
  navigate();scheduleRefresh();
 
 function networkView(){return `<div class="section-head"><h2>Доход партнёрской сети</h2></div><section class="panel"><p class="stat-note">По событиям портала · последние 30 дней с начислениями · валюта портала</p><div class="table-wrap"><table class="table"><thead><tr><th>Дата</th><th>Сделок сети</th><th>Начислено</th></tr></thead><tbody>${state.admin.network.map(d=>`<tr><td>${esc(d.day)}</td><td>${number(d.trades)}</td><td class="positive">${number(d.income)}</td></tr>`).join('')}</tbody></table></div></section>`;}
