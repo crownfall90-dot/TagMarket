@@ -279,6 +279,7 @@ async def bootstrap(request):
     return web.json_response({"user": {"id": user["id"], "name": user.get("first_name", "Инвестор")},
         "accounts": items, "totals": totals,
         "onboarding": {"needed": not own_accounts,
+                        "later": partner.kv_get(db, f"onboard:{uid}:later") == "1",
                         "registration_url": registration_url,
                         "progress": logic.onboarding_status(db, uid),
                         "partner_url": logic.partner_link(request.app["db"], uid)},
@@ -308,9 +309,15 @@ async def onboarding_progress(request):
     data = await json_object(request)
     steps = ("registered", "verified", "broker_account")
     step = data.get("step")
-    if step not in steps or type(data.get("done")) is not bool:
+    if step not in (*steps, "later") or type(data.get("done")) is not bool:
         raise web.HTTPBadRequest(text="Некорректный шаг")
     db = request.app["db"]
+    # «Зарегистрируюсь позже»: новичок открывает всё приложение без своих
+    # счетов — общий счёт и то, чем поделился пригласивший. Хранится на
+    # сервере, чтобы выбор не сбрасывался на другом устройстве
+    if step == "later":
+        partner.kv_set(db, f"onboard:{uid}:later", "1" if data["done"] else "0")
+        return web.json_response({"later": data["done"]})
     progress = logic.onboarding_status(db, uid)
     index = steps.index(step)
     if data["done"] and index and not progress[steps[index - 1]]:

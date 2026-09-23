@@ -49,6 +49,7 @@ const periods=[['today','Сегодня'],['yesterday','Вчера'],['week','Э
 const NAV_ROOTS=['#desktop-nav','#mobile-nav'];
 function reducedMotion(){return !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;}
 function nav(){
+ document.body.classList.toggle('onboarding-only',onboardingOnly());
  const active=state.view==='account'?'accounts':state.view==='faq'?'overview':state.view;
  for(const selector of NAV_ROOTS){
   const root=$(selector);
@@ -151,6 +152,23 @@ function sonicStrategyCard(){
 // чужая реферальная ссылка и личные контакты оттуда не берутся — регистрация
 // идёт по партнёрской ссылке владельца этого кабинета
 const FAQ_IMG=(src,alt)=>`<button type="button" class="faq-shot" data-action="faq-image" data-src="${src}" data-alt="${esc(alt)}"><img src="${src}" alt="${esc(alt)}" loading="lazy" decoding="async"></button>`;
+// Шаги регистрации и подключения — общие для «Частых вопросов» и экрана
+// знакомства новичка: одна копия текста, чтобы они не разошлись
+const REG_STEPS=[
+'Откройте ссылку регистрации <b>в браузере</b> — скопируйте и вставьте, не открывайте из Telegram или WhatsApp.',
+   'Заполните все поля латиницей. Телефон и адрес не важны.',
+   'Подтвердите почту в письме от IB-портала и снова войдите в портал.',
+   'Нажмите «Tag Registration» — личный кабинет Tag Markets создастся сам, пароль придёт на ту же почту.',
+   '<b>Важно:</b> нажмите «Confirm Email» в письме от Tag Markets — только после этого регистрация завершена.'];
+function copySteps(){const code=v=>`<code class="faq-code">${esc(v)}</code>`;return [
+'Зайдите на платформу Tag Markets и пополните депозит.',
+   'Вверху справа нажмите меню (четыре линии), пролистайте вниз и выберите «CopyX».',
+   `В поиске введите ${code('NEO')} и выберите NEO.FX (или SONIC).`,
+   'Нажмите «Details», затем «Connect».',
+   'В поле «Invest» введите сумму, которую хотите инвестировать.',
+   `Раскройте «Community Token», в поле «Code» введите ${code('#NEO')} и нажмите «Verify» — <b>это нужно для бонуса ×24</b>.`,
+   `В поле «HASH/GU-ID» введите ровно шесть нулей ${code('000000')} и нажмите «Submit».`,
+   'Отметьте две галочки и нажмите «Copy Now» — стратегия запущена.'];}
 function faqStrategy(name,tag,facts,text,shots,link){
  return `<article class="faq-strategy"><div class="faq-strategy-head"><span class="faq-strategy-mark">${esc(tag)}</span><div><h3>${esc(name)}</h3><small>${esc(facts[0])}</small></div></div><ul class="faq-facts">${facts.slice(1).map(([k,v])=>`<li><small>${esc(k)}</small><b>${esc(v)}</b></li>`).join('')}</ul><p>${esc(text)}</p><div class="faq-shots">${shots.map(([s,a])=>FAQ_IMG(s,a)).join('')}</div>${link||''}</article>`;
 }
@@ -171,23 +189,10 @@ function faqView(){
    `<div class="faq-links">${ext('https://www.myfxbook.com/members/WordSmithyFx/neofx/11800152','NEO на myfxbook с октября 2025')}${ext('https://www.myfxbook.com/members/WordSmithyFx/neo-fx/11779491','Тестовый период март–ноябрь 2025')}</div>`)
   +`<p class="faq-note">Цифры — из карточек стратегий у брокера. Прошлые результаты не гарантируют будущих: торговый баланс с плечом можно потерять.</p>`);
  const connect=faqGroup('КАК НАЧАТЬ','Подключение по шагам','plus',
-  faqItem('1. Регистрация',faqSteps([
-   'Откройте ссылку регистрации <b>в браузере</b> — скопируйте и вставьте, не открывайте из Telegram или WhatsApp.',
-   'Заполните все поля латиницей. Телефон и адрес не важны.',
-   'Подтвердите почту в письме от IB-портала и снова войдите в портал.',
-   'Нажмите «Tag Registration» — личный кабинет Tag Markets создастся сам, пароль придёт на ту же почту.',
-   '<b>Важно:</b> нажмите «Confirm Email» в письме от Tag Markets — только после этого регистрация завершена.'])
+  faqItem('1. Регистрация',faqSteps(REG_STEPS)
    +(reg?`<a class="button primary faq-cta" href="${esc(reg)}" target="_blank" rel="noopener">Открыть регистрацию ${icon('arrow')}</a>`:'<p class="faq-note">Ссылку на регистрацию даст тот, кто вас пригласил.</p>'),true)
   +faqItem('2. Верификация',`<p>После регистрации пройдите верификацию личности в кабинете Tag Markets — без неё недоступны пополнение и вывод.</p>`)
-  +faqItem('3. Пополнение и подключение к копитрейдингу',faqSteps([
-   'Зайдите на платформу Tag Markets и пополните депозит.',
-   'Вверху справа нажмите меню (четыре линии), пролистайте вниз и выберите «CopyX».',
-   `В поиске введите ${code('NEO')} и выберите NEO.FX (или SONIC).`,
-   'Нажмите «Details», затем «Connect».',
-   'В поле «Invest» введите сумму, которую хотите инвестировать.',
-   `Раскройте «Community Token», в поле «Code» введите ${code('#NEO')} и нажмите «Verify» — <b>это нужно для бонуса ×24</b>.`,
-   `В поле «HASH/GU-ID» введите ровно шесть нулей ${code('000000')} и нажмите «Submit».`,
-   'Отметьте две галочки и нажмите «Copy Now» — стратегия запущена.'])
+  +faqItem('3. Пополнение и подключение к копитрейдингу',faqSteps(copySteps())
    +`<div class="faq-shots">${FAQ_IMG('faq-neo-card.jpg','Кнопка Connect в карточке стратегии')}</div>`)
   +faqItem('Можно попробовать без своих денег',`<p>Да — в приложении есть демо-счёт «Копитрейдинг 45k». Он показывает реальную динамику стратегии, но не входит в ваш капитал.</p>`)
   +faqItem('Как добавить свой счёт в это приложение',`<p>Добавьте счёт в разделе «Счета» с инвесторским паролем MT5 — дальше сделки и баланс обновляются сами.</p><a class="text-link" href="#accounts">Мои счета ${icon('arrow')}</a>`));
@@ -244,10 +249,37 @@ function dayExtremes(points,capital,cur){const rows=(points||[]).filter(p=>Numbe
 function timeMsk(value){return `${String(value||'').slice(11,16)} МСК`;}
 function periodBar(){return `<section class="report-controls panel"><div class="report-control report-period">${periodTabs()}</div></section>${customDates()}`;}
 function customDates(){return state.period==='custom'?`<div class="custom-period"><div class="field-row"><label class="field">С даты<input type="date" id="from-date" value="${esc(state.from)}"></label><label class="field">По дату<input type="date" id="to-date" value="${esc(state.to)}"></label></div>${button('apply-period','Показать результат','secondary small')}</div>`:'';}
-function onboardingCard(){const url=state.data?.onboarding?.registration_url,p=state.data?.onboarding?.progress||{};const step=(key,n,title,body,action)=>`<div class="onboarding-step ${p[key]?'is-done':''}"><div class="onboarding-visual"><b>${p[key]?'✓':n}</b></div><div><h3>${title}</h3><p>${body}</p>${action||''}</div></div>`;return `<section class="panel welcome-card onboarding-card"><span class="eyebrow">ПЕРВЫЙ ЗАПУСК</span><h2>Личный кабинет за 3 шага</h2><div class="onboarding-steps">${step('registered',1,'Регистрация','Создайте профиль в партнёрском портале по персональной ссылке.',url?`<div class="onboarding-actions"><a class="button primary" href="${esc(url)}" target="_blank" rel="noopener">Открыть регистрацию ${icon('arrow')}</a>${p.registered?'':button('onboard-step','Я зарегистрировался','secondary small','check','data-step="registered"')}</div>`:'<p class="muted">Ссылка регистрации ещё не настроена.</p>')}${step('verified',2,'Верификация','Подтвердите почту и пройдите проверку личности в портале.',p.registered?button('onboard-step','Верификация пройдена','secondary small','check','data-step="verified"'):'<small class="muted">Сначала завершите регистрацию</small>')}${step('broker_account',3,'Счёт и стратегия','Создайте счёт Tag Markets, пополните его и добавьте сюда инвесторский пароль MT5.',p.verified?button('onboard-step','Счёт создан','secondary small','check','data-step="broker_account"'):'<small class="muted">Сначала пройдите верификацию</small>')}</div><p class="stat-note">После подключения счёта этот экран исчезнет. Демо-наблюдение остаётся отдельно и не входит в ваш баланс.</p></section>`;}
+// Новичок без своих счетов видит один экран — пошаговое подключение; панель
+// разделов скрыта. «Зарегистрируюсь позже» открывает всё приложение: общий
+// счёт и счета, которыми поделился пригласивший. Свой счёт добавлен —
+// экран больше не показывается
+function onboardingOnly(){const o=state.data?.onboarding;return !!(o?.needed&&!o?.later);}
+function welcomeView(){
+ const d=state.data,o=d.onboarding||{},p=o.progress||{},reg=o.registration_url||'';
+ const keys=['registered','verified','broker_account'],done=keys.filter(k=>p[k]).length;
+ const current=keys.findIndex(k=>!p[k]),now=current<0?3:current;
+ const step=(i,title,sub,body)=>{const ok=i<3&&!!p[keys[i]],active=i===now;
+  return `<details class="faq-item welcome-step${ok?' is-done':''}${active?' is-current':''}"${active?' open':''}><summary><span class="welcome-num">${ok?'✓':i+1}</span><span class="welcome-title"><b>${title}</b><small>${sub}</small></span>${icon('chevron')}</summary><div class="faq-body">${body}</div></details>`;};
+ const next=(key,label)=>p[key]?`<p class="welcome-done">${icon('check')} Готово</p>`:button('onboard-step',label,'primary','check',`data-step="${key}"`);
+ const steps=
+  step(0,'Регистрация','Партнёрский портал и кабинет Tag Markets',faqSteps(REG_STEPS)
+   +`<div class="welcome-actions">${reg?`<a class="button secondary" href="${esc(reg)}" target="_blank" rel="noopener">Открыть регистрацию ${icon('arrow')}</a>`:'<p class="faq-note">Ссылку на регистрацию даст тот, кто вас пригласил.</p>'}${next('registered','Я зарегистрировался')}</div>`)
+  +step(1,'Верификация','Подтверждение личности у брокера',`<p>В кабинете Tag Markets пройдите проверку личности — без неё недоступны пополнение и вывод.</p><div class="welcome-actions">${p.registered?next('verified','Верификация пройдена'):'<p class="faq-note">Сначала завершите регистрацию.</p>'}</div>`)
+  +step(2,'Пополнение и копитрейдинг','CopyX · бонус ×24 кодом #NEO',faqSteps(copySteps())
+   +`<div class="faq-shots">${FAQ_IMG('faq-neo-card.jpg','Кнопка Connect в карточке стратегии')}${FAQ_IMG('faq-sonic-card.jpg','Карточка стратегии SONIC')}</div><div class="welcome-actions">${p.verified?next('broker_account','Подключился к стратегии'):'<p class="faq-note">Сначала пройдите верификацию.</p>'}</div>`)
+  +step(3,'Счёт в этом приложении','Сделки и доход — здесь, автоматически',`<p>Добавьте счёт Tag Markets с <b>инвесторским паролем</b> MT5 — он только для чтения. Логин и пароль — в личном кабинете брокера. Дальше сделки, баланс и доход обновляются сами.</p><div class="welcome-actions">${button('add','Добавить мой счёт','primary','plus')}</div>`);
+ return `<section class="welcome-hero"><span class="eyebrow">ДОБРО ПОЖАЛОВАТЬ</span><h1>${esc(d.user.name)}, подключим копитрейдинг</h1><p>Четыре шага — и доход по стратегии будет виден здесь каждый день.</p><div class="welcome-progress" role="progressbar" aria-valuemin="0" aria-valuemax="4" aria-valuenow="${done}"><i style="width:${done/4*100}%"></i></div><small class="muted">Пройдено ${done} из 4</small></section>
+ <section class="panel faq-card welcome-steps">${steps}</section>
+ <section class="panel welcome-later"><div><b>Пока без своего счёта?</b><p>Можно смотреть общий счёт копитрейдинга${d.accounts.some(a=>a.shared)?' и счета, которыми с вами поделились':''} — и вернуться к подключению в любой момент.</p></div>${button('onboard-later','Зарегистрируюсь позже','secondary','arrow')}</section>
+ <a class="text-link welcome-faq" href="#faq">Частые вопросы: стратегии, вывод, лицензия ${icon('arrow')}</a>`;
+}
+// Отложивший регистрацию видит всё приложение и небольшую плашку, чтобы
+// вернуться к шагам
+function resumeBanner(){const p=state.data?.onboarding?.progress||{},done=['registered','verified','broker_account'].filter(k=>p[k]).length;
+ return `<section class="panel resume-banner"><span class="faq-card-icon">${icon('plus')}</span><div><b>Подключите свой счёт</b><small>Пройдено ${done} из 4 шагов</small></div>${button('onboard-resume','Продолжить','primary small','arrow')}</section>`;}
 function overview(){const d=state.data, curr=state.currency||Object.keys(d.totals)[0]||'USD', t=d.totals[curr]||{capital:0,pnl:0,month:0}, own=d.accounts.filter(a=>!a.demo&&!a.shared), demo=d.accounts.find(a=>a.demo&&a.enabled), rep=state.report;
- if(!own.length&&!demo)return header(`Добро пожаловать, ${d.user.name}`)+onboardingCard();
- if(d.onboarding?.needed)return header('Добро пожаловать')+onboardingCard()+sonicGuide();
+ if(d.onboarding?.needed){const open=d.accounts.filter(a=>a.shared||(a.demo&&a.enabled));
+  return header(`Добро пожаловать, ${d.user.name}`)+resumeBanner()+(open.length?`<div class="account-list">${open.map((a,i)=>accountCard(a,i)).join('')}</div>`:empty('Пока нечего показать','Своих счетов ещё нет, а общий счёт скрыт в настройках.'))+sonicGuide();}
  const dynamics=state.reportError?empty('Не удалось построить график',state.reportError):rep?`<div class="dynamics-main fade-swap">${resultPair(rep.summary.net_income,rep.currency,rep.summary.pct_capital)}<span class="muted">${countLabel(rep.summary.count,['сделка','сделки','сделок'])}</span></div>${spark(rep.chart,rep.currency,state.period)}${dayExtremes(rep.chart,t.capital,rep.currency)}`:skeleton('chart');
  return header('Мой кабинет','',button('add','Добавить счёт','secondary','plus'))+
   `<div class="dashboard-grid"><div><section class="panel hero"><div class="hero-top"><span class="eyebrow">Мой капитал</span><span class="hero-pill">${esc(curr)}</span></div><div class="hero-value">${money(t.capital,curr)}</div><div class="hero-bottom"><div><p>За месяц</p>${resultPair(t.month,curr,t.capital>0?t.month/t.capital*100:null)}</div><div class="separator"></div><div><p>Сегодня</p>${resultPair(t.today,curr,t.capital>0?t.today/t.capital*100:null)}</div></div></section>
@@ -495,7 +527,7 @@ function render(){paintedKey='';nav();
   const fingerprint=[...strip.querySelectorAll('button')].map(b=>b.dataset.value||b.textContent).join('|');
   prevThumbs.set(fingerprint, {left:active.offsetLeft, width:active.offsetWidth});
  });
- const views={overview,accounts:accountsView,account:accountView,people:peopleView,settings:settingsView,faq:faqView};$('#main').innerHTML=(preview?'<div class="preview-label">Демо-режим · вымышленные данные. Отправка сообщений и управление счетами работают только при запуске из <a href="https://t.me/tagmarketgold_bot" target="_blank" rel="noopener">бота в Telegram</a>.</div>':'')+(views[state.view]||overview)()+(state.view==='settings'&&state.admin?.network?.length?networkView():'');$('#avatar').textContent=state.data.user.name.slice(0,1).toUpperCase();
+ const views={overview,accounts:accountsView,account:accountView,people:peopleView,settings:settingsView,faq:faqView};$('#main').innerHTML=(preview?'<div class="preview-label">Демо-режим · вымышленные данные. Отправка сообщений и управление счетами работают только при запуске из <a href="https://t.me/tagmarketgold_bot" target="_blank" rel="noopener">бота в Telegram</a>.</div>':'')+(onboardingOnly()&&state.view!=='faq'?welcomeView:views[state.view]||overview)()+(state.view==='settings'&&state.admin?.network?.length?networkView():'');$('#avatar').textContent=state.data.user.name.slice(0,1).toUpperCase();
  // сначала все замеры, потом все записи: чередование чтения и записи в одном
  // цикле заставляет браузер пересчитывать вёрстку на каждой полосе
  const centering=[];
@@ -780,6 +812,7 @@ document.addEventListener('click',async event=>{const el=event.target.closest('[
  else if(action==='share-accounts'){const g=state.people.guests.find(x=>x.id===el.dataset.guest),have=new Set(g.accounts.filter(a=>a.shared).map(a=>String(a.login))),list=(state.people.shareable||[]).filter(a=>!have.has(String(a.login)));const d=await dialog('Открыть счета гостю',`${list.map(a=>`<label class="check"><input name="login-${a.login}" type="checkbox">${esc(a.name)}${a.cabinet?` · ${esc(a.cabinet)}`:''}</label>`).join('')}<p class="stat-note">Гость увидит их только для просмотра.</p>`,'Открыть');if(d){const logins=Object.keys(d).filter(k=>k.startsWith('login-')).map(k=>Number(k.slice(6)));if(logins.length)await mutate('/guests/'+el.dataset.guest,{action:'share',logins});}}
  else if(action==='toast-close')$('#toast').classList.remove('visible');
  else if(action==='shortcut')await addShortcut();
+ else if(action==='onboard-later'||action==='onboard-resume'){const later=action==='onboard-later';if(!preview)await api('/onboarding',{method:'POST',body:JSON.stringify({step:'later',done:later})});state.data.onboarding.later=later;tg?.HapticFeedback?.impactOccurred?.('light');if(location.hash!=='#overview')location.hash='overview';else{window.scrollTo(0,0);render();}toast(later?'Приложение открыто. Вернуться к подключению можно с «Обзора».':'Продолжим с того же шага');}
  else if(action==='faq-image'){await dialog(el.dataset.alt||'Скриншот',`<img class="faq-full" src="${esc(el.dataset.src)}" alt="${esc(el.dataset.alt||'')}">`,'Закрыть');}
  else if(action==='chart-zoom'){const v=el.dataset.value;if(v==='reset'){chartView.key='';scheduleChart();}else chartZoom(v==='in'?.7:1/.7);}
  else if(action==='period'){if(state.period===el.dataset.value)return;state.period=el.dataset.value;state.offset=0;state.report=null;state.reportError='';if(state.period==='custom')render();else await showCached(el);}

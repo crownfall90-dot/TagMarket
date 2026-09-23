@@ -574,3 +574,34 @@ body:not(.is-loading) #refresh svg{animation:refresh-settle .4s cubic-bezier(.3,
 .faq-split .faq-shot img{height:190px}
 .faq-store{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
 @media(max-width:380px){.faq-split{grid-template-columns:1fr}}
+
+/* ── Знакомство новичка: один экран, панель разделов скрыта ──────────────── */
+body.onboarding-only #mobile-nav,body.onboarding-only #desktop-nav,body.onboarding-only .rail nav{display:none}
+body.onboarding-only .workspace{padding-bottom:24px}
+.welcome-hero{padding:6px 2px 18px}
+.welcome-hero h1{font-size:26px;line-height:1.15;margin:6px 0 8px}
+.welcome-hero p{color:var(--muted);font-size:14px;margin:0 0 16px}
+.welcome-progress{height:8px;border-radius:99px;background:var(--raised);overflow:hidden;margin-bottom:8px}
+.welcome-progress i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,rgb(var(--accent-rgb) / .7),var(--accent));transition:width .6s cubic-bezier(.22,1,.36,1)}
+.welcome-steps{padding:6px 18px}
+.welcome-step>summary{padding:16px 2px}
+.welcome-num{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;flex-shrink:0;font-weight:800;font-size:14px;color:var(--muted);border:1.5px solid var(--line);transition:background .3s,color .3s,border-color .3s}
+.welcome-step.is-current .welcome-num{color:#111416;background:var(--accent);border-color:var(--accent);box-shadow:0 0 0 5px rgb(var(--accent-rgb) / .14)}
+.welcome-step.is-done .welcome-num{color:var(--accent);border-color:rgb(var(--accent-rgb) / .5);background:rgb(var(--accent-rgb) / .1)}
+.welcome-step>summary{justify-content:flex-start}
+.welcome-step>summary>svg{margin-left:auto}
+.welcome-title{display:flex;flex-direction:column;gap:2px;min-width:0}
+.welcome-title b{font-size:15px}
+.welcome-title small{color:var(--muted);font-weight:500;font-size:11.5px}
+.welcome-step.is-done .welcome-title b{color:var(--muted)}
+.welcome-actions{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 16px}
+.welcome-done{display:flex;align-items:center;gap:6px;color:var(--accent)!important;font-weight:600;margin:0!important}
+.welcome-done svg{width:16px;height:16px}
+.welcome-later{display:flex;gap:14px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-top:16px;background:linear-gradient(135deg,rgb(var(--accent-rgb) / .06),transparent 60%)}
+.welcome-later b{font-size:15px}
+.welcome-later p{color:var(--muted);font-size:12.5px;line-height:1.5;margin:4px 0 0;max-width:420px}
+.welcome-faq{display:inline-flex;margin:18px 2px 8px}
+.resume-banner{display:flex;align-items:center;gap:12px;margin-bottom:16px;border-color:rgb(var(--accent-rgb) / .35)}
+.resume-banner>div{flex:1;min-width:0}
+.resume-banner b{display:block;font-size:14px}
+.resume-banner small{color:var(--muted);font-size:11.5px}

@@ -1535,6 +1535,22 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         r = await self.client.get("/agent/accounts",headers={"X-Token":"agent-test"})
         self.assertEqual(len(await r.json()),0)
 
+    async def test_onboarding_later_is_remembered(self):
+        # «Зарегистрируюсь позже» хранится на сервере — выбор не сбрасывается
+        # на другом устройстве; «Продолжить» возвращает экран знакомства
+        boot = await (await self.call("GET", "/api/bootstrap", uid=2)).json()
+        self.assertTrue(boot["onboarding"]["needed"])
+        self.assertFalse(boot["onboarding"]["later"])
+        r = await self.call("POST", "/api/onboarding", uid=2, json={"step": "later", "done": True})
+        self.assertEqual(r.status, 200, await r.text())
+        boot = await (await self.call("GET", "/api/bootstrap", uid=2)).json()
+        self.assertTrue(boot["onboarding"]["later"])
+        await self.call("POST", "/api/onboarding", uid=2, json={"step": "later", "done": False})
+        boot = await (await self.call("GET", "/api/bootstrap", uid=2)).json()
+        self.assertFalse(boot["onboarding"]["later"])
+        bad = await self.call("POST", "/api/onboarding", uid=2, json={"step": "later", "done": "yes"})
+        self.assertEqual(bad.status, 400)
+
     async def test_faq_images_are_served_and_nothing_else(self):
         # картинки «Частых вопросов» отдаются, остальное из web/ — нет;
         # каждая есть и в поставке выкладки, иначе на сервере была бы 404

@@ -182,6 +182,27 @@ def faq_opens_smoothly(page, url):
     close_dialog(page)
 
 
+def newcomer_sees_only_onboarding(page):
+    """Новичок без своих счетов видит один экран шагов, панель разделов
+    скрыта; «Зарегистрируюсь позже» открывает приложение, «Продолжить» —
+    возвращает к шагам."""
+    page.evaluate("""() => { state.data.onboarding = {needed: true, later: false,
+        progress: {registered: true, verified: false, broker_account: false},
+        registration_url: 'https://exfusion.ibportal.io/auth/register?e=x'}; render(); }""")
+    page.locator(".welcome-hero").wait_for()
+    assert page.evaluate("getComputedStyle(document.querySelector('#mobile-nav')).display") == "none"
+    assert page.evaluate("getComputedStyle(document.querySelector('#desktop-nav')).display") == "none"
+    current = page.locator(".welcome-step[open] .welcome-title b").inner_text()
+    assert current == "Верификация", current
+    page.locator('[data-action="onboard-later"]').click()
+    page.locator(".resume-banner").wait_for()
+    assert page.locator(".welcome-hero").count() == 0
+    page.locator('[data-action="onboard-resume"]').click()
+    page.locator(".welcome-hero").wait_for()
+    page.evaluate("state.data.onboarding.needed = false; render()")
+    page.locator(".welcome-hero").wait_for(state="detached")
+
+
 def close_dialog(page):
     """Закрыть диалог крестиком в шапке: у информационных окон кнопка
     «Отмена» спрятана, а крестик есть у всех."""
@@ -280,6 +301,7 @@ def main():
                     rapid_taps_render_once(page, nav)
                     page.locator('.hero').wait_for()
                     rapid_switching_stays_under_limit(page, nav)
+                    newcomer_sees_only_onboarding(page)
                     faq_opens_smoothly(page, url)
                     page.goto(url + "#overview", wait_until="domcontentloaded")
                     page.locator('.hero').wait_for()
