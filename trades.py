@@ -729,22 +729,24 @@ def candles(since: datetime, until: datetime) -> list[dict]:
     if not HAS_MT5:
         return []
     symbol = chart_symbol()
-    raw = mt5.copy_rates_range(symbol, mt5.TIMEFRAME_M15,
-                               since - timedelta(minutes=15), until)
+    # Бары берём по номеру от последнего, а не copy_rates_range по датам: метки
+    # баров MT5 — время сервера брокера, записанное как UTC, а наивный datetime
+    # библиотека MT5 переводит по часовому поясу компьютера. Окно «последний час»
+    # уезжало на три часа назад, фильтр ниже отбрасывал всё — терминал «вернул
+    # пустой список» на каждом круге, и за сутки на сервер попала одна свеча.
+    # Отбираем по шкале clock(), в которой лежат и сделки, — стрелки встают
+    # на свои свечи. ponytail: count с запасом на выходные, потолок 6000 баров
+    count = min(6000, int((until - since).total_seconds() // 900) + 200)
+    raw = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M15, 0, count)
     if raw is None:
         raise RuntimeError(f"свечи недоступны: {mt5.last_error()}")
-    if len(raw) == 0:
-        # copy_rates_range может вернуть пусто сразу после symbol_select,
-        # пока терминал не догрузил историю по символу с сервера брокера —
-        # copy_rates_from_pos тянет последние бары независимо от диапазона
-        # дат и обычно доступна раньше (не требует докачки конкретного окна)
-        raw = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M15, 0, 200)
-        if raw is None:
-            raise RuntimeError(f"свечи недоступны: {mt5.last_error()}")
-    return [{"time": datetime.fromtimestamp(int(c["time"]), timezone.utc).replace(tzinfo=None).isoformat(),
-             "open": float(c["open"]), "high": float(c["high"]),
-             "low": float(c["low"]), "close": float(c["close"])}
-            for c in raw if since <= datetime.fromtimestamp(int(c["time"]), timezone.utc).replace(tzinfo=None) <= until]
+    out = []
+    for c in raw:
+        at = datetime.fromtimestamp(int(c["time"]), timezone.utc).replace(tzinfo=None)
+        if since <= at <= until:
+            out.append({"time": at.isoformat(), "open": float(c["open"]), "high": float(c["high"]),
+                        "low": float(c["low"]), "close": float(c["close"])})
+    return out
 
 
 def since_ticket(ticket: int) -> list[dict]:

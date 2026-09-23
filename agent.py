@@ -946,6 +946,7 @@ def main():
     last_update_check = 0.0
     last_canary_report = 0.0
     last_candle_sync = 0.0
+    candles_backfilled = False      # история за 60 дней ушла на сервер
     # закэшировано на весь процесс: код меняется только через рестарт после
     # обновления, так что local-commit и «свой ли это коммит» не меняются
     # между запусками git заново на каждый круг
@@ -1039,8 +1040,13 @@ def main():
         if ok and time.monotonic() - last_candle_sync > CANDLE_SYNC_EVERY:
             try:
                 until = trades.clock()
-                sent = push_candles(until - timedelta(hours=1), until)
+                # первый круг после запуска — история за 60 дней (столько хранит
+                # сервер), дальше — последние два часа: пропущенное за время,
+                # пока агент стоял, догружается само
+                back = timedelta(hours=2) if candles_backfilled else timedelta(days=60)
+                sent = push_candles(until - back, until)
                 if sent:
+                    candles_backfilled = True   # только если свечи реально ушли
                     log.info("свечи XAUUSD: отправлено %d новых", sent)
             except Exception as e:
                 log.warning("не отправил свечи: %s", e)
