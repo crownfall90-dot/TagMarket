@@ -168,6 +168,7 @@ def faq_opens_smoothly(page, url):
     высоты, скриншот открывается на весь экран."""
     page.goto(url + "#faq", wait_until="domcontentloaded")
     page.locator(".faq-page").wait_for()
+    fits(page)
     item = page.locator(".faq-item").nth(1)          # «2. Верификация», закрыт
     assert not item.evaluate("el => el.open")
     item.locator("summary").click()

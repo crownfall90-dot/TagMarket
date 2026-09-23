@@ -518,7 +518,7 @@ body:not(.is-loading) #refresh svg{animation:refresh-settle .4s cubic-bezier(.3,
 .trade-layer .trade-tag.is-hidden{visibility:hidden}
 
 /* ── Частые вопросы ──────────────────────────────────────────────────────── */
-.faq-page{display:grid;gap:16px}
+.faq-page{display:grid;grid-template-columns:minmax(0,1fr);gap:16px}
 .faq-card{padding:20px}
 .faq-card-head{display:flex;gap:12px;align-items:center;margin-bottom:10px}
 .faq-card-head h2{margin-top:2px}
@@ -559,7 +559,6 @@ body:not(.is-loading) #refresh svg{animation:refresh-settle .4s cubic-bezier(.3,
 .faq-facts li{background:var(--raised);border-radius:10px;padding:8px 10px;min-width:0}
 .faq-facts small{display:block;color:var(--muted);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .faq-facts b{display:block;font-size:13px;margin-top:2px;white-space:nowrap}
-@media(max-width:380px){.faq-facts{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .faq-strategy>p{color:var(--muted);font-size:13px;line-height:1.55;margin:0 0 12px}
 /* скриншоты: лента с прокруткой, по нажатию — на весь экран */
 .faq-shots{display:flex;gap:10px;overflow-x:auto;scroll-snap-type:x mandatory;padding-bottom:4px;margin-bottom:12px;scrollbar-width:none}
@@ -573,7 +572,12 @@ body:not(.is-loading) #refresh svg{animation:refresh-settle .4s cubic-bezier(.3,
 .faq-split{display:grid;grid-template-columns:1fr auto;gap:14px;align-items:start}
 .faq-split .faq-shot img{height:190px}
 .faq-store{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
-@media(max-width:380px){.faq-split{grid-template-columns:1fr}}
+@media(max-width:740px){
+ .faq-facts{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .faq-facts small,.faq-facts b{white-space:normal;overflow-wrap:anywhere}
+ .faq-split{grid-template-columns:minmax(0,1fr)}
+ .faq-split .faq-shot img{max-width:100%;height:auto}
+}
 
 /* ── Знакомство новичка: один экран, панель разделов скрыта ──────────────── */
 body.onboarding-only #mobile-nav,body.onboarding-only #desktop-nav,body.onboarding-only .rail nav{display:none}
