@@ -591,11 +591,42 @@ async def price_chart(request):
     # сравниваем по базовому имени: у брокера тикеры с суффиксом (XAUUSD.f),
     # и он может смениться — маркеры сделок не должны из-за этого пропадать
     base = trades.CHART_SYMBOL.split(".")[0]
+    rows = [r for r in rows if (r["symbol"] or "").split(".")[0] == base]
     markers = [{"time": r["time"].isoformat() + "Z", "side": r["side"], "price": r["price"],
-               "kind": "in" if r["is_opening"] else "out", "symbol": r["symbol"]}
-              for r in rows if (r["symbol"] or "").split(".")[0] == base]
+               "kind": "in" if r["is_opening"] else "out", "symbol": r["symbol"]} for r in rows]
     return web.json_response({"title": title, "symbol": trades.CHART_SYMBOL,
-        "candles": [{**c, "time": c["time"] + "Z"} for c in candles], "trades": markers})
+        "candles": [{**c, "time": c["time"] + "Z"} for c in candles], "trades": markers,
+        "pairs": trade_pairs(rows)})
+
+
+def trade_pairs(rows: list[dict]) -> list[dict]:
+    """Вход → выход, как линии сделок в терминале MT5.
+
+    Связываем по номеру позиции. У сделок, сохранённых до того, как сервер
+    начал его хранить, номера нет — там закрытие забирает самую раннюю ещё
+    открытую позицию противоположной стороны (закрывающая сделка BUY-позиции
+    в MT5 — SELL). Вход до начала периода — пара без входа, только выход.
+    """
+    queue = {"BUY": [], "SELL": []}
+    by_position, pairs = {}, []
+    for r in sorted(rows, key=lambda r: (r["time"], r["ticket"])):
+        if r["is_opening"]:
+            queue.setdefault(r["side"], []).append(r)
+            if r.get("position"):
+                by_position[r["position"]] = r
+            continue
+        entry = by_position.pop(r.get("position"), None) if r.get("position") else None
+        waiting = queue.get("SELL" if r["side"] == "BUY" else "BUY", [])
+        if entry is not None and entry in waiting:
+            waiting.remove(entry)
+        elif entry is None and waiting:
+            entry = waiting.pop(0)
+        pairs.append({"side": entry["side"] if entry else ("SELL" if r["side"] == "BUY" else "BUY"),
+                      "in_time": entry["time"].isoformat() + "Z" if entry else None,
+                      "in_price": entry["price"] if entry else None,
+                      "out_time": r["time"].isoformat() + "Z", "out_price": r["price"],
+                      "net": r["net"], "volume": r["volume"]})
+    return pairs
 
 
 def bounded_text(data, key, maximum=64, required=False):

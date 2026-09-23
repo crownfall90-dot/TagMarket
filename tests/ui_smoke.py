@@ -208,7 +208,17 @@ def main():
                     page.wait_for_function("!document.body.classList.contains('is-loading')")
                     # график цены SONIC: свечи и отметки сделок
                     page.locator('.price-chart-panel svg').wait_for()
-                    assert page.locator('.price-chart-panel .price-marker').count() == 4
+                    # сделки как в MT5: стрелка входа, кольцо выхода, пунктир между ними
+                    assert page.locator('.price-chart-panel .trade-in').count() == 3
+                    assert page.locator('.price-chart-panel .trade-out').count() == 3
+                    assert page.locator('.price-chart-panel .trade-link').count() == 3
+                    # отметки стоят на цене сделки внутри графика, а не прибиты к краю
+                    inside = page.evaluate("""() => { const box = document.querySelector('.price-chart-wrap').getBoundingClientRect();
+                        return [...document.querySelectorAll('.trade-layer i')].every(el => { const r = el.getBoundingClientRect();
+                            const cy = r.top + r.height / 2; return cy > box.top + 4 && cy < box.bottom - 4; }); }""")
+                    assert inside, "отметки сделок вышли за график"
+                    circle = page.locator('.trade-layer .trade-out').first.bounding_box()
+                    assert abs(circle["width"] - circle["height"]) < 0.5, f"кольцо выхода сплющено: {circle}"
                     fits(page)
                     if width == 390:
                         page.wait_for_timeout(500)

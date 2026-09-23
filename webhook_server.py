@@ -687,6 +687,11 @@ def _sync_payload(data: dict) -> tuple[int, dict, list[dict], bool]:
                                        nonnegative=field in ("volume", "price"))
         for field in ("is_balance", "is_closing", "is_opening"):
             deal[field] = _sync_flag(row.get(field), f"{label}.{field}")
+        # номер позиции MT5 — необязателен: старые агенты его не присылают
+        position = row.get("position", 0) or 0
+        if type(position) is not int or not 0 <= position < 2**63:
+            raise ValueError(f"{label}.position: non-negative integer required")
+        deal["position"] = position or None
         if sum(deal[field] for field in ("is_balance", "is_closing", "is_opening")) > 1:
             raise ValueError(f"{label}: contradictory flags")
         deals.append(deal)

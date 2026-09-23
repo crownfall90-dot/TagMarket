@@ -542,6 +542,45 @@ class BroadcastFormatTests(unittest.TestCase):
         self.assertEqual(first.weekday(), 0)
         self.assertEqual(last.weekday(), 6)
 
+    def test_trade_pairs_like_terminal(self):
+        # вход связывается со своим выходом: по номеру позиции, а у старых
+        # сделок без него — по порядку, как закрывает MT5
+        t = datetime(2026, 9, 1, 10)
+        deal = lambda ticket, mins, side, price, opening, pos=None, net=0: {
+            "ticket": ticket, "time": t + timedelta(minutes=mins), "side": side, "price": price,
+            "is_opening": opening, "is_closing": not opening, "position": pos, "net": net, "volume": .02}
+        # по номеру позиции: вторая BUY закрыта раньше первой
+        pairs = miniapp.trade_pairs([deal(1, 0, "BUY", 100, True, 7), deal(2, 1, "BUY", 101, True, 8),
+                                     deal(3, 2, "SELL", 105, False, 8, 4), deal(4, 3, "SELL", 99, False, 7, -1)])
+        self.assertEqual([(p["in_price"], p["out_price"]) for p in pairs], [(101, 105), (100, 99)])
+        # без номеров: закрытие забирает самую раннюю открытую BUY
+        pairs = miniapp.trade_pairs([deal(1, 0, "BUY", 100, True), deal(2, 1, "SELL", 103, True),
+                                     deal(3, 2, "SELL", 102, False, net=2), deal(4, 3, "BUY", 101, False, net=2)])
+        self.assertEqual([(p["side"], p["in_price"], p["out_price"]) for p in pairs],
+                         [("BUY", 100, 102), ("SELL", 103, 101)])
+        # вход до начала периода — выход без пары, направление по закрытию
+        lone = miniapp.trade_pairs([deal(5, 0, "SELL", 110, False, 9, 3)])
+        self.assertEqual((lone[0]["side"], lone[0]["in_price"]), ("BUY", None))
+
+    def test_agent_position_reaches_database(self):
+        # номер позиции от агента сохраняется — по нему график связывает
+        # вход с выходом; старый агент его не шлёт, мусор отклоняется
+        base = {"login": 777, "balance": 1, "equity": 1, "currency": "USD", "server": "S",
+                "capital_hist": 1}
+        row = {"ticket": 5, "time": "2026-09-01T10:00:00", "symbol": "XAUUSD", "side": "BUY",
+               "volume": 0.02, "price": 2400, "profit": 0, "swap": 0, "commission": 0, "net": 0,
+               "is_balance": False, "is_closing": False, "is_opening": True, "comment": ""}
+        _, _, deals, _ = webhook_server._sync_payload({**base, "deals": [{**row, "position": 42}]})
+        self.assertEqual(deals[0]["position"], 42)
+        _, _, deals, _ = webhook_server._sync_payload({**base, "deals": [row]})
+        self.assertIsNone(deals[0]["position"])
+        for bad in (-1, "42", 1.5, True):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                webhook_server._sync_payload({**base, "deals": [{**row, "position": bad}]})
+        db = store.open_db(":memory:")
+        store.save_deals(db, 777, [{**row, "position": 42}])
+        self.assertEqual(db.execute("SELECT position FROM deals").fetchone()[0], 42)
+
     def test_telegram_counts_emoji_as_two_caption_units(self):
         self.assertEqual(miniapp.telegram_length("😀" * 600), 1200)
 

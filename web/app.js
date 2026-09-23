@@ -221,15 +221,41 @@ function priceChart(data){
  const rows=data?.candles||[];
  if(rows.length<2)return `<section class="panel price-chart-panel"><div class="panel-head"><div><span class="eyebrow">ЦЕНА · ${esc(data?.symbol||'XAUUSD')}</span><h2>График цены</h2></div></div>${empty('Пока нет данных','График появится, как только агент передаст котировки за этот период.')}</section>`;
  const closes=rows.map(r=>Number(r.close)),ma20=movingAvg(closes,20),ma50=movingAvg(closes,50);
- const lo=Math.min(...rows.map(r=>Number(r.low))),hi=Math.max(...rows.map(r=>Number(r.high))),range=hi-lo||1;
+ const pairs=(data.pairs||[]).filter(p=>p.out_price!=null);
+ // шкала включает и цены сделок: вход бывает за пределами показанных свечей
+ const prices=pairs.flatMap(p=>[p.in_price,p.out_price]).filter(v=>v!=null).map(Number);
+ const lo0=Math.min(...rows.map(r=>Number(r.low)),...prices),hi0=Math.max(...rows.map(r=>Number(r.high)),...prices),margin=(hi0-lo0)*.06||1;
+ const lo=lo0-margin,hi=hi0+margin,range=hi-lo;
  const n=rows.length,w=640,h=220,pad=6,step=w/n;
  const x=i=>i*step+step/2,y=v=>pad+(hi-v)/range*(h-pad*2);
  const t0=Date.parse(rows[0].time),t1=Date.parse(rows.at(-1).time),span=Math.max(1,t1-t0);
  const xAt=iso=>{const t=Date.parse(iso);return Math.max(0,Math.min(w,(t-t0)/span*w));};
  const candles=rows.map((r,i)=>{const o=Number(r.open),c=Number(r.close),up=c>=o,color=up?'var(--accent)':'var(--negative)';const bodyTop=y(Math.max(o,c)),bodyBot=y(Math.min(o,c));return `<line x1="${x(i).toFixed(1)}" x2="${x(i).toFixed(1)}" y1="${y(Number(r.high)).toFixed(1)}" y2="${y(Number(r.low)).toFixed(1)}" stroke="${color}" stroke-width="1"/><rect x="${(x(i)-step*.32).toFixed(1)}" y="${bodyTop.toFixed(1)}" width="${(step*.64).toFixed(1)}" height="${Math.max(1,bodyBot-bodyTop).toFixed(1)}" fill="${color}"/>`;}).join('');
  const line=(vals,color)=>{const pts=vals.map((v,i)=>v==null?null:`${x(i).toFixed(1)},${y(v).toFixed(1)}`).filter(Boolean);if(pts.length<2)return '';return `<polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="1.6" opacity=".85"/>`;};
- const markers=(data.trades||[]).map(m=>{const cx=xAt(m.time),up=m.kind==='in';return `<g class="price-marker ${up?'in':'out'}"><title>${esc(up?'Вход':'Выход')} · ${esc(m.side)} · ${esc(number(m.price))} · ${esc(date(m.time,true))} МСК</title><path d="M${cx.toFixed(1)},${up?h-2:2} l6,${up?10:-10} l-12,0 z"/></g>`;}).join('');
- return `<section class="panel price-chart-panel"><div class="panel-head"><div><span class="eyebrow">ЦЕНА · ${esc(data.symbol)}</span><h2>${esc(data.title||'График цены')}</h2></div><div class="price-legend"><span class="ma20">MA20</span><span class="ma50">MA50</span></div></div><div class="chart-wrap price-chart-wrap"><svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="Свечной график ${esc(data.symbol)} со сделками стратегии">${candles}${line(ma20,'var(--purple)')}${line(ma50,'#e4bf7a')}${markers}</svg></div><div class="chart-labels"><span>${date(rows[0].time,true)}</span><span>${countLabel((data.trades||[]).length,['сделка','сделки','сделок'])} на графике</span><span>${date(rows.at(-1).time,true)}</span></div></section>`;
+ // Сделки как в терминале MT5: стрелка входа на цене входа (покупка — вверх,
+ // под ценой; продажа — вниз, над ценой), кольцо выхода на цене выхода и
+ // пунктир между ними — зелёный в плюс, красный в минус. Пунктир рисуем в
+ // SVG, а стрелки и кольца — HTML-слоем в процентах: SVG растянут под ширину
+ // экрана (preserveAspectRatio none), и фигуры в нём сплющивались бы в овалы
+ const pct=(v,of)=>(v/of*100).toFixed(2)+'%';
+ // шкала цен справа и текущая цена, как в терминале: без них не видно, на
+ // каком уровне был вход и где цена сейчас
+ const last=Number(rows.at(-1).close),grid=[.15,.38,.62,.85].map(f=>hi-range*f);
+ const under=grid.map(v=>`<line class="price-grid" x1="0" x2="${w}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/>`).join('')
+  +`<line class="price-now-line" x1="0" x2="${w}" y1="${y(last).toFixed(1)}" y2="${y(last).toFixed(1)}"/>`;
+ let links='';
+ const axis=grid.map(v=>`<span class="price-level" style="top:${pct(y(v),h)}">${number(v)}</span>`).join('')
+  +`<span class="price-now" style="top:${pct(y(last),h)}">${number(last)}</span>`;
+ let points='';
+ for(const p of pairs){
+  const buy=p.side==='BUY',win=Number(p.net)>=0,cls=`${buy?'buy':'sell'} ${win?'win':'loss'}`,x2=xAt(p.out_time),y2=y(Number(p.out_price));
+  const tip=esc(`${buy?'Покупка':'Продажа'}${p.volume?` · ${number(p.volume)} лот`:''}${p.in_price!=null?` · вход ${number(p.in_price)}`:''} · выход ${number(p.out_price)} · ${money(p.net,'USD',true)}`);
+  if(p.in_time){const x1=xAt(p.in_time),y1=y(Number(p.in_price));
+   links+=`<line class="trade-link ${cls}" x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}"/>`;
+   points+=`<i class="trade-in price-marker ${cls}" style="left:${pct(x1,w)};top:${pct(y1,h)}" title="${tip}"></i>`;}
+  points+=`<i class="trade-out ${cls}" style="left:${pct(x2,w)};top:${pct(y2,h)}" title="${tip}"></i>`;
+ }
+ return `<section class="panel price-chart-panel"><div class="panel-head"><div><span class="eyebrow">ЦЕНА · ${esc(data.symbol)}</span><h2>${esc(data.title||'График цены')}</h2></div><div class="price-legend"><span class="ma20">MA20</span><span class="ma50">MA50</span></div></div><div class="chart-wrap price-chart-wrap"><svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="Свечной график ${esc(data.symbol)} со сделками стратегии">${under}${candles}${line(ma20,'var(--purple)')}${line(ma50,'#e4bf7a')}${links}</svg><div class="trade-layer">${points}</div><div class="price-axis">${axis}</div></div><div class="chart-labels"><span>${date(rows[0].time,true)}</span><span>${countLabel(pairs.length,['сделка','сделки','сделок'])} на графике</span><span>${date(rows.at(-1).time,true)}</span></div></section>`;
 }
 function stepChart(series){const v=series.map(p=>Number(p.capital)),n=v.length,min=Math.min(...v),max=Math.max(...v),range=max-min||1,x=i=>i/(n-1)*640,y=val=>128-(val-min)/range*100;let d=`M${x(0)},${y(v[0])}`;for(let i=1;i<n;i++)d+=` H${x(i)} V${y(v[i])}`;return `<div class="chart-wrap"><svg viewBox="0 0 640 150" preserveAspectRatio="none" role="img" aria-label="Изменение капитала стратегии"><path class="chart-area" d="${d} V150 H0Z"/><path class="chart-line" d="${d}"/>${v.map((val,i)=>`<circle cx="${x(i)}" cy="${y(val)}" r="3.5" fill="var(--accent)" stroke="var(--panel)" stroke-width="2"/>`).join('')}</svg></div><div class="chart-labels"><span>${date(series[0].time)}</span><span>${countLabel(n-1,['изменение','изменения','изменений'])}</span><span>${date(series.at(-1).time)}</span></div>`;}
 function capitalPanel(rep){const s=rep.capital_series||[];if(s.length<2)return '';const first=Number(s[0].capital),last=Number(s.at(-1).capital);return `<section class="panel capital-panel"><div class="panel-head"><div><span class="eyebrow">БАЛАНС СТРАТЕГИИ</span><h2>${money(last,rep.currency)}</h2></div><span class="result-pair ${signedClass(last-first)}"><b>${money(last-first,rep.currency,true)}</b>${first>0?`<small>${percent((last-first)/first*100)}</small>`:''}</span></div>${stepChart(s)}</section>`;}
@@ -373,9 +399,11 @@ function previewCandles(){
  let price=2400,candles=[];
  for(let i=0;i<n;i++){const drift=Math.sin(i/9)*3,noise=(Math.sin(i*7)+Math.sin(i*2.3))*1.2;const open=price;price=2400+drift+noise+i*0.15;const close=price;const high=Math.max(open,close)+(1+Math.sin(i*12.9))*.75;const low=Math.min(open,close)-(1+Math.cos(i*7.7))*.75;candles.push({time:new Date(start+i*step).toISOString(),open,high,low,close});}
  const at=i=>candles[i].time,px=i=>candles[i].close;
+ const pair=(a,b,side)=>({side,in_time:at(a),in_price:px(a),out_time:at(b),out_price:px(b),net:(side==='BUY'?1:-1)*(px(b)-px(a))*10,volume:.02});
  return {title:'Выбранный период',symbol:'XAUUSD',candles,
   trades:[{time:at(14),side:'buy',price:px(14),kind:'in',symbol:'XAUUSD'},{time:at(22),side:'buy',price:px(22),kind:'out',symbol:'XAUUSD'},
-          {time:at(31),side:'sell',price:px(31),kind:'in',symbol:'XAUUSD'},{time:at(38),side:'sell',price:px(38),kind:'out',symbol:'XAUUSD'}]};
+          {time:at(31),side:'sell',price:px(31),kind:'in',symbol:'XAUUSD'},{time:at(38),side:'sell',price:px(38),kind:'out',symbol:'XAUUSD'}],
+  pairs:[pair(14,22,'BUY'),pair(31,38,'SELL'),pair(40,45,'BUY')]};
 }
 function previewReport(d,path,overview){
  const params=new URLSearchParams(path.split('?')[1]),period=params.get('period')||'today';

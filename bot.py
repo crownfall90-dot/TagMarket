@@ -3019,7 +3019,11 @@ async def main():
                 try:
                     if not trades.HAS_MT5:      # чистим только серверную базу
                         import store
-                        keep = trades.clock().replace(day=1).strftime("%Y-%m-01")
+                        # храним сделки текущего и прошлого месяца: фильтр
+                        # «Прошлый месяц» на странице счёта показывает сами
+                        # сделки, а не только итог. Сворачиваем то, что старше
+                        first = trades.clock().replace(day=1)
+                        keep = (first - timedelta(days=1)).strftime("%Y-%m-01")
                         removed = store.rollup(store.open_db(), keep, trades.is_transfer,
                                                trades.is_perf_fee, month_growth,
                                                trades.is_profit_side,

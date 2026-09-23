@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS state (
                                    -- (их сделок в deals уже нет — см. rollup)
 );
 
--- Сделки храним за текущий месяц, прошлые сворачиваем сюда: детали за годы
+-- Сделки храним за текущий и прошлый месяц, старше — сворачиваем сюда: детали за годы
 -- не нужны, а итоги должны остаться навсегда.
 CREATE TABLE IF NOT EXISTS months (
     login     INTEGER NOT NULL,
@@ -122,6 +122,16 @@ def open_db(path: str = None) -> sqlite3.Connection:
         db.execute("ALTER TABLE state ADD COLUMN capital_hist REAL")
     if "profit_carry" not in have:
         db.execute("ALTER TABLE state ADD COLUMN profit_carry REAL DEFAULT 0")
+    # номер позиции MT5 — связывает вход со своим выходом на графике цены;
+    # у сделок, сохранённых раньше, он пустой (пары подбираются по порядку)
+    # бот и вебхук открывают базу одновременно при перезапуске: второй мог бы
+    # упасть на «duplicate column», если первый успел добавить столбец
+    if "position" not in {r["name"] for r in db.execute("PRAGMA table_info(deals)").fetchall()}:
+        try:
+            db.execute("ALTER TABLE deals ADD COLUMN position INTEGER")
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e):
+                raise
     # колонки статистики появились позже — базы прошлых версий дополняем
     have = {r["name"] for r in db.execute("PRAGMA table_info(months)").fetchall()}
     for col, kind in (("wins", "INTEGER"), ("losses", "INTEGER"),
@@ -134,7 +144,7 @@ def open_db(path: str = None) -> sqlite3.Connection:
 
 
 FIELDS = ("ticket", "time", "symbol", "side", "volume", "price", "profit", "swap",
-          "commission", "net", "is_balance", "is_closing", "is_opening", "comment")
+          "commission", "net", "is_balance", "is_closing", "is_opening", "comment", "position")
 
 
 def save_deals(db, login: int, deals: list[dict], *, commit: bool = True) -> int:

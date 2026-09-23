@@ -440,3 +440,32 @@ body:not(.is-loading) #refresh svg{animation:refresh-settle .4s cubic-bezier(.3,
 .icon-btn:hover{background:rgb(var(--accent-rgb) / .1)}
 .breadcrumb{color:var(--text);opacity:.75}
 .breadcrumb b{color:#fff;opacity:1}
+
+/* Сделки на графике золота — как в терминале MT5: синяя стрелка покупки
+   (вверх, под ценой), красная продажи (вниз, над ценой), кольцо выхода и
+   пунктир входа→выхода цветом результата. Стрелки и кольца — HTML-слой,
+   чтобы растянутый по ширине SVG их не сплющивал */
+.price-chart-wrap{position:relative}
+.price-chart-panel .trade-link{stroke-width:1.3;stroke-dasharray:4 3;vector-effect:non-scaling-stroke;opacity:.85}
+.price-chart-panel .trade-link.win{stroke:var(--accent)}
+.price-chart-panel .trade-link.loss{stroke:var(--negative)}
+.trade-layer{position:absolute;inset:0;pointer-events:none}
+.trade-layer i{position:absolute;display:block;pointer-events:auto;cursor:pointer}
+.trade-layer .trade-in{width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;filter:drop-shadow(0 1px 2px rgb(0 0 0 / .6))}
+.trade-layer .trade-in.buy{border-bottom:9px solid #4c9bff;transform:translate(-50%,3px)}
+.trade-layer .trade-in.sell{border-top:9px solid #ff6b6b;transform:translate(-50%,calc(-100% - 3px))}
+.trade-layer .trade-out{width:8px;height:8px;border-radius:50%;background:var(--panel);border:2px solid;transform:translate(-50%,-50%)}
+.trade-layer .trade-out.win{border-color:var(--accent)}
+.trade-layer .trade-out.loss{border-color:var(--negative)}
+
+/* шкала цен справа и текущая цена — как в терминале */
+.price-chart-panel .price-grid{stroke:var(--line);stroke-width:1;stroke-dasharray:2 4;vector-effect:non-scaling-stroke;opacity:.7}
+.price-chart-panel .price-now-line{stroke:var(--accent);stroke-width:1;stroke-dasharray:3 3;vector-effect:non-scaling-stroke;opacity:.55}
+/* колонка цен справа, как в терминале: график сужается на её ширину, и
+   подписи не налезают на последние свечи */
+.price-chart-wrap{padding-right:52px}
+.trade-layer{right:52px}
+.price-axis{position:absolute;top:0;bottom:0;right:0;width:52px;border-left:1px solid var(--line)}
+.price-axis .price-level,.price-axis .price-now{position:absolute;left:4px;transform:translateY(-50%);font-size:9.5px;line-height:1;font-variant-numeric:tabular-nums;pointer-events:none;padding:2px 4px;border-radius:4px}
+.price-axis .price-level{color:var(--muted)}
+.price-axis .price-now{color:#111416;background:var(--accent);font-weight:700;left:0}
