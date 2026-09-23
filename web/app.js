@@ -217,46 +217,161 @@ function tradesTable(rep){
 const MOVE={deposit:['Пополнение стратегии','up','in'],reinvest:['Реинвест профита в капитал','refresh','re'],profit_out:['Вывод профита на баланс Tag Markets','down','out'],profit_in:['Профит вернулся на стратегию','up','in'],capital_out:['Вывод капитала на баланс Tag Markets','down','out']};
 function moveRow(r,cur){const [label,ico,dir]=MOVE[r.move]||['Движение средств','chart','in'];return `<article class="deal-row move-row ${dir}"><div class="deal-symbol"><span class="deal-icon move-${dir}">${icon(ico)}</span><div><b>${label}</b><small>${esc(timeMsk(r.time))}</small>${r.capital_now!=null?`<small class="flow">Капитал ${number(r.capital_was)} → <b>${money(r.capital_now,cur)}</b></small>`:''}</div></div><div class="deal-result"><span class="result-pair ${signedClass(r.net_income)}"><b>${money(r.net_income,cur,true)}</b></span></div></article>`;}
 function movingAvg(values,period){const out=[];for(let i=0;i<values.length;i++){if(i<period-1){out.push(null);continue;}let sum=0;for(let j=i-period+1;j<=i;j++)sum+=values[j];out.push(sum/period);}return out;}
+// Окно графика — какие свечи видны. Живёт вне перерисовки экрана: фоновое
+// обновление не сбрасывает масштаб, новая свеча не сбивает позицию, если
+// смотрят на самый конец. Новый период или счёт — окно по умолчанию
+const chartView={key:'',start:0,count:0,total:0},CHART_MIN=16,CHART_DEFAULT=120;
+function chartWindow(total,key){
+ const v=chartView;
+ if(v.key!==key){v.key=key;v.count=Math.min(total,CHART_DEFAULT);v.start=total-v.count;}
+ else if(v.start+v.count>=v.total)v.start+=total-v.total;      // были в конце — едем с новыми свечами
+ v.total=total;
+ v.count=Math.round(Math.max(Math.min(CHART_MIN,total),Math.min(total,v.count)));
+ v.start=Math.round(Math.max(0,Math.min(total-v.count,v.start)));
+ return v;
+}
 function priceChart(data){
- const rows=data?.candles||[];
- if(rows.length<2)return `<section class="panel price-chart-panel"><div class="panel-head"><div><span class="eyebrow">ЦЕНА · ${esc(data?.symbol||'XAUUSD')}</span><h2>График цены</h2></div></div>${empty('Пока нет данных','График появится, как только агент передаст котировки за этот период.')}</section>`;
- const closes=rows.map(r=>Number(r.close)),ma20=movingAvg(closes,20),ma50=movingAvg(closes,50);
- const pairs=(data.pairs||[]).filter(p=>p.out_price!=null);
- // шкала включает и цены сделок: вход бывает за пределами показанных свечей
- const prices=pairs.flatMap(p=>[p.in_price,p.out_price]).filter(v=>v!=null).map(Number);
- const lo0=Math.min(...rows.map(r=>Number(r.low)),...prices),hi0=Math.max(...rows.map(r=>Number(r.high)),...prices),margin=(hi0-lo0)*.06||1;
- const lo=lo0-margin,hi=hi0+margin,range=hi-lo;
+ const all=data?.candles||[];
+ if(all.length<2)return `<section class="panel price-chart-panel"><div class="panel-head"><div><span class="eyebrow">ЦЕНА · ${esc(data?.symbol||'XAUUSD')}</span><h2>График цены</h2></div></div>${empty('Пока нет данных','График появится, как только агент передаст котировки за этот период.')}</section>`;
+ const part=priceChartParts(data);
+ return `<section class="panel price-chart-panel"><div class="panel-head"><div><span class="eyebrow">ЦЕНА · ${esc(data.symbol)}</span><h2>${esc(data.title||'График цены')}</h2></div><div class="chart-tools" role="group" aria-label="Масштаб графика"><button type="button" class="icon-btn" data-action="chart-zoom" data-value="out" aria-label="Отдалить">−</button><button type="button" class="icon-btn" data-action="chart-zoom" data-value="in" aria-label="Приблизить">+</button><button type="button" class="icon-btn" data-action="chart-zoom" data-value="reset" aria-label="Весь период" title="Весь период">⟲</button></div></div><div class="price-legend"><span class="ma20">MA20</span><span class="ma50">MA50</span><span class="chart-hint">двумя пальцами — масштаб, перетаскиванием — листать</span></div><div class="chart-wrap price-chart-wrap">${part.plot}</div><div class="time-axis">${part.ticks}</div><div class="trade-list-box">${part.list}</div></section>`;
+}
+function priceChartParts(data){
+ const all=data.candles,key=[state.view,state.login,state.period,state.from,state.to,all[0].time].join('|');
+ const {start,count}=chartWindow(all.length,key),rows=all.slice(start,start+count);
+ // средние считаем по всем свечам, иначе у левого края окна их бы не было
+ const closesAll=all.map(r=>Number(r.close)),ma20=movingAvg(closesAll,20).slice(start,start+count),ma50=movingAvg(closesAll,50).slice(start,start+count);
  const n=rows.length,w=640,h=220,pad=6,step=w/n;
+ const t0=Date.parse(rows[0].time),t1=Date.parse(rows.at(-1).time),span=Math.max(1,t1-t0),tEnd=t1+15*60e3;
+ const inView=t=>!!t&&Date.parse(t)>=t0&&Date.parse(t)<=tEnd;
+ // сделки, у которых вход или выход попадает в видимое окно
+ const pairs=(data.pairs||[]).filter(p=>p.out_price!=null&&(inView(p.in_time)||inView(p.out_time)));
+ const prices=pairs.flatMap(p=>[inView(p.in_time)?p.in_price:null,inView(p.out_time)?p.out_price:null]).filter(v=>v!=null).map(Number);
+ const lo0=Math.min(...rows.map(r=>Number(r.low)),...prices),hi0=Math.max(...rows.map(r=>Number(r.high)),...prices),margin=(hi0-lo0)*.08||1;
+ const lo=lo0-margin,hi=hi0+margin,range=hi-lo;
  const x=i=>i*step+step/2,y=v=>pad+(hi-v)/range*(h-pad*2);
- const t0=Date.parse(rows[0].time),t1=Date.parse(rows.at(-1).time),span=Math.max(1,t1-t0);
- const xAt=iso=>{const t=Date.parse(iso);return Math.max(0,Math.min(w,(t-t0)/span*w));};
- const candles=rows.map((r,i)=>{const o=Number(r.open),c=Number(r.close),up=c>=o,color=up?'var(--accent)':'var(--negative)';const bodyTop=y(Math.max(o,c)),bodyBot=y(Math.min(o,c));return `<line x1="${x(i).toFixed(1)}" x2="${x(i).toFixed(1)}" y1="${y(Number(r.high)).toFixed(1)}" y2="${y(Number(r.low)).toFixed(1)}" stroke="${color}" stroke-width="1"/><rect x="${(x(i)-step*.32).toFixed(1)}" y="${bodyTop.toFixed(1)}" width="${(step*.64).toFixed(1)}" height="${Math.max(1,bodyBot-bodyTop).toFixed(1)}" fill="${color}"/>`;}).join('');
- const line=(vals,color)=>{const pts=vals.map((v,i)=>v==null?null:`${x(i).toFixed(1)},${y(v).toFixed(1)}`).filter(Boolean);if(pts.length<2)return '';return `<polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="1.6" opacity=".85"/>`;};
- // Сделки как в терминале MT5: стрелка входа на цене входа (покупка — вверх,
- // под ценой; продажа — вниз, над ценой), кольцо выхода на цене выхода и
- // пунктир между ними — зелёный в плюс, красный в минус. Пунктир рисуем в
- // SVG, а стрелки и кольца — HTML-слоем в процентах: SVG растянут под ширину
- // экрана (preserveAspectRatio none), и фигуры в нём сплющивались бы в овалы
+ const xAt=iso=>(Date.parse(iso)-t0)/span*(w-step)+step/2;
  const pct=(v,of)=>(v/of*100).toFixed(2)+'%';
- // шкала цен справа и текущая цена, как в терминале: без них не видно, на
- // каком уровне был вход и где цена сейчас
+ // классические свечи: зелёная — рост, красная — падение, в любой гамме
+ const candles=rows.map((r,i)=>{const o=Number(r.open),c=Number(r.close),color=c>=o?'#26b87a':'#ef4f5f';const bodyTop=y(Math.max(o,c)),bodyBot=y(Math.min(o,c));return `<line x1="${x(i).toFixed(1)}" x2="${x(i).toFixed(1)}" y1="${y(Number(r.high)).toFixed(1)}" y2="${y(Number(r.low)).toFixed(1)}" stroke="${color}" stroke-width="1"/><rect x="${(x(i)-step*.34).toFixed(1)}" y="${bodyTop.toFixed(1)}" width="${(step*.68).toFixed(1)}" height="${Math.max(1,bodyBot-bodyTop).toFixed(1)}" fill="${color}"/>`;}).join('');
+ const line=(vals,color)=>{const pts=vals.map((v,i)=>v==null?null:`${x(i).toFixed(1)},${y(v).toFixed(1)}`).filter(Boolean);if(pts.length<2)return '';return `<polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="1.6" opacity=".85"/>`;};
+ // шкала цен справа и текущая цена, как в терминале
  const last=Number(rows.at(-1).close),grid=[.15,.38,.62,.85].map(f=>hi-range*f);
  const under=grid.map(v=>`<line class="price-grid" x1="0" x2="${w}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/>`).join('')
   +`<line class="price-now-line" x1="0" x2="${w}" y1="${y(last).toFixed(1)}" y2="${y(last).toFixed(1)}"/>`;
- let links='';
  const axis=grid.map(v=>`<span class="price-level" style="top:${pct(y(v),h)}">${number(v)}</span>`).join('')
   +`<span class="price-now" style="top:${pct(y(last),h)}">${number(last)}</span>`;
- let points='';
+ // Ось времени снизу и список сделок под графиком: на телефоне подсказки по
+ // наведению не работают — время и цены входа/выхода видны сразу. Время в
+ // данных уже МСК (как у сделок в списке), поэтому формат — в UTC
+ const long=span>36*3600e3,hm={hour:'2-digit',minute:'2-digit',timeZone:'UTC'};
+ const fmt=new Intl.DateTimeFormat('ru-RU',long?{day:'numeric',month:'short',timeZone:'UTC'}:hm);
+ const clock=new Intl.DateTimeFormat('ru-RU',hm),whenFmt=new Intl.DateTimeFormat('ru-RU',long?{day:'numeric',month:'short',...hm}:hm);
+ const when=iso=>whenFmt.format(new Date(iso));
+ // Сделки как в терминале MT5: стрелка входа на цене входа (покупка — синяя
+ // вверх под ценой, продажа — красная вниз над ценой), кольцо выхода, пунктир
+ // между ними цветом результата, тонкие линии вниз к оси времени. У каждой
+ // отметки подпись: вход — «Покупка 10:15», выход — сделка, которой позицию
+ // закрыли, «Продажа 11:30». Подписи — пока сделок в окне немного, иначе они
+ // налезают друг на друга; при отдалении остаются значки и список ниже.
+ // Стрелки, кольца и подписи — HTML-слоем в процентах: SVG растянут по
+ // ширине экрана (preserveAspectRatio none) и сплющивал бы фигуры в овалы
+ const tags=pairs.length<=6;
+ let links='',points='';
  for(const p of pairs){
-  const buy=p.side==='BUY',win=Number(p.net)>=0,cls=`${buy?'buy':'sell'} ${win?'win':'loss'}`,x2=xAt(p.out_time),y2=y(Number(p.out_price));
-  const tip=esc(`${buy?'Покупка':'Продажа'}${p.volume?` · ${number(p.volume)} лот`:''}${p.in_price!=null?` · вход ${number(p.in_price)}`:''} · выход ${number(p.out_price)} · ${money(p.net,'USD',true)}`);
-  if(p.in_time){const x1=xAt(p.in_time),y1=y(Number(p.in_price));
-   links+=`<line class="trade-link ${cls}" x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}"/>`;
-   points+=`<i class="trade-in price-marker ${cls}" style="left:${pct(x1,w)};top:${pct(y1,h)}" title="${tip}"></i>`;}
-  points+=`<i class="trade-out ${cls}" style="left:${pct(x2,w)};top:${pct(y2,h)}" title="${tip}"></i>`;
+  const buy=p.side==='BUY',win=Number(p.net)>=0,cls=`${buy?'buy':'sell'} ${win?'win':'loss'}`;
+  const opened=buy?'Покупка':'Продажа',closed=buy?'Продажа':'Покупка';
+  const tip=esc(`${opened}${p.volume?` · ${number(p.volume)} лот`:''}${p.in_price!=null?` · вход ${number(p.in_price)}`:''} · выход ${number(p.out_price)} · ${money(p.net,'USD',true)}`);
+  const x1=p.in_time?xAt(p.in_time):null,y1=p.in_time?y(Number(p.in_price)):null,x2=xAt(p.out_time),y2=y(Number(p.out_price));
+  if(x1!=null)links+=`<line class="trade-link ${cls}" x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}"/>`;
+  if(inView(p.in_time)){
+   links+=`<line class="trade-guide" x1="${x1.toFixed(1)}" x2="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" y2="${h}"/>`;
+   points+=`<i class="trade-in price-marker ${cls}" style="left:${pct(x1,w)};top:${pct(y1,h)}" title="${tip}"></i>`;
+   if(tags)points+=`<span class="trade-tag in ${buy?'buy':'sell'}${x1>w*.72?' edge':''}" style="left:${pct(x1,w)};top:${pct(y1,h)}">${opened} ${clock.format(new Date(p.in_time))}</span>`;
+  }
+  if(inView(p.out_time)){
+   links+=`<line class="trade-guide" x1="${x2.toFixed(1)}" x2="${x2.toFixed(1)}" y1="${y2.toFixed(1)}" y2="${h}"/>`;
+   points+=`<i class="trade-out ${cls}" style="left:${pct(x2,w)};top:${pct(y2,h)}" title="${tip}"></i>`;
+   // подпись выхода — с другой стороны от входа: у покупки выход (продажа)
+   // над кольцом, у продажи — под ним; у правого края — влево от отметки
+   if(tags)points+=`<span class="trade-tag out ${buy?'buy':'sell'} ${win?'win':'loss'}${x2>w*.72?' edge':''}" style="left:${pct(x2,w)};top:${pct(y2,h)}">${closed} ${clock.format(new Date(p.out_time))}</span>`;
+  }
  }
- return `<section class="panel price-chart-panel"><div class="panel-head"><div><span class="eyebrow">ЦЕНА · ${esc(data.symbol)}</span><h2>${esc(data.title||'График цены')}</h2></div><div class="price-legend"><span class="ma20">MA20</span><span class="ma50">MA50</span></div></div><div class="chart-wrap price-chart-wrap"><svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="Свечной график ${esc(data.symbol)} со сделками стратегии">${under}${candles}${line(ma20,'var(--purple)')}${line(ma50,'#e4bf7a')}${links}</svg><div class="trade-layer">${points}</div><div class="price-axis">${axis}</div></div><div class="chart-labels"><span>${date(rows[0].time,true)}</span><span>${countLabel(pairs.length,['сделка','сделки','сделок'])} на графике</span><span>${date(rows.at(-1).time,true)}</span></div></section>`;
+ const ticks=[0,.25,.5,.75,1].map(f=>{const i=Math.round(f*(n-1));return `<span style="left:${pct(x(i),w)}">${fmt.format(new Date(rows[i].time))}</span>`;}).join('');
+ const shown=[...pairs].reverse().slice(0,8);
+ const items=shown.map(p=>{const buy=p.side==='BUY',win=Number(p.net)>=0;return `<li class="${buy?'buy':'sell'} ${win?'win':'loss'}"><i class="trade-dot"></i><span class="trade-what">${buy?'Покупка':'Продажа'}${p.volume?` ${number(p.volume)}`:''}</span><span class="trade-when">${p.in_time?`${when(p.in_time)} <small>${number(p.in_price)}</small> → `:'… → '}${when(p.out_time)} <small>${number(p.out_price)}</small></span><b>${money(p.net,'USD',true)}</b></li>`;}).join('');
+ const list=items?`<div class="trade-list-head">${countLabel(pairs.length,['сделка','сделки','сделок'])} на графике${pairs.length>shown.length?` · последние ${shown.length}`:''}</div><ul class="trade-list">${items}</ul>`:'<div class="trade-list-head">В видимой части графика сделок нет</div>';
+ const plot=`<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="Свечной график ${esc(data.symbol)} со сделками стратегии">${under}${candles}${line(ma20,'var(--purple)')}${line(ma50,'#e4bf7a')}${links}</svg><div class="trade-layer">${points}</div><div class="price-axis">${axis}</div>`;
+ return {plot,ticks,list};
 }
+// Подписи сделок, налезающие на уже показанные или на край, прячем: их
+// размеры известны только после отрисовки. При приближении места больше —
+// подписи возвращаются; время и цены всегда есть в списке под графиком
+function declutterTags(){
+ const wrap=document.querySelector('.price-chart-wrap');if(!wrap)return;
+ const box=wrap.getBoundingClientRect(),kept=[];
+ const tags=[...wrap.querySelectorAll('.trade-tag')];
+ tags.forEach(t=>t.classList.remove('is-hidden'));
+ const rects=tags.map(t=>t.getBoundingClientRect());      // сначала все замеры, потом записи
+ tags.forEach((t,i)=>{const r=rects[i];
+  const clash=r.left<box.left||r.right>box.right-52||r.top<box.top||r.bottom>box.bottom
+   ||kept.some(k=>r.left<k.right+3&&r.right>k.left-3&&r.top<k.bottom+2&&r.bottom>k.top-2);
+  if(clash)t.classList.add('is-hidden');else kept.push(r);});
+}
+// Перерисовка только графика — при листании и масштабе. Контейнер
+// .price-chart-wrap не пересоздаётся: на нём держится захват пальца
+function redrawChart(){
+ const panel=document.querySelector('.price-chart-panel');
+ if(!panel||!panel.querySelector('.price-chart-wrap')||!(state.priceChart?.candles?.length>1))return;
+ const part=priceChartParts(state.priceChart);
+ panel.querySelector('.price-chart-wrap').innerHTML=part.plot;
+ panel.querySelector('.time-axis').innerHTML=part.ticks;
+ panel.querySelector('.trade-list-box').innerHTML=part.list;
+}
+let chartFrame=0;
+function scheduleChart(){if(!chartFrame)chartFrame=requestAnimationFrame(()=>{chartFrame=0;redrawChart();declutterTags();});}
+// масштаб вокруг точки: anchor — доля ширины графика под пальцем или курсором
+function chartZoom(factor,anchor=.5){
+ const v=chartView,center=v.start+anchor*v.count;
+ v.count=Math.max(Math.min(CHART_MIN,v.total),Math.min(v.total,v.count*factor));
+ v.start=center-anchor*v.count;
+ scheduleChart();
+}
+// Жесты: один палец или мышь — листать, два пальца — масштаб вокруг точки
+// между ними, колесо — масштаб вокруг курсора. Вертикальную прокрутку
+// страницы не трогаем (touch-action: pan-y в стилях)
+(function chartGestures(){
+ const fingers=new Map();let base=null;
+ const plotOf=wrap=>{const r=wrap.getBoundingClientRect();return {left:r.left,width:Math.max(1,r.width-52)};};
+ const snapshot=wrap=>{const pts=[...fingers.values()],p=plotOf(wrap);base={start:chartView.start,count:chartView.count,x:pts.reduce((a,b)=>a+b,0)/pts.length,dist:pts.length>1?Math.abs(pts[0]-pts[1]):0,...p};};
+ document.addEventListener('pointerdown',e=>{
+  const wrap=e.target.closest?.('.price-chart-wrap');if(!wrap||e.button>0)return;
+  fingers.set(e.pointerId,e.clientX);try{wrap.setPointerCapture(e.pointerId);}catch{}
+  snapshot(wrap);wrap.classList.add('is-dragging');
+ });
+ document.addEventListener('pointermove',e=>{
+  if(!fingers.has(e.pointerId)||!base)return;
+  fingers.set(e.pointerId,e.clientX);
+  const pts=[...fingers.values()],mid=pts.reduce((a,b)=>a+b,0)/pts.length,v=chartView;
+  if(pts.length>1&&base.dist>0){
+   const count=Math.max(Math.min(CHART_MIN,v.total),Math.min(v.total,base.count*base.dist/Math.max(1,Math.abs(pts[0]-pts[1]))));
+   const f=(base.x-base.left)/base.width;
+   v.count=count;v.start=base.start+f*base.count-f*count-(mid-base.x)/base.width*count;
+  }else v.start=base.start-(mid-base.x)/base.width*base.count;
+  scheduleChart();
+ });
+ const lift=e=>{
+  if(!fingers.delete(e.pointerId))return;
+  const wrap=document.querySelector('.price-chart-wrap');
+  if(fingers.size&&wrap)snapshot(wrap);else{base=null;wrap?.classList.remove('is-dragging');}
+ };
+ document.addEventListener('pointerup',lift);document.addEventListener('pointercancel',lift);
+ document.addEventListener('wheel',e=>{
+  const wrap=e.target.closest?.('.price-chart-wrap');if(!wrap)return;
+  e.preventDefault();const p=plotOf(wrap);
+  chartZoom(e.deltaY>0?1.15:1/1.15,Math.max(0,Math.min(1,(e.clientX-p.left)/p.width)));
+ },{passive:false});
+})();
 function stepChart(series){const v=series.map(p=>Number(p.capital)),n=v.length,min=Math.min(...v),max=Math.max(...v),range=max-min||1,x=i=>i/(n-1)*640,y=val=>128-(val-min)/range*100;let d=`M${x(0)},${y(v[0])}`;for(let i=1;i<n;i++)d+=` H${x(i)} V${y(v[i])}`;return `<div class="chart-wrap"><svg viewBox="0 0 640 150" preserveAspectRatio="none" role="img" aria-label="Изменение капитала стратегии"><path class="chart-area" d="${d} V150 H0Z"/><path class="chart-line" d="${d}"/>${v.map((val,i)=>`<circle cx="${x(i)}" cy="${y(val)}" r="3.5" fill="var(--accent)" stroke="var(--panel)" stroke-width="2"/>`).join('')}</svg></div><div class="chart-labels"><span>${date(series[0].time)}</span><span>${countLabel(n-1,['изменение','изменения','изменений'])}</span><span>${date(series.at(-1).time)}</span></div>`;}
 function capitalPanel(rep){const s=rep.capital_series||[];if(s.length<2)return '';const first=Number(s[0].capital),last=Number(s.at(-1).capital);return `<section class="panel capital-panel"><div class="panel-head"><div><span class="eyebrow">БАЛАНС СТРАТЕГИИ</span><h2>${money(last,rep.currency)}</h2></div><span class="result-pair ${signedClass(last-first)}"><b>${money(last-first,rep.currency,true)}</b>${first>0?`<small>${percent((last-first)/first*100)}</small>`:''}</span></div>${stepChart(s)}</section>`;}
 function siteMoves(rep){if(!rep.site_moves?.length)return '';return `<section class="panel site-moves"><div class="panel-head"><h2>На сайте Tag Markets</h2></div>${rep.site_moves.map(m=>`<article class="deal-row move-row in"><div class="deal-symbol"><span class="deal-icon move-in">${icon('up')}</span><div><b>Пополнение кабинета</b><small>${esc(date(m.time,true))} МСК</small></div></div><div class="deal-result"><span class="result-pair positive"><b>${money(m.amount,m.currency,true)}</b></span></div></article>`).join('')}</section>`;}
@@ -331,6 +446,7 @@ function render(){paintedKey='';nav();
  document.querySelectorAll('.segmented').forEach(strip=>{const active=strip.querySelector('.active');if(active)centering.push([strip,active.getBoundingClientRect().left-strip.getBoundingClientRect().left-(strip.clientWidth-active.clientWidth)/2]);});
  for(const [strip,shift] of centering)strip.scrollLeft+=shift;
  positionThumbs(prevThumbs);
+ if(document.querySelector('.trade-tag'))declutterTags();
 }
 function positionThumbs(prevThumbs=new Map()){
  const toAnimate=[];
@@ -608,6 +724,7 @@ document.addEventListener('click',async event=>{const el=event.target.closest('[
  else if(action==='share-accounts'){const g=state.people.guests.find(x=>x.id===el.dataset.guest),have=new Set(g.accounts.filter(a=>a.shared).map(a=>String(a.login))),list=(state.people.shareable||[]).filter(a=>!have.has(String(a.login)));const d=await dialog('Открыть счета гостю',`${list.map(a=>`<label class="check"><input name="login-${a.login}" type="checkbox">${esc(a.name)}${a.cabinet?` · ${esc(a.cabinet)}`:''}</label>`).join('')}<p class="stat-note">Гость увидит их только для просмотра.</p>`,'Открыть');if(d){const logins=Object.keys(d).filter(k=>k.startsWith('login-')).map(k=>Number(k.slice(6)));if(logins.length)await mutate('/guests/'+el.dataset.guest,{action:'share',logins});}}
  else if(action==='toast-close')$('#toast').classList.remove('visible');
  else if(action==='shortcut')await addShortcut();
+ else if(action==='chart-zoom'){const v=el.dataset.value;if(v==='reset'){chartView.key='';scheduleChart();}else chartZoom(v==='in'?.7:1/.7);}
  else if(action==='period'){if(state.period===el.dataset.value)return;state.period=el.dataset.value;state.offset=0;state.report=null;state.reportError='';if(state.period==='custom')render();else await showCached(el);}
  else if(action==='kind'){state.kind=el.dataset.value;state.offset=0;await showCached(el);}
  else if(action==='next'||action==='prev'){state.offset=Math.max(0,state.offset+(action==='next'?50:-50));await showCached();}

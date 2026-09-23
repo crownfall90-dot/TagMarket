@@ -217,6 +217,26 @@ def main():
                         return [...document.querySelectorAll('.trade-layer i')].every(el => { const r = el.getBoundingClientRect();
                             const cy = r.top + r.height / 2; return cy > box.top + 4 && cy < box.bottom - 4; }); }""")
                     assert inside, "отметки сделок вышли за график"
+                    # вход подписан «Покупка/Продажа», выход — сделкой, которой закрыли
+                    tags = page.locator('.trade-layer .trade-tag').all_inner_texts()
+                    assert any(t.startswith('Покупка') for t in tags) and any(t.startswith('Продажа') for t in tags), tags
+                    assert page.locator('.trade-list li').count() == 3
+                    assert page.locator('.time-axis span').count() == 5
+                    # масштаб и листание: окно свечей меняется, отметки остаются
+                    full = page.evaluate("chartView.count")
+                    page.locator('[data-action="chart-zoom"][data-value="in"]').click()
+                    page.wait_for_function("c => chartView.count < c", arg=full)
+                    zoomed_start = page.evaluate("chartView.start")
+                    page.locator('.price-chart-wrap').scroll_into_view_if_needed()
+                    box = page.locator('.price-chart-wrap').bounding_box()
+                    page.mouse.move(box["x"] + box["width"] * .3, box["y"] + box["height"] / 2)
+                    page.mouse.down()
+                    page.mouse.move(box["x"] + box["width"] * .6, box["y"] + box["height"] / 2, steps=5)
+                    page.mouse.up()
+                    page.wait_for_function("s => chartView.start < s", arg=zoomed_start)
+                    page.locator('[data-action="chart-zoom"][data-value="reset"]').click()
+                    page.wait_for_function("c => chartView.count === c", arg=full)
+                    assert page.locator('.price-chart-panel .trade-in').count() == 3
                     circle = page.locator('.trade-layer .trade-out').first.bounding_box()
                     assert abs(circle["width"] - circle["height"]) < 0.5, f"кольцо выхода сплющено: {circle}"
                     fits(page)
