@@ -119,6 +119,117 @@ ROLE = os.getenv("AGENT_ROLE", "primary").strip().lower()
 SESSION = uuid.uuid4().hex
 
 
+class _BoundAdapter(requests.adapters.HTTPAdapter):
+    """Соединения с исходного адреса конкретного сетевого адаптера."""
+
+    def __init__(self, ip: str) -> None:
+        self._ip = ip
+        super().__init__()
+
+    def init_poolmanager(self, *args, **kwargs):
+        kwargs["source_address"] = (self._ip, 0)
+        super().init_poolmanager(*args, **kwargs)
+
+
+def _physical_ips() -> list[str]:
+    """IPv4 физических адаптеров (Wi-Fi, Ethernet) — без туннелей VPN."""
+    if os.name != "nt":
+        return []
+    try:
+        r = _quiet_run(["powershell", "-NoProfile", "-Command",
+                        "Get-NetAdapter -Physical | Where-Object Status -eq Up | "
+                        "Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | "
+                        "Select-Object -ExpandProperty IPAddress"],
+                       capture_output=True, text=True, timeout=20)
+        return [ip for ip in r.stdout.split() if not ip.startswith("169.254.")]
+    except Exception as e:
+        log.warning("не получил адреса сетевых адаптеров: %s", e)
+        return []
+
+
+class _Net:
+    """Запросы к серверу в обход VPN, с запасными путями.
+
+    Живой инцидент: включённый VPN (Happ: туннель happ-default-tun плюс
+    системный прокси 127.0.0.1:10809) перестал пропускать соединения к
+    crownfail.shop — TLS зависал и через прокси, и напрямую (туннель
+    забирает весь трафик). Агент отпустил терминал и молчал, пока VPN не
+    выключили. Серверу VPN не нужен, поэтому по умолчанию ходим с адреса
+    физического адаптера (привязка исходного адреса уводит соединение мимо
+    туннеля) и без системного прокси (trust_env=False). Запасные пути —
+    обычное соединение и системный прокси, на случай если сайт доступен
+    только через VPN.
+
+    Путь выбирается пробным GET /status (безопасен для повтора) при первом
+    запросе и после любой сетевой ошибки. Сам упавший запрос повторяем на
+    новом пути только при ConnectionError — тогда он точно не дошёл; после
+    таймаута чтения мог дойти, поэтому его не повторяем, следующий круг
+    пойдёт уже новым путём.
+    """
+
+    # если сервер недоступен ни одним путём, перебираем их не чаще этого —
+    # иначе каждый запрос круга ждал бы таймауты всех путей подряд и круг
+    # растянулся бы дольше, чем сторож keeper.ps1 терпит без отметки
+    PROBE_COOLDOWN = 60
+
+    def __init__(self) -> None:
+        self._route: tuple[str, requests.Session] | None = None
+        self._next_probe = 0.0
+
+    @staticmethod
+    def _candidates() -> list[tuple[str, requests.Session]]:
+        routes = []
+        for ip in _physical_ips():
+            s = requests.Session()
+            s.trust_env = False
+            s.mount("https://", _BoundAdapter(ip))
+            s.mount("http://", _BoundAdapter(ip))
+            routes.append((f"через адаптер {ip} мимо VPN", s))
+        direct = requests.Session()
+        direct.trust_env = False
+        routes.append(("напрямую без прокси", direct))
+        routes.append(("через системный прокси", requests.Session()))
+        return routes
+
+    def _pick_route(self) -> tuple[str, requests.Session] | None:
+        if time.monotonic() < self._next_probe:
+            return None
+        for name, session in self._candidates():
+            try:
+                session.get(f"{SERVER}/status", timeout=(5, 8))
+            except requests.exceptions.RequestException:
+                continue
+            if self._route is None or self._route[0] != name:
+                log.info("сервер доступен %s — хожу так", name)
+            return name, session
+        self._next_probe = time.monotonic() + self.PROBE_COOLDOWN
+        return None
+
+    def request(self, method: str, url: str, **kwargs) -> requests.Response:
+        if self._route is None:
+            self._route = self._pick_route()
+        if self._route is None:
+            raise requests.exceptions.ConnectionError(f"сервер {SERVER} недоступен ни одним путём")
+        current = self._route
+        try:
+            return current[1].request(method, url, **kwargs)
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            self._route = self._pick_route()
+            if (isinstance(e, requests.exceptions.ConnectionError)
+                    and self._route is not None and self._route[0] != current[0]):
+                return self._route[1].request(method, url, **kwargs)
+            raise
+
+    def get(self, url: str, **kwargs) -> requests.Response:
+        return self.request("GET", url, **kwargs)
+
+    def post(self, url: str, **kwargs) -> requests.Response:
+        return self.request("POST", url, **kwargs)
+
+
+http = _Net()
+
+
 def claim_terminal() -> bool:
     """Never touch MT5 without an exclusive server-issued polling lease.
 
@@ -127,9 +238,9 @@ def claim_terminal() -> bool:
     Network errors and an older server both fail closed.
     """
     try:
-        response = requests.post(f"{SERVER}/agent/claim", headers={"X-Token": TOKEN},
-                                 json={"host": socket.gethostname(), "session": SESSION,
-                                       "role": ROLE}, timeout=15)
+        response = http.post(f"{SERVER}/agent/claim", headers={"X-Token": TOKEN},
+                             json={"host": socket.gethostname(), "session": SESSION,
+                                   "role": ROLE}, timeout=15)
         response.raise_for_status()
         return response.json().get("granted") is True
     except Exception as exc:
@@ -157,7 +268,7 @@ def server_alive() -> bool:
     подождём следующего круга, а не бросаемся занимать терминал вслепую.
     """
     try:
-        r = requests.get(f"{SERVER}/status", timeout=15)
+        r = http.get(f"{SERVER}/status", timeout=15)
         r.raise_for_status()
         data = r.json()
         ago = data.get("sync_seconds_ago")
@@ -191,7 +302,7 @@ def sync_env() -> None:
     роль primary/standby) не трогаем — сервер их и не присылает.
     """
     try:
-        r = requests.get(f"{SERVER}/agent/env", headers={"X-Token": TOKEN}, timeout=15)
+        r = http.get(f"{SERVER}/agent/env", headers={"X-Token": TOKEN}, timeout=15)
         r.raise_for_status()
         remote = r.json()
     except Exception as e:
@@ -448,10 +559,10 @@ def _report_rollback(bad_commit: str, good_commit: str) -> None:
     """Сообщить серверу об автоматическом откате — основателю стоит знать,
     что сама машина заметила и исправила плохое обновление."""
     try:
-        requests.post(f"{SERVER}/agent/update_notify",
-                      json={"host": socket.gethostname(), "commit": good_commit,
-                           "rollback_from": bad_commit[:8]},
-                      headers={"X-Token": TOKEN}, timeout=15)
+        http.post(f"{SERVER}/agent/update_notify",
+                  json={"host": socket.gethostname(), "commit": good_commit,
+                       "rollback_from": bad_commit[:8]},
+                  headers={"X-Token": TOKEN}, timeout=15)
     except Exception as e:
         log.warning("не сообщил серверу об откате: %s", e)
 
@@ -472,8 +583,8 @@ def _confirm_update_ok() -> None:
 def _canary_age(commit: str) -> float | None:
     """Сколько секунд назад standby впервые отчитался об этом коммите (по данным сервера)."""
     try:
-        r = requests.get(f"{SERVER}/agent/update_status", params={"commit": commit},
-                         headers={"X-Token": TOKEN}, timeout=15)
+        r = http.get(f"{SERVER}/agent/update_status", params={"commit": commit},
+                     headers={"X-Token": TOKEN}, timeout=15)
         r.raise_for_status()
         return r.json().get("canary_age_seconds")
     except Exception as e:
@@ -484,9 +595,9 @@ def _canary_age(commit: str) -> float | None:
 def report_canary(commit: str) -> None:
     """standby отчитывается серверу: жив и работает на таком-то коммите."""
     try:
-        requests.post(f"{SERVER}/agent/update_report",
-                      json={"host": socket.gethostname(), "commit": commit},
-                      headers={"X-Token": TOKEN}, timeout=15)
+        http.post(f"{SERVER}/agent/update_report",
+                  json={"host": socket.gethostname(), "commit": commit},
+                  headers={"X-Token": TOKEN}, timeout=15)
     except Exception as e:
         log.warning("не отчитался о коммите: %s", e)
 
@@ -499,10 +610,10 @@ def report_update_blocked(reason: str) -> None:
     рабочая копия — можно было узнать только зайдя на сам компьютер.
     """
     try:
-        requests.post(f"{SERVER}/agent/update_report",
-                      json={"host": socket.gethostname(), "blocked": reason[:120],
-                            "commit": _local_commit() or "unknown"},
-                      headers={"X-Token": TOKEN}, timeout=15)
+        http.post(f"{SERVER}/agent/update_report",
+                  json={"host": socket.gethostname(), "blocked": reason[:120],
+                        "commit": _local_commit() or "unknown"},
+                  headers={"X-Token": TOKEN}, timeout=15)
     except Exception as e:
         log.warning("не сообщил серверу о блокировке обновления: %s", e)
 
@@ -516,9 +627,9 @@ def send_heartbeat() -> None:
     а какой «компьютер», не храня список машин в своих настройках.
     """
     try:
-        requests.post(f"{SERVER}/agent/heartbeat",
-                      json={"host": socket.gethostname(), "role": ROLE},
-                      headers={"X-Token": TOKEN}, timeout=15)
+        http.post(f"{SERVER}/agent/heartbeat",
+                  json={"host": socket.gethostname(), "role": ROLE},
+                  headers={"X-Token": TOKEN}, timeout=15)
     except Exception as e:
         log.warning("не отправил heartbeat: %s", e)
 
@@ -750,9 +861,9 @@ def notify_role_change(became: str) -> None:
     """Сообщить серверу о смене роли — сам Telegram-токен агенту не нужен,
     сервер уже держит его для всех остальных уведомлений и разошлёт сам."""
     try:
-        requests.post(f"{SERVER}/agent/role_change",
-                      json={"host": socket.gethostname(), "session": SESSION, "became": became},
-                      headers={"X-Token": TOKEN}, timeout=15)
+        http.post(f"{SERVER}/agent/role_change",
+                  json={"host": socket.gethostname(), "session": SESSION, "became": became},
+                  headers={"X-Token": TOKEN}, timeout=15)
     except Exception as e:
         log.warning("не сообщил серверу о смене роли: %s", e)
 
@@ -763,9 +874,9 @@ def notify_update(commit: str) -> None:
     Сервер сам решает, слать ли это основателю в Telegram (настройка
     update_alerts в боте) — агенту про неё знать не нужно."""
     try:
-        requests.post(f"{SERVER}/agent/update_notify",
-                      json={"host": socket.gethostname(), "commit": commit},
-                      headers={"X-Token": TOKEN}, timeout=15)
+        http.post(f"{SERVER}/agent/update_notify",
+                  json={"host": socket.gethostname(), "commit": commit},
+                  headers={"X-Token": TOKEN}, timeout=15)
     except Exception as e:
         log.warning("не сообщил серверу об обновлении: %s", e)
 
@@ -796,8 +907,8 @@ def _retry_request(fn, *, retries: int = 3, backoff: float = 3.0):
 
 def fetch_accounts() -> list[dict]:
     def _do():
-        r = requests.get(f"{SERVER}/agent/accounts", headers={"X-Token": TOKEN,
-                         "X-Agent-Host": socket.gethostname(), "X-Agent-Session": SESSION}, timeout=10)
+        r = http.get(f"{SERVER}/agent/accounts", headers={"X-Token": TOKEN,
+                     "X-Agent-Host": socket.gethostname(), "X-Agent-Session": SESSION}, timeout=10)
         r.raise_for_status()
         return r.json()
     return _retry_request(_do)
@@ -805,8 +916,8 @@ def fetch_accounts() -> list[dict]:
 
 def push(payload: dict) -> int:
     def _do():
-        r = requests.post(f"{SERVER}/agent/sync", json=payload,
-                          headers={"X-Token": TOKEN}, timeout=10)
+        r = http.post(f"{SERVER}/agent/sync", json=payload,
+                      headers={"X-Token": TOKEN}, timeout=10)
         r.raise_for_status()
         return r.json().get("new", 0)
     return _retry_request(_do)
@@ -825,8 +936,8 @@ def push_candles(since: datetime, until: datetime) -> int:
                     trades.CHART_SYMBOL, since, until)
         return 0
     def _do():
-        r = requests.post(f"{SERVER}/agent/candles", json={"candles": rows},
-                          headers={"X-Token": TOKEN}, timeout=15)
+        r = http.post(f"{SERVER}/agent/candles", json={"candles": rows},
+                      headers={"X-Token": TOKEN}, timeout=15)
         r.raise_for_status()
         return r.json().get("new", 0)
     return _retry_request(_do)
