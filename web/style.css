@@ -605,3 +605,15 @@ body.onboarding-only .workspace{padding-bottom:24px}
 .resume-banner>div{flex:1;min-width:0}
 .resume-banner b{display:block;font-size:14px}
 .resume-banner small{color:var(--muted);font-size:11.5px}
+
+/* ── Значки цветовой гаммы: мини-превью, выбранная — своим цветом ─────────── */
+.scheme{position:relative;transition:border-color .25s,box-shadow .25s,transform .2s cubic-bezier(.22,1,.36,1)}
+.scheme:hover{transform:translateY(-2px)}
+.scheme:active{transform:scale(.97)}
+.scheme svg.swatch{width:100%;height:auto;border:0;border-radius:10px;display:block;box-shadow:0 6px 16px -8px #000c;stroke:none;stroke-width:0}
+.scheme.active{border-color:var(--sw);box-shadow:0 0 0 1px var(--sw),0 10px 26px -12px var(--sw)}
+.scheme.active b{color:var(--sw)}
+.scheme-check{position:absolute;top:-7px;right:-7px;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;background:var(--sw);color:#111416;box-shadow:0 0 0 3px var(--panel);opacity:0;transform:scale(.4);transition:opacity .25s,transform .3s cubic-bezier(.34,1.56,.64,1)}
+.scheme-check svg{width:13px;height:13px;stroke-width:3}
+.scheme.active .scheme-check{opacity:1;transform:scale(1)}
+@media(prefers-reduced-motion:reduce){.scheme,.scheme-check{transition:none}.scheme:hover{transform:none}}
