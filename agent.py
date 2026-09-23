@@ -306,12 +306,25 @@ def _remote_commit_host(commit: str) -> str | None:
     return None
 
 
+_running_commit = None
+
+
 def _local_commit() -> str | None:
-    try:
-        return _run_git("rev-parse", "HEAD")
-    except Exception as e:
-        log.warning("не прочитал текущий коммит: %s", e)
-        return None
+    """Коммит, на котором запущен ЭТОТ процесс, а не текущий HEAD папки.
+
+    Агент ноутбука работает из той же папки, где коммитят: после commit+push
+    HEAD уже совпадал с GitHub, процесс на старом коде считал себя актуальным
+    и не перезапускался никогда (23.09.2026 — с утра без свечей). Код меняется
+    только рестартом, поэтому первое прочитанное значение верно до конца жизни
+    процесса — и для сравнения с GitHub, и для отметки last_good_commit.
+    """
+    global _running_commit
+    if _running_commit is None:
+        try:
+            _running_commit = _run_git("rev-parse", "HEAD")
+        except Exception as e:
+            log.warning("не прочитал текущий коммит: %s", e)
+    return _running_commit
 
 
 # --- Автоматический откат плохого обновления -------------------------------
