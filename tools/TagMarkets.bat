@@ -79,7 +79,7 @@ goto menu
 :all_on
 echo.
 echo   Включаю бота на сервере...
-%SSH% "systemctl enable --now tagmarkets-bot"
+%SSH% "systemctl enable --now tagmarkets-webhook"
 if errorlevel 1 echo   ! сервер не отвечает по SSH
 echo   Включаю агента, он поднимет терминал сам...
 %PS% -Command "Enable-ScheduledTask -TaskName TagMarketsAgent | Out-Null; Start-ScheduledTask -TaskName TagMarketsAgent"
@@ -91,7 +91,7 @@ exit /b
 :all_off
 echo.
 echo   Останавливаю бота...
-%SSH% "systemctl disable --now tagmarkets-bot"
+%SSH% "systemctl disable --now tagmarkets-webhook"
 echo   Останавливаю агента...
 %PS% -Command "Stop-ScheduledTask -TaskName TagMarketsAgent; Disable-ScheduledTask -TaskName TagMarketsAgent | Out-Null"
 echo   Закрываю терминал...
@@ -103,7 +103,7 @@ exit /b
 
 :all_restart
 echo.
-%SSH% "systemctl restart tagmarkets-bot"
+%SSH% "systemctl restart tagmarkets-webhook"
 %PS% -Command "Stop-ScheduledTask -TaskName TagMarketsAgent; Start-Sleep 3; Enable-ScheduledTask -TaskName TagMarketsAgent | Out-Null; Start-ScheduledTask -TaskName TagMarketsAgent"
 echo   Перезапущено.
 timeout /t 4 >nul
@@ -111,7 +111,7 @@ exit /b
 
 :bot
 echo.
-%SSH% "systemctl %1 %2 tagmarkets-bot"
+%SSH% "systemctl %1 %2 tagmarkets-webhook"
 if errorlevel 1 (echo   ! Сервер не отвечает по SSH. Перезапусти его в панели FirstByte.) else (echo   Готово.)
 timeout /t 4 >nul
 exit /b
@@ -138,7 +138,7 @@ exit /b
 :botlog
 cls
 echo === лог бота на сервере ===
-%SSH% "journalctl -u tagmarkets-bot -n 25 --no-pager"
+%SSH% "journalctl -u tagmarkets-webhook -n 25 --no-pager"
 if errorlevel 1 echo   Нет связи по SSH.
 echo.
 pause

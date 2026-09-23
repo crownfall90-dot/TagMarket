@@ -27,7 +27,16 @@ FILES = {"accounts.py", "account_lock.py", "agent.py", "bot.py", "coordination.p
          # картинки раздела «Частые вопросы» (в откате — необязательные)
          "web/faq-neo-card.jpg", "web/faq-neo-stats.jpg", "web/faq-sonic-card.jpg",
          "web/faq-sonic-stats.jpg", "web/faq-license.jpg", "web/faq-mt5.jpg", "web/faq-neo-myfxbook.jpg"}
-SERVICES = ["tagmarkets-bot", "tagmarkets-webhook"]
+SERVICES = ["tagmarkets-webhook"]
+# До 23.09.2026 бот был отдельной службой; теперь он работает в процессе
+# вебхука (aiogram грузится один раз — минус ~150 МБ). Прежнюю службу гасим,
+# а при возврате на код без встроенного бота — поднимаем: бот нужен ровно один.
+OLD_BOT = "tagmarkets-bot"
+
+
+def old_bot_service() -> None:
+    embedded = "await bot.main()" in (ROOT / "webhook_server.py").read_text(encoding="utf-8")
+    subprocess.run(["systemctl", "disable" if embedded else "enable", "--now", OLD_BOT], check=False)
 # Выкладка идёт автоматически после каждого слияния в main (см.
 # .github/workflows/deploy.yml), и снимки с копиями баз копились бы без
 # предела. Откат предлагает последние 10 — храним с запасом; ежедневные
@@ -115,7 +124,8 @@ def main():
         migrated_accounts = True
         run(python, "-c", "from dotenv import load_dotenv; load_dotenv('.env'); import accounts; accounts.migrate_passwords()", cwd=ROOT)
         set_key(str(ROOT / ".env"), "MINI_APP_URL", "https://crownfail.shop/tagmarkets/app/")
-        run("systemctl", "start", "tagmarkets-webhook", "tagmarkets-bot")
+        old_bot_service()
+        run("systemctl", "start", *SERVICES)
         port = int(settings.get("WEBHOOK_PORT") or 8443)
         base = f"http://127.0.0.1:{port}"
         for attempt in range(15):
@@ -160,6 +170,7 @@ def main():
                     shutil.copy2(source, ROOT / source.relative_to(backup))
             if migrated_accounts and (backup / "accounts-before.json").is_file():
                 shutil.copy2(backup / "accounts-before.json", acc_path)
+            old_bot_service()
             run("systemctl", "restart", *SERVICES)
             print("Deployment rolled back; user databases were preserved", flush=True)
         raise

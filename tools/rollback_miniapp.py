@@ -20,7 +20,14 @@ from dotenv import dotenv_values
 
 ROOT = Path("/opt/tagmarkets")
 BACKUPS = ROOT / "backup"
-SERVICES = ("tagmarkets-bot", "tagmarkets-webhook")
+SERVICES = ("tagmarkets-webhook",)
+OLD_BOT = "tagmarkets-bot"      # см. old_bot_service() в deploy_miniapp.py
+
+
+def old_bot_service() -> None:
+    """Снимки до 23.09.2026 без встроенного бота — им нужна прежняя служба бота."""
+    embedded = "await bot.main()" in (ROOT / "webhook_server.py").read_text(encoding="utf-8")
+    subprocess.run(["systemctl", "disable" if embedded else "enable", "--now", OLD_BOT], check=False)
 VERSION = re.compile(r"\d{8}-\d{6}-miniapp\Z")
 FILES = (
     "accounts.py", "account_lock.py", "agent.py", "bot.py", "coordination.py",
@@ -142,11 +149,13 @@ def restore(version: str) -> None:
     try:
         run("systemctl", "stop", *SERVICES)
         copy_code(source, ROOT)
+        old_bot_service()
         run("systemctl", "start", *SERVICES)
         health()
     except Exception:
         run("systemctl", "stop", *SERVICES)
         copy_code(previous, ROOT)
+        old_bot_service()
         run("systemctl", "start", *SERVICES)
         health()
         print("Restore failed; previous code returned and services are healthy", flush=True)

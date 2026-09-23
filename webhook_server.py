@@ -4,7 +4,8 @@
 Дедуп общий с поллингом через ту же таблицу seen — что бы ни пришло первым,
 второе не продублируется (см. row_id() в bot.py: tx_id/customer_no).
 
-Запуск:  python webhook_server.py
+Запуск:  python webhook_server.py — это и есть служба сервера: в том же процессе
+работают Mini App, приём агентов и Telegram-бот (bot.main), служба tagmarkets-webhook.
 Слушает 0.0.0.0:$WEBHOOK_PORT (по умолчанию 8443) на путях:
   GET /hook/registration?token=...&customer_no={{customer_no}}&fname={{fname}}...
   GET /hook/deposit?token=...&customer_no={{customer_no}}&amount={{amount}}...
@@ -872,7 +873,12 @@ async def main():
     await site.start()
     log.info("слушаю 0.0.0.0:%s — токен в URL, см. .env WEBHOOK_TOKEN", PORT)
     try:
-        await asyncio.Event().wait()
+        # Бот живёт в этом же процессе (с 23.09.2026): aiogram — это ~115 МБ,
+        # и Mini App всё равно грузит его через bot.py, так что отдельная служба
+        # держала вторую копию. Конец бота — SIGTERM (aiogram ловит его сам)
+        # или падение — завершает процесс, systemd поднимает всё вместе
+        import bot
+        await bot.main()
     finally:
         await app["tg"].close()
         await runner.cleanup()
