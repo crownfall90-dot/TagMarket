@@ -121,6 +121,8 @@ def rapid_switching_stays_under_limit(page, nav):
     """Частые переключения разделов и периодов не упираются в лимит сервера
     (120 запросов в минуту): раньше каждое нажатие тянуло до 4 запросов, и
     через ~30 переключений приходило «Слишком много запросов. Подождите минуту»."""
+    # фоновое обновление раз в 30-60 с — не переключение, в замер не входит
+    page.evaluate("clearInterval(refreshTimer)")
     page.evaluate("""() => { window.__calls = []; window.__origApi = window.__origApi || window.api; const real = window.__origApi;
         window.api = (...a) => { window.__calls.push(a[0]); return real(...a); }; }""")
     for _ in range(10):
@@ -159,6 +161,25 @@ def rapid_period_taps_load_once(page):
     assert len(reports) == 1 and "period=month" in reports[0], reports
     active = page.evaluate("document.querySelector('.segmented button.active').dataset.value")
     assert active == "month", f"на экране подсвечен {active}"
+
+
+def faq_opens_smoothly(page, url):
+    """«Частые вопросы»: вопрос раскрывается и закрывается с анимацией
+    высоты, скриншот открывается на весь экран."""
+    page.goto(url + "#faq", wait_until="domcontentloaded")
+    page.locator(".faq-page").wait_for()
+    item = page.locator(".faq-item").nth(1)          # «2. Верификация», закрыт
+    assert not item.evaluate("el => el.open")
+    item.locator("summary").click()
+    animating = item.evaluate("el => el.querySelector('.faq-body').getAnimations().length")
+    assert animating == 1, "вопрос открылся без анимации"
+    page.wait_for_function("el => el.open && !el.querySelector('.faq-body').getAnimations().length", arg=item.element_handle())
+    item.locator("summary").click()
+    assert item.evaluate("el => el.querySelector('.faq-body').getAnimations().length") == 1
+    page.wait_for_function("el => !el.open", arg=item.element_handle())
+    page.locator(".faq-shot").first.click()
+    page.locator("#dialog[open] .faq-full").wait_for()
+    close_dialog(page)
 
 
 def close_dialog(page):
@@ -245,8 +266,8 @@ def main():
                         page.screenshot(path=str(screenshots / "tagmarkets-mobile-overview-smoke.png"), full_page=True)
                     # частые вопросы о стратегии — отдельный экран с возвратом
                     page.locator('a.faq-link').click()
-                    page.locator('.strategy-faq').wait_for()
-                    assert page.locator('.faq-item').count() >= 8
+                    page.locator('.faq-page').wait_for()
+                    assert page.locator('.faq-item').count() >= 12
                     page.locator('a.back[href="#overview"]').click()
                     page.locator('.hero').wait_for()
 
@@ -259,6 +280,9 @@ def main():
                     rapid_taps_render_once(page, nav)
                     page.locator('.hero').wait_for()
                     rapid_switching_stays_under_limit(page, nav)
+                    faq_opens_smoothly(page, url)
+                    page.goto(url + "#overview", wait_until="domcontentloaded")
+                    page.locator('.hero').wait_for()
                     rapid_period_taps_load_once(page)
                     page.locator('.segmented button[data-value="today"]').first.click()
                     page.wait_for_function("!document.body.classList.contains('is-loading')")

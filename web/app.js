@@ -146,29 +146,85 @@ function sonicStrategyCard(){
  const heading=`<div class="strategy-card-head"><div><span class="eyebrow">НАША СТРАТЕГИЯ</span><h3>SONIC</h3></div><span class="strategy-chip">XAUUSD · золото</span></div>`;
  return `<section class="panel strategy-card strategy-full">${heading}<div class="strategy-facts"><span><b>1–2</b><small>сделки в день</small></span><span><b>0,2–0,5%</b><small>депозита на вход</small></span><span><b>30%</b><small>комиссия с прибыли</small></span></div><div class="risk-line">${icon('shield')}<p>Торговый баланс с плечом можно потерять полностью. Прошлые результаты не гарантируют будущих.</p></div><a href="#faq" class="button secondary wide faq-link">${icon('chevron')}<span class="button-label">Частые вопросы</span></a></section>`;
 }
-const STRATEGY_FAQ=[
- ['Как это работает',[
-  ['Что именно делает SONIC','Алгоритм торгует золотом (XAUUSD) на счёте Tag Markets Amplify: 1–2 сделки в день, вход 0,2–0,5% депозита за раз. Вы не торгуете сами — только пополняете счёт и следите за результатом здесь.'],
-  ['Почему именно золото','Золото — самый ликвидный и предсказуемый по волатильности инструмент, что позволяет держать риск на сделку небольшим и стабильным.'],
-  ['Что такое Amplify ×24','Брокер усиливает ваш торговый баланс плечом ×24: капитал = баланс счёта ÷ 24. Прибыль и убыток считаются от полного торгового баланса, поэтому итог для вашего капитала заметнее. Полные условия — на сайте брокера.','https://www.tagmarkets.com/amplify/','Условия Amplify'],
- ]],
- ['Деньги и комиссия',[
-  ['Где физически мои деньги','На вашем личном счёте MT5 у брокера Tag Markets (T.M. Financials Ltd) — не у нас и не в общем пуле. Вы можете запросить вывод в любой момент через кабинет брокера.'],
-  ['Какая комиссия и как она списывается','30% с прибыли, только когда стратегия заработала — без прибыли комиссии нет. Списывается автоматически на стороне брокера, в приложении видна отдельной строкой в «Движениях средств».'],
-  ['Можно ли потерять деньги','Да — торговый баланс с плечом можно потерять полностью, это не гарантированный доход. Прошлые результаты не обещают будущих.'],
- ]],
- ['Как начать',[
-  ['Что нужно, чтобы подключиться','Зарегистрироваться в партнёрском портале по вашей ссылке (раздел «Гости»), создать счёт Tag Markets, пополнить его и добавить сюда инвесторский пароль MT5 — дальше данные обновляются сами.'],
-  ['Можно попробовать без своих денег','Да, в приложении есть демо-счёт «Копитрейдинг 45k» — он показывает реальную динамику стратегии, но не входит в ваш капитал.'],
-  ['Где посмотреть мой счёт SONIC отдельно','В разделе «Счета» — там открытая история сделок и движений именно по нему.','#accounts','Мои счета'],
- ]],
- ['Брокер и лицензия',[
-  ['Кто такой брокер Tag Markets','Tag Markets — торговое название «T.M. Financials Ltd» (регистрационный номер C185265). Регулируется Комиссией по финансовым услугам (FSC) как инвестиционный дилер, лицензия № GB21026474.','https://www.tagmarkets.com/','Сайт брокера'],
-  ['При чём тут TM Financials SA','TM FINANCIALS SA (PTY) LTD (рег. № 2024/508189/07) — авторизованный поставщик финансовых услуг (FSP № 55237), регулируется Управлением по финансовому поведению (FSCA). Оказывает только маркетинговые услуги. Торговые счета ведёт, а торговые услуги и ликвидность предоставляет T.M. Financials Ltd.'],
- ]],
-];
-function strategyFaq(withHeading=true){return `<section class="panel strategy-faq">${withHeading?`<div class="panel-head"><h2>Частые вопросы</h2></div>`:''}${STRATEGY_FAQ.map(([group,items])=>`<div class="faq-group"><span class="eyebrow">${esc(group)}</span>${items.map(([q,a,href,label])=>`<details class="faq-item"><summary>${esc(q)}${icon('chevron')}</summary><p>${esc(a)}</p>${href?`<a class="text-link" href="${esc(href)}"${href.startsWith('#')?'':' target="_blank" rel="noopener"'}>${esc(label)} ${icon('arrow')}</a>`:''}</details>`).join('')}</div>`).join('')}</section>`;}
-function faqView(){return `<a href="#overview" class="text-link back">${icon('back')} Обзор</a><div class="page-head"><div><span class="eyebrow">SONIC</span><h1>Частые вопросы</h1></div></div>${strategyFaq(false)}`;}
+// Раздел «Частые вопросы»: стратегии, подключение по шагам, вывод, партнёрка,
+// MetaTrader 5, лицензия. Источник — инструкции канала (t.me/pro_procent1/523);
+// чужая реферальная ссылка и личные контакты оттуда не берутся — регистрация
+// идёт по партнёрской ссылке владельца этого кабинета
+const FAQ_IMG=(src,alt)=>`<button type="button" class="faq-shot" data-action="faq-image" data-src="${src}" data-alt="${esc(alt)}"><img src="${src}" alt="${esc(alt)}" loading="lazy" decoding="async"></button>`;
+function faqStrategy(name,tag,facts,text,shots,link){
+ return `<article class="faq-strategy"><div class="faq-strategy-head"><span class="faq-strategy-mark">${esc(tag)}</span><div><h3>${esc(name)}</h3><small>${esc(facts[0])}</small></div></div><ul class="faq-facts">${facts.slice(1).map(([k,v])=>`<li><small>${esc(k)}</small><b>${esc(v)}</b></li>`).join('')}</ul><p>${esc(text)}</p><div class="faq-shots">${shots.map(([s,a])=>FAQ_IMG(s,a)).join('')}</div>${link||''}</article>`;
+}
+function faqSteps(steps){return `<ol class="faq-steps">${steps.map(s=>`<li><span>${s}</span></li>`).join('')}</ol>`;}
+function faqItem(q,body,open=false){return `<details class="faq-item"${open?' open':''}><summary><span>${esc(q)}</span>${icon('chevron')}</summary><div class="faq-body">${body}</div></details>`;}
+function faqGroup(eyebrow,title,ico,items){return `<section class="panel faq-card"><div class="faq-card-head"><span class="faq-card-icon">${icon(ico)}</span><div><span class="eyebrow">${esc(eyebrow)}</span><h2>${esc(title)}</h2></div></div>${items}</section>`;}
+function faqView(){
+ const reg=state.data?.onboarding?.registration_url||'';
+ const ext=(href,label)=>`<a class="text-link" href="${esc(href)}" target="_blank" rel="noopener">${esc(label)} ${icon('arrow')}</a>`;
+ const code=v=>`<code class="faq-code">${esc(v)}</code>`;
+ const strategies=faqGroup('СТРАТЕГИИ','NEO и SONIC','chart',
+  faqStrategy('SONIC','XAU',['Алгоритм + трейдер · золото (XAUUSD)',['Подписчиков','140 000+'],['Доходность','~20% в месяц'],['Макс. просадка','0,26%'],['Прибыльных сделок','≈ 89%'],['Комиссия','30% от прибыли'],['Минимум','10 $']],
+   'Входит в сделку на 0,2–0,5% депозита, в среднем 1–2 сделки в день. Одиночные ордера с коротким стоп-лоссом и тейк-профитом, сделки не держит долго: зашёл — вышел.',
+   [['faq-sonic-card.jpg','Карточка стратегии SONIC в CopyX'],['faq-sonic-stats.jpg','Статистика SONIC: ROI, винрейт, просадка']])
+  +faqStrategy('NEO.FX','EUR',['Трейдер вручную · евро/доллар (EURUSD)',['Подписчиков','27 000+'],['Доходность','~10% в месяц'],['Макс. просадка','0,9%'],['Прибыльных сделок','≈ 88%'],['Комиссия','30% от прибыли'],['Депозитов','27 млн $+']],
+   'Строго одна сделка в день на 0,5% депозита, с коротким стоп-лоссом и тейк-профитом. В дни без подходящей ситуации на рынке пропускает торговлю. Очень консервативен: сохранность депозита важнее доходности.',
+   [['faq-neo-card.jpg','Карточка стратегии NEO.FX в CopyX'],['faq-neo-stats.jpg','Статистика NEO.FX: ROI, винрейт, просадка'],['faq-neo-myfxbook.jpg','Статистика NEO на myfxbook']],
+   `<div class="faq-links">${ext('https://www.myfxbook.com/members/WordSmithyFx/neofx/11800152','NEO на myfxbook с октября 2025')}${ext('https://www.myfxbook.com/members/WordSmithyFx/neo-fx/11779491','Тестовый период март–ноябрь 2025')}</div>`)
+  +`<p class="faq-note">Цифры — из карточек стратегий у брокера. Прошлые результаты не гарантируют будущих: торговый баланс с плечом можно потерять.</p>`);
+ const connect=faqGroup('КАК НАЧАТЬ','Подключение по шагам','plus',
+  faqItem('1. Регистрация',faqSteps([
+   'Откройте ссылку регистрации <b>в браузере</b> — скопируйте и вставьте, не открывайте из Telegram или WhatsApp.',
+   'Заполните все поля латиницей. Телефон и адрес не важны.',
+   'Подтвердите почту в письме от IB-портала и снова войдите в портал.',
+   'Нажмите «Tag Registration» — личный кабинет Tag Markets создастся сам, пароль придёт на ту же почту.',
+   '<b>Важно:</b> нажмите «Confirm Email» в письме от Tag Markets — только после этого регистрация завершена.'])
+   +(reg?`<a class="button primary faq-cta" href="${esc(reg)}" target="_blank" rel="noopener">Открыть регистрацию ${icon('arrow')}</a>`:'<p class="faq-note">Ссылку на регистрацию даст тот, кто вас пригласил.</p>'),true)
+  +faqItem('2. Верификация',`<p>После регистрации пройдите верификацию личности в кабинете Tag Markets — без неё недоступны пополнение и вывод.</p>`)
+  +faqItem('3. Пополнение и подключение к копитрейдингу',faqSteps([
+   'Зайдите на платформу Tag Markets и пополните депозит.',
+   'Вверху справа нажмите меню (четыре линии), пролистайте вниз и выберите «CopyX».',
+   `В поиске введите ${code('NEO')} и выберите NEO.FX (или SONIC).`,
+   'Нажмите «Details», затем «Connect».',
+   'В поле «Invest» введите сумму, которую хотите инвестировать.',
+   `Раскройте «Community Token», в поле «Code» введите ${code('#NEO')} и нажмите «Verify» — <b>это нужно для бонуса ×24</b>.`,
+   `В поле «HASH/GU-ID» введите ровно шесть нулей ${code('000000')} и нажмите «Submit».`,
+   'Отметьте две галочки и нажмите «Copy Now» — стратегия запущена.'])
+   +`<div class="faq-shots">${FAQ_IMG('faq-neo-card.jpg','Кнопка Connect в карточке стратегии')}</div>`)
+  +faqItem('Можно попробовать без своих денег',`<p>Да — в приложении есть демо-счёт «Копитрейдинг 45k». Он показывает реальную динамику стратегии, но не входит в ваш капитал.</p>`)
+  +faqItem('Как добавить свой счёт в это приложение',`<p>Добавьте счёт в разделе «Счета» с инвесторским паролем MT5 — дальше сделки и баланс обновляются сами.</p><a class="text-link" href="#accounts">Мои счета ${icon('arrow')}</a>`));
+ const money_=faqGroup('ДЕНЬГИ','Вывод и комиссия','accounts',
+  faqItem('Как вывести доход',`<p>Через кабинет брокера. Выбирайте сеть USDT BEP-20 — у неё минимальный порог.</p><ul class="faq-chips"><li><b>USDT BEP-20</b><small>от 10 $ · рекомендуем</small></li><li><b>USDT TRC-20</b><small>от 50 $</small></li></ul>${ext('https://portal.tagmarkets.com/','Кабинет Tag Markets')}`)
+  +faqItem('Какая комиссия',`<p>30% с прибыли — и только когда стратегия заработала. Списывается автоматически у брокера, в приложении видна отдельной строкой в «Движениях средств».</p>`)
+  +faqItem('Что такое Amplify ×24',`<p>Брокер усиливает торговый баланс плечом ×24: капитал = баланс счёта ÷ 24. Прибыль считается от полного торгового баланса, поэтому для вашего капитала она заметнее. Бонус включается кодом ${code('#NEO')} при подключении.</p>${ext('https://www.tagmarkets.com/amplify/','Условия Amplify')}`)
+  +faqItem('Где физически мои деньги',`<p>На вашем личном счёте MT5 у брокера Tag Markets — не у нас и не в общем пуле. Вывод можно запросить в любой момент через кабинет брокера.</p>`));
+ const partner=faqGroup('ПАРТНЁРАМ','Партнёрская программа','people',
+  faqItem('Где взять реферальную ссылку',`<p>IB Portal → Profile → Partner Referral Links.</p>${ext('https://exfusion.ibportal.io/profile','Открыть IB Portal')}`)
+  +faqItem('Когда выплачиваются вознаграждения',`<p>Вечером каждого воскресенья. Вывод — через кабинет Tag Markets, условия те же, что для дохода:</p><ul class="faq-chips"><li><b>USDT BEP-20</b><small>от 10 $</small></li><li><b>USDT TRC-20</b><small>от 50 $</small></li></ul>${ext('https://portal.tagmarkets.com/','Кабинет Tag Markets')}`));
+ const mt5=faqGroup('СДЕЛКИ','MetaTrader 5','chart',
+  faqItem('Где смотреть сделки и статистику счёта',`<div class="faq-split"><div><p>Логин и пароль от MT5 — в личном кабинете Tag Markets. Установите MetaTrader 5 и войдите — там все сделки и история счёта.</p><div class="faq-store"><a class="button secondary" href="https://apps.apple.com/ru/app/metatrader-5/id413251709" target="_blank" rel="noopener">iPhone ${icon('arrow')}</a><a class="button secondary" href="https://play.google.com/store/apps/details?id=net.metaquotes.metatrader5" target="_blank" rel="noopener">Android ${icon('arrow')}</a></div></div>${FAQ_IMG('faq-mt5.jpg','MetaTrader 5 в App Store')}</div>`));
+ const license=faqGroup('БРОКЕР','Tag Markets и лицензия','shield',
+  faqItem('Кто такой брокер Tag Markets',`<p>Tag Markets (tagmarkets.com) принадлежит T.M. Financials Ltd — компании, зарегистрированной на Маврикии (рег. № C185265). Регулируется Комиссией по финансовым услугам Маврикия (FSC) как инвестиционный дилер, лицензия № GB21026474. На рынке 3 года, около 700 000 клиентов.</p><div class="faq-shots">${FAQ_IMG('faq-license.jpg','Лицензия FSC Маврикия')}</div><div class="faq-links">${ext('https://opr.fscmauritius.org/ords/opr/r/fsc-opr/fsc-online-public-register-opr','Реестр лицензий FSC')}${ext('https://www.tagmarkets.com/','Сайт брокера')}</div>`)
+  +faqItem('При чём тут TM Financials SA',`<p>TM FINANCIALS SA (PTY) LTD (рег. № 2024/508189/07) — авторизованный поставщик финансовых услуг (FSP № 55237), регулируется FSCA. Оказывает только маркетинговые услуги; торговые счета и ликвидность — у T.M. Financials Ltd.</p>`));
+ return `<a href="#overview" class="text-link back">${icon('back')} Обзор</a><div class="page-head"><div><span class="eyebrow">СПРАВКА</span><h1>Частые вопросы</h1><p>Стратегии, подключение, вывод денег и лицензия брокера</p></div></div><div class="faq-page">${strategies}${connect}${money_}${partner}${mt5}${license}</div>`;
+}
+// скриншот проявляется, когда загрузился: до этого — тёмная заглушка в тон
+// карточки. Inline onload запрещён политикой безопасности — слушаем здесь
+document.addEventListener('load',e=>{if(e.target.matches?.('.faq-shot img'))e.target.classList.add('is-loaded');},true);
+// Плавное раскрытие вопросов в обе стороны: у <details> браузер открывает и
+// закрывает содержимое мгновенно, поэтому высоту анимируем сами
+document.addEventListener('click',event=>{
+ const summary=event.target.closest('.faq-item > summary');if(!summary)return;
+ const item=summary.parentElement,body=item.querySelector('.faq-body');if(!body||reducedMotion())return;
+ event.preventDefault();
+ if(item._anim){item._anim.cancel();item._anim=null;}
+ const opening=!item.open||item.classList.contains('is-closing');
+ const from=body.getBoundingClientRect().height;
+ if(opening){item.classList.remove('is-closing');item.open=true;}
+ else item.classList.add('is-closing');
+ const to=opening?body.scrollHeight:0;
+ const anim=body.animate([{height:`${from}px`,opacity:opening?Math.min(1,from/Math.max(1,to)):1},{height:`${to}px`,opacity:opening?1:0}],{duration:opening?340:260,easing:'cubic-bezier(.22,1,.36,1)'});
+ item._anim=anim;
+ anim.onfinish=()=>{item._anim=null;if(!opening){item.open=false;item.classList.remove('is-closing');}};
+});
 function sonicGuide(){return `<section class="panel license-card broker-card"><div class="license-card-head"><span class="license-icon">${icon('shield')}</span><div><span class="eyebrow">БРОКЕР И СЧЁТ</span><h2>Tag Markets</h2></div></div><p>Торговое название «T.M. Financials Ltd», регулируется FSC как инвестиционный дилер, лицензия № GB21026474.</p><div class="license-actions"><a class="button secondary" href="https://www.tagmarkets.com/" target="_blank" rel="noopener">Сайт брокера ${icon('arrow')}</a></div></section>`;}
 function compactStrategy(a){const name=a.strategy||a.name;const sonic=/sonic|sonik/i.test(name),neo=/neo/i.test(name);return `<section class="panel detail-strategy"><span class="eyebrow">СТРАТЕГИЯ СЧЁТА</span><div><h2>${esc(name)}</h2><span class="badge">${sonic?'XAUUSD':neo?'NEO':'MT5'}</span></div></section>`;}
 function chart(points,cur='USD',archived=false,scope='счёта'){if(!points?.length)return ['today','yesterday','week'].includes(state.period)&&isWeekendMsk()?chartEmpty(state.period):empty('Пока без сделок',`За выбранный период у ${scope} нет закрытых сделок.`);let total=0;const values=[0,...points.map(p=>total+=Number(p.value)||0)];const min=Math.min(...values),max=Math.max(...values),range=max-min||1;const coords=values.map((v,i)=>[i/(values.length-1)*640,140-(v-min)/range*120]);const d=coords.map((p,i)=>`${i?'L':'M'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ');return `<div class="chart-wrap"><svg viewBox="0 0 640 160" preserveAspectRatio="none" role="img" aria-label="Накопленный результат закрытых сделок: ${esc(money(total,cur))}"><defs><linearGradient id="chart-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#b6da88" stop-opacity=".18"/><stop offset="100%" stop-color="#b6da88" stop-opacity="0"/></linearGradient></defs>${[20,60,100,140].map(y=>`<path class="chart-grid" d="M0 ${y}H640"/>`).join('')}<path class="chart-area" d="${d} L640,160 L0,160Z"/><path class="chart-line" d="${d}"/><circle cx="640" cy="${coords.at(-1)[1]}" r="3" fill="var(--accent)" stroke="var(--panel)" stroke-width="2"/></svg></div><div class="chart-meta"><span>${archived?'Дат на графике':'Дней с результатом'} <b>${number(points.length)}</b></span><span>Пик <b>${money(max,cur,true)}</b></span><span>Итог <b class="${signedClass(total)}">${money(total,cur,true)}</b></span></div><div class="chart-labels"><span>${date(points[0].day)}</span><span>${archived?'Архив и сделки':'Закрытые сделки'} · ${esc(cur)}</span><span>${date(points.at(-1).day)}</span></div>`;}
@@ -724,6 +780,7 @@ document.addEventListener('click',async event=>{const el=event.target.closest('[
  else if(action==='share-accounts'){const g=state.people.guests.find(x=>x.id===el.dataset.guest),have=new Set(g.accounts.filter(a=>a.shared).map(a=>String(a.login))),list=(state.people.shareable||[]).filter(a=>!have.has(String(a.login)));const d=await dialog('Открыть счета гостю',`${list.map(a=>`<label class="check"><input name="login-${a.login}" type="checkbox">${esc(a.name)}${a.cabinet?` · ${esc(a.cabinet)}`:''}</label>`).join('')}<p class="stat-note">Гость увидит их только для просмотра.</p>`,'Открыть');if(d){const logins=Object.keys(d).filter(k=>k.startsWith('login-')).map(k=>Number(k.slice(6)));if(logins.length)await mutate('/guests/'+el.dataset.guest,{action:'share',logins});}}
  else if(action==='toast-close')$('#toast').classList.remove('visible');
  else if(action==='shortcut')await addShortcut();
+ else if(action==='faq-image'){await dialog(el.dataset.alt||'Скриншот',`<img class="faq-full" src="${esc(el.dataset.src)}" alt="${esc(el.dataset.alt||'')}">`,'Закрыть');}
  else if(action==='chart-zoom'){const v=el.dataset.value;if(v==='reset'){chartView.key='';scheduleChart();}else chartZoom(v==='in'?.7:1/.7);}
  else if(action==='period'){if(state.period===el.dataset.value)return;state.period=el.dataset.value;state.offset=0;state.report=null;state.reportError='';if(state.period==='custom')render();else await showCached(el);}
  else if(action==='kind'){state.kind=el.dataset.value;state.offset=0;await showCached(el);}

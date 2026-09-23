@@ -1097,9 +1097,13 @@ async def broadcast(request):
             media_path.unlink(missing_ok=True)
 
 
+# картинки раздела «Частые вопросы» — скриншоты стратегий, лицензии и MT5
+FAQ_IMAGES = ("faq-neo-card.jpg", "faq-neo-stats.jpg", "faq-sonic-card.jpg", "faq-sonic-stats.jpg", "faq-license.jpg", "faq-mt5.jpg", "faq-neo-myfxbook.jpg")
+
+
 async def static(request):
     name = request.match_info.get("file", "index.html") or "index.html"
-    if name not in ("index.html", "app.js", "style.css", "brand.svg", "preview.json"):
+    if name not in ("index.html", "app.js", "style.css", "brand.svg", "preview.json", *FAQ_IMAGES):
         raise web.HTTPNotFound()
     response = web.FileResponse(STATIC / name)
     response.headers["Cache-Control"] = "no-cache"

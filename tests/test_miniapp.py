@@ -1535,6 +1535,18 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         r = await self.client.get("/agent/accounts",headers={"X-Token":"agent-test"})
         self.assertEqual(len(await r.json()),0)
 
+    async def test_faq_images_are_served_and_nothing_else(self):
+        # картинки «Частых вопросов» отдаются, остальное из web/ — нет;
+        # каждая есть и в поставке выкладки, иначе на сервере была бы 404
+        import tools.deploy_miniapp as deploy
+        for name in miniapp.FAQ_IMAGES:
+            with self.subTest(name=name):
+                r = await self.client.get("/app/" + name)
+                self.assertEqual(r.status, 200)
+                self.assertEqual(r.headers["Content-Type"], "image/jpeg")
+                self.assertIn("web/" + name, deploy.FILES)
+        self.assertEqual((await self.client.get("/app/secret.jpg")).status, 404)
+
     async def test_public_demo_is_polled_even_when_owner_hides_it(self):
         # «Показывать общий счёт» у владельца пишет enabled в саму запись —
         # это остановило опрос для всех, и сделки перестали приходить

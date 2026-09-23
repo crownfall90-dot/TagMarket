@@ -23,7 +23,10 @@ FILES = {"accounts.py", "account_lock.py", "agent.py", "bot.py", "coordination.p
          "requirements.txt", "README.md", "docs/MINIAPP.md", "docs/todo.md", "web/index.html",
          "web/app.js", "web/style.css", "web/brand.svg", "web/preview.json", "tests/selfcheck.py",
          "tests/test_miniapp.py", "tools/deploy_miniapp.py", "tools/rollback_miniapp.py",
-         "tools/audit.py", "docs/AUDIT_HOWTO.md"}
+         "tools/audit.py", "docs/AUDIT_HOWTO.md",
+         # картинки раздела «Частые вопросы» (в откате — необязательные)
+         "web/faq-neo-card.jpg", "web/faq-neo-stats.jpg", "web/faq-sonic-card.jpg",
+         "web/faq-sonic-stats.jpg", "web/faq-license.jpg", "web/faq-mt5.jpg", "web/faq-neo-myfxbook.jpg"}
 SERVICES = ["tagmarkets-bot", "tagmarkets-webhook"]
 # Выкладка идёт автоматически после каждого слияния в main (см.
 # .github/workflows/deploy.yml), и снимки с копиями баз копились бы без

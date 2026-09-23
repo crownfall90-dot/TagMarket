@@ -516,3 +516,61 @@ body:not(.is-loading) #refresh svg{animation:refresh-settle .4s cubic-bezier(.3,
 @media(max-width:420px){.trade-list li{grid-template-columns:10px auto 1fr;row-gap:3px}.trade-list .trade-when{grid-column:2/4;grid-row:2}.trade-list b{grid-column:3;grid-row:1;justify-self:end}}
 
 .trade-layer .trade-tag.is-hidden{visibility:hidden}
+
+/* ── Частые вопросы ──────────────────────────────────────────────────────── */
+.faq-page{display:grid;gap:16px}
+.faq-card{padding:20px}
+.faq-card-head{display:flex;gap:12px;align-items:center;margin-bottom:10px}
+.faq-card-head h2{margin-top:2px}
+.faq-card-icon{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;flex-shrink:0;color:var(--accent);background:rgb(var(--accent-rgb) / .1);box-shadow:inset 0 0 0 1px rgb(var(--accent-rgb) / .22)}
+.faq-card-icon svg{width:20px;height:20px}
+/* вопрос: плавное раскрытие делает app.js, здесь — вид и поворот стрелки */
+.faq-card .faq-item{border-bottom:1px solid var(--line);padding:0}
+.faq-card .faq-item:last-child{border-bottom:0}
+.faq-item>summary{list-style:none;display:flex;justify-content:space-between;align-items:center;gap:12px;padding:15px 2px;cursor:pointer;font-weight:600;font-size:14px;-webkit-tap-highlight-color:transparent}
+.faq-item>summary::-webkit-details-marker{display:none}
+.faq-item>summary svg{width:16px;height:16px;flex-shrink:0;color:var(--muted);transition:transform .3s cubic-bezier(.22,1,.36,1),color .2s}
+.faq-item[open]:not(.is-closing)>summary svg{transform:rotate(90deg);color:var(--accent)}
+.faq-item>summary:active{opacity:.7}
+.faq-body{overflow:hidden;padding:0 2px}
+.faq-body>:last-child{margin-bottom:16px}
+.faq-body p{color:var(--muted);font-size:13px;line-height:1.55;margin:0 0 12px}
+.faq-body p b{color:var(--text)}
+/* шаги с номерами */
+.faq-steps{list-style:none;counter-reset:step;margin:2px 0 14px;padding:0;display:grid;gap:10px}
+.faq-steps li{counter-increment:step;display:grid;grid-template-columns:26px 1fr;gap:10px;align-items:start;font-size:13px;line-height:1.5;color:var(--muted)}
+.faq-steps li::before{content:counter(step);width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:700;color:#111416;background:var(--accent)}
+.faq-steps li b{color:var(--text)}
+.faq-code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;font-weight:700;color:var(--accent);background:rgb(var(--accent-rgb) / .1);border:1px solid rgb(var(--accent-rgb) / .3);border-radius:6px;padding:1px 6px;white-space:nowrap}
+.faq-cta{margin:4px 0 16px;width:100%;justify-content:center}
+.faq-note{font-size:11.5px!important;color:var(--muted);opacity:.85;margin-top:12px!important}
+.faq-links{display:flex;flex-wrap:wrap;gap:6px 18px;margin:4px 0 14px}
+.faq-chips{list-style:none;padding:0;margin:0 0 12px;display:flex;flex-wrap:wrap;gap:8px}
+.faq-chips li{border:1px solid var(--line);border-radius:10px;padding:8px 12px;background:var(--raised)}
+.faq-chips b{display:block;font-size:13px}
+.faq-chips small{color:var(--muted);font-size:11px}
+/* стратегии */
+.faq-strategy{border:1px solid var(--line);border-radius:16px;padding:16px;margin-top:12px;background:linear-gradient(160deg,rgb(var(--accent-rgb) / .05),transparent 55%)}
+.faq-strategy-head{display:flex;gap:12px;align-items:center}
+.faq-strategy-head h3{font-size:17px}
+.faq-strategy-head small{color:var(--muted);font-size:11.5px}
+.faq-strategy-mark{width:44px;height:44px;border-radius:13px;display:grid;place-items:center;font-weight:800;font-size:12px;letter-spacing:.04em;color:#111416;background:var(--accent);flex-shrink:0}
+.faq-facts{list-style:none;padding:0;margin:14px 0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.faq-facts li{background:var(--raised);border-radius:10px;padding:8px 10px;min-width:0}
+.faq-facts small{display:block;color:var(--muted);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.faq-facts b{display:block;font-size:13px;margin-top:2px;white-space:nowrap}
+@media(max-width:380px){.faq-facts{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.faq-strategy>p{color:var(--muted);font-size:13px;line-height:1.55;margin:0 0 12px}
+/* скриншоты: лента с прокруткой, по нажатию — на весь экран */
+.faq-shots{display:flex;gap:10px;overflow-x:auto;scroll-snap-type:x mandatory;padding-bottom:4px;margin-bottom:12px;scrollbar-width:none}
+.faq-shots::-webkit-scrollbar{display:none}
+.faq-shot{flex:0 0 auto;scroll-snap-align:start;padding:0;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--raised);min-width:120px;cursor:zoom-in;transition:transform .2s ease,border-color .2s}
+.faq-shot:active{transform:scale(.97)}
+.faq-shot:hover{border-color:rgb(var(--accent-rgb) / .5)}
+.faq-shot img{display:block;height:170px;width:auto;opacity:0;transition:opacity .35s ease}
+.faq-shot img.is-loaded{opacity:1}
+.faq-full{display:block;width:100%;height:auto;border-radius:12px}
+.faq-split{display:grid;grid-template-columns:1fr auto;gap:14px;align-items:start}
+.faq-split .faq-shot img{height:190px}
+.faq-store{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+@media(max-width:380px){.faq-split{grid-template-columns:1fr}}
