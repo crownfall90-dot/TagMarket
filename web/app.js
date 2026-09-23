@@ -459,15 +459,33 @@ const VIEW_NEEDS_DATA=view=>['overview','account','people'].includes(view)||(vie
 // из памяти, если свежее, иначе догружаем только отчёт раздела. Раньше каждое
 // такое нажатие перегружало всё (4 запроса), и частые переключения упирались
 // в лимит сервера — «Слишком много запросов. Подождите минуту»
-async function showCached(){
+// Данных в памяти нет: подсветка переезжает на нажатую кнопку сразу, а экран
+// со старыми цифрами стоит, пока не придёт новый отчёт, — одна перерисовка
+// вместо двух (каркас-заглушка, потом данные). Быстрые нажатия подряд
+// сливаются: грузится только последний выбор
+let choiceTimer=0;
+function markChoice(el){
+ const strip=el?.closest('.segmented');if(!strip)return;
+ const old=strip.querySelector('button.active'),prev=new Map();
+ if(old)prev.set([...strip.querySelectorAll('button')].map(b=>b.dataset.value||b.textContent).join('|'),{left:old.offsetLeft,width:old.offsetWidth});
+ strip.querySelectorAll('button').forEach(b=>b.classList.toggle('active',b===el));
+ positionThumbs(prev);
+}
+function showCached(el){
+ clearTimeout(choiceTimer);cancelLoads();
  const c=viewCache.get(viewKey());
  if(c&&Date.now()-c.at<refreshEvery()){state.report=c.report;state.reportError=c.reportError||'';if(state.view==='overview')state.priceChart=c.priceChart;render();return;}
- state.report=null;state.reportError='';render();
- await loadView();
+ if(!el?.closest('.segmented')){render();return loadView();}
+ markChoice(el);
+ document.body.classList.add('is-loading');
+ choiceTimer=setTimeout(loadView,220);
 }
+// Переключение отменяет загрузки, которые ещё в пути: иначе ответ по прежнему
+// периоду или разделу, пришедший позже, лёг бы под новую подпись
+function cancelLoads(){generation++;document.body.classList.remove('is-loading');}
 async function loadView(){
- const gen=++generation;document.body.classList.add('is-loading');
- try{const parts=await viewParts();if(gen!==generation)return;Object.assign(state,parts);remember();render();}
+ const gen=++generation,key=viewKey();document.body.classList.add('is-loading');
+ try{const parts=await viewParts();if(gen!==generation||key!==viewKey())return;Object.assign(state,parts);remember();render();}
  catch(error){if(gen===generation)toast('Не удалось обновить данные. Показаны последние полученные значения.');}
  finally{if(gen===generation)document.body.classList.remove('is-loading');}
 }
@@ -508,6 +526,7 @@ async function navigate(){
  const moved=next!==state.view||(!!login&&Number(login)!==state.login);
  // тот же раздел (повторное событие hashchange) — экран уже верный
  if(state.data&&!moved)return;
+ clearTimeout(choiceTimer);if(state.data)cancelLoads();
  if(state.filters[state.view])state.filters[state.view]={period:state.period,from:state.from,to:state.to};
  if(next!==state.view&&state.filters[next])Object.assign(state,state.filters[next]);
  state.view=next;
@@ -561,8 +580,8 @@ document.addEventListener('click',async event=>{const el=event.target.closest('[
  else if(action==='share-accounts'){const g=state.people.guests.find(x=>x.id===el.dataset.guest),have=new Set(g.accounts.filter(a=>a.shared).map(a=>String(a.login))),list=(state.people.shareable||[]).filter(a=>!have.has(String(a.login)));const d=await dialog('Открыть счета гостю',`${list.map(a=>`<label class="check"><input name="login-${a.login}" type="checkbox">${esc(a.name)}${a.cabinet?` · ${esc(a.cabinet)}`:''}</label>`).join('')}<p class="stat-note">Гость увидит их только для просмотра.</p>`,'Открыть');if(d){const logins=Object.keys(d).filter(k=>k.startsWith('login-')).map(k=>Number(k.slice(6)));if(logins.length)await mutate('/guests/'+el.dataset.guest,{action:'share',logins});}}
  else if(action==='toast-close')$('#toast').classList.remove('visible');
  else if(action==='shortcut')await addShortcut();
- else if(action==='period'){if(state.period===el.dataset.value)return;state.period=el.dataset.value;state.offset=0;state.report=null;state.reportError='';if(state.period==='custom')render();else await showCached();}
- else if(action==='kind'){state.kind=el.dataset.value;state.offset=0;await showCached();}
+ else if(action==='period'){if(state.period===el.dataset.value)return;state.period=el.dataset.value;state.offset=0;state.report=null;state.reportError='';if(state.period==='custom')render();else await showCached(el);}
+ else if(action==='kind'){state.kind=el.dataset.value;state.offset=0;await showCached(el);}
  else if(action==='next'||action==='prev'){state.offset=Math.max(0,state.offset+(action==='next'?50:-50));await showCached();}
  else if(action==='apply-period'){state.from=$('#from-date').value;state.to=$('#to-date').value;if(!state.from||!state.to||state.from>state.to)throw new Error('Укажите корректные даты начала и конца');await showCached();}
  else if(action==='add')await addAccount();

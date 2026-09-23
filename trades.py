@@ -418,7 +418,32 @@ def capital_around(row: dict) -> tuple[float, float]:
     return became - own, became
 
 
-def growth_pct(rows: list[dict], flows: list[dict] = None) -> float:
+def period_growth(rows: list[dict], flows: list[dict], archived=(), current: float = None) -> float:
+    """Доходность периода, %: живые сделки — growth_pct, свёрнутые месяцы —
+    процентом, сохранённым при свёртке; месяцы перемножаются, как в growth_all.
+
+    Единая мера для карточек, «Динамики», «По месяцам» и итогов дня. Раньше
+    отчёты делили сумму периода на один капитал (сегодняшний или на конец
+    месяца), а карточка «Этот месяц» — каждую сделку на капитал её момента;
+    при пополнении или выводе посреди месяца проценты расходились.
+    """
+    import calendar
+    g = 1.0
+    for m in archived:
+        if m.get("growth") is not None:
+            g *= 1 + m["growth"] / 100
+            continue
+        # старые свёртки процент не сохраняли (на сервере так у июня 2026):
+        # берём прибыль месяца к капиталу на его конец — не 0% и не к сегодняшнему
+        year, mon = map(int, m["month"].split("-"))
+        base = capital_at(datetime(year, mon, calendar.monthrange(year, mon)[1], 23, 59, 59),
+                          flows, current)
+        if base > 0:
+            g *= 1 + net_of_fee(mine((m.get("gross") or 0) + (m.get("platform") or 0))) / base
+    return (g * (1 + growth_pct(rows, flows, current) / 100) - 1) * 100
+
+
+def growth_pct(rows: list[dict], flows: list[dict] = None, current: float = None) -> float:
     """Доходность за период: доходности сделок к капиталу на их момент, сложенные.
 
     Складываем, а не перемножаем. Прибыль не остаётся на стратегии и не
@@ -434,7 +459,8 @@ def growth_pct(rows: list[dict], flows: list[dict] = None) -> float:
     closed = [r for r in rows if r["is_closing"]]
     if not closed:
         return 0.0
-    current = capital()         # один раз на весь период, а не на каждую сделку
+    if current is None:
+        current = capital()     # один раз на весь период, а не на каждую сделку
     total = 0.0
     for r in closed:
         base = capital_at(r["time"], flows, current)
@@ -1181,13 +1207,8 @@ def growth_all() -> float:
     """
     # месяцы перемножаются: между ними прибыль выводится и реинвестируется,
     # так что новый месяц стартует с уже изменившегося капитала
-    g = 1.0
-    for m in monthly(limit=1000):
-        if not m.get("_live") and m.get("growth") is not None:
-            g *= 1 + m["growth"] / 100
     live = fetch(REPORT_FROM, clock() + timedelta(days=1))
-    g *= 1 + growth_pct(live, live) / 100
-    return (g - 1) * 100
+    return period_growth(live, live, [m for m in monthly(limit=1000) if not m.get("_live")])
 
 
 def archived_before_now() -> tuple[float, int, int, int]:

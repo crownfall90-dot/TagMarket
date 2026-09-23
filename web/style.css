@@ -419,3 +419,24 @@ body:not(.is-loading) #refresh svg{animation:refresh-settle .4s cubic-bezier(.3,
    шапки Telegram, а не только от выреза экрана */
 #toast{z-index:50}
 #toast.has-event{top:calc(12px + max(env(safe-area-inset-top,0px),var(--tg-content-safe-area-inset-top,0px) + var(--tg-safe-area-inset-top,0px)))}
+
+/* ── Верхняя панель: чёткость и яркость ─────────────────────────────────
+   Надпись и знак терялись: серое «MARKETS», приглушённая подложка знака,
+   серые рамки кнопок на тёмном — панель читалась как фон, а не как шапка. */
+.topbar{background:rgb(var(--bg-rgb) / .9);border-bottom-color:transparent;
+ background-image:linear-gradient(90deg,transparent,rgb(var(--accent-rgb) / .35) 20%,rgb(var(--accent-rgb) / .35) 80%,transparent);
+ background-size:100% 1px;background-repeat:no-repeat;background-position:bottom}
+.brand-wordmark strong{color:#fff;font-weight:800;letter-spacing:.01em;text-shadow:0 0 18px rgb(var(--accent-rgb) / .25)}
+.brand-wordmark small{color:var(--accent);font-weight:700;opacity:1}
+@media(max-width:740px){
+ .brand-wordmark strong{font-size:16px}
+ .brand-wordmark small{font-size:8px;letter-spacing:.26em;color:var(--accent)}
+}
+.mobile-brandmark{background:rgb(var(--accent-rgb) / .2);box-shadow:inset 0 0 0 1px rgb(var(--accent-rgb) / .5),0 0 16px -2px rgb(var(--accent-rgb) / .45)}
+.mobile-brandmark .logo-halo{opacity:.7}
+.mobile-brandmark .logo-trend{stroke-width:5}
+.mobile-brandmark .logo-letter{stroke-width:4.6;opacity:1}
+.icon-btn{color:var(--text);border-color:rgb(255 255 255 / .16);background:rgb(255 255 255 / .04)}
+.icon-btn:hover{background:rgb(var(--accent-rgb) / .1)}
+.breadcrumb{color:var(--text);opacity:.75}
+.breadcrumb b{color:#fff;opacity:1}

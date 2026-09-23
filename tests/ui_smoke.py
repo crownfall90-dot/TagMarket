@@ -79,7 +79,7 @@ def revisit_is_instant(page, nav):
     """Возврат в раздел, где уже были, не ходит на сервер и не перерисовывает
     экран второй раз — раньше каждый переход заново тянул все данные."""
     page.evaluate("""() => { window.__calls = [];
-        const real = window.api;
+        window.__origApi = window.__origApi || window.api; const real = window.__origApi;
         window.api = (...a) => { window.__calls.push(a[0]); return real(...a); }; }""")
     page.locator(f'{nav} a[href="#accounts"]').click()
     page.locator('.account-list').first.wait_for()
@@ -121,7 +121,7 @@ def rapid_switching_stays_under_limit(page, nav):
     """Частые переключения разделов и периодов не упираются в лимит сервера
     (120 запросов в минуту): раньше каждое нажатие тянуло до 4 запросов, и
     через ~30 переключений приходило «Слишком много запросов. Подождите минуту»."""
-    page.evaluate("""() => { window.__calls = []; const real = window.api;
+    page.evaluate("""() => { window.__calls = []; window.__origApi = window.__origApi || window.api; const real = window.__origApi;
         window.api = (...a) => { window.__calls.push(a[0]); return real(...a); }; }""")
     for _ in range(10):
         page.locator(f'{nav} a[href="#accounts"]').click()
@@ -135,6 +135,30 @@ def rapid_switching_stays_under_limit(page, nav):
     calls = page.evaluate("window.__calls")
     # 40 нажатий: догружается только «Вчера» в первый раз (отчёт и график)
     assert len(calls) <= 4, f"{len(calls)} запросов на 40 нажатий: {calls}"
+
+
+def rapid_period_taps_load_once(page):
+    """Быстрые нажатия фильтров динамики: одна перерисовка и одна загрузка
+    последнего выбора. Раньше каждое нажатие давало две перерисовки (каркас,
+    потом данные) и свой запрос — динамика мигала много раз подряд."""
+    page.evaluate("""() => { viewCache.clear();
+        window.__realRender = window.render; window.__renders = 0;
+        window.render = (...a) => { window.__renders++; return window.__realRender(...a); };
+        window.__calls = []; window.__origApi = window.__origApi || window.api; const real = window.__origApi;
+        window.api = (...a) => { window.__calls.push(a[0]); return real(...a); }; }""")
+    for value in ("week", "yesterday", "month"):
+        page.locator(f'.segmented button[data-value="{value}"]').first.click()
+        page.wait_for_timeout(60)
+    page.wait_for_function("!document.body.classList.contains('is-loading')")
+    page.wait_for_timeout(300)
+    renders, calls, period = page.evaluate("[window.__renders, window.__calls, state.period]")
+    page.evaluate("window.render = window.__realRender")
+    reports = [c for c in calls if "/report?" in c]
+    assert period == "month", period
+    assert renders == 1, f"{renders} перерисовки на три быстрых нажатия"
+    assert len(reports) == 1 and "period=month" in reports[0], reports
+    active = page.evaluate("document.querySelector('.segmented button.active').dataset.value")
+    assert active == "month", f"на экране подсвечен {active}"
 
 
 def close_dialog(page):
@@ -176,9 +200,12 @@ def main():
                     today_result = result.inner_text()
                     page.locator('.chart-panel [data-action="period"][data-value="month"]').click()
                     page.locator('.chart-panel [data-action="period"][data-value="month"].active').wait_for()
+                    # подсветка переезжает сразу, цифры приходят следом — ждём загрузку
+                    page.wait_for_function("!document.body.classList.contains('is-loading')")
                     assert result.inner_text() != today_result
                     page.locator('.chart-panel [data-action="period"][data-value="today"]').click()
                     page.locator('.chart-panel [data-action="period"][data-value="today"].active').wait_for()
+                    page.wait_for_function("!document.body.classList.contains('is-loading')")
                     # график цены SONIC: свечи и отметки сделок
                     page.locator('.price-chart-panel svg').wait_for()
                     assert page.locator('.price-chart-panel .price-marker').count() == 4
@@ -202,6 +229,9 @@ def main():
                     rapid_taps_render_once(page, nav)
                     page.locator('.hero').wait_for()
                     rapid_switching_stays_under_limit(page, nav)
+                    rapid_period_taps_load_once(page)
+                    page.locator('.segmented button[data-value="today"]').first.click()
+                    page.wait_for_function("!document.body.classList.contains('is-loading')")
                     page.locator(f'{nav} a[href="#accounts"]').click()
                     page.locator('.account-list').first.wait_for()
                     glider_on_active(page, nav)

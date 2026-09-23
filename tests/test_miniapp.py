@@ -1131,8 +1131,13 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         # прибыль заработана на капитале 100, потом капитал вывели почти в ноль:
         # процент месяца должен остаться к капиталу того месяца, а не делиться
         # на сегодняшний остаток и превращаться в тысячи процентов
+        # growth NULL — как у старых свёрток на сервере (июнь 2026): процент
+        # считается запасным путём, к капиталу на конец месяца. Август хранит
+        # свой процент — он и должен показываться, как в ROI карточки
         self.tdb.execute("INSERT INTO months (login, month, trades, gross, platform, wins, losses, growth) "
-                         "VALUES (123, '2026-07', 2, 10, 0, 2, 0, 1.0)")
+                         "VALUES (123, '2026-07', 2, 10, 0, 2, 0, NULL)")
+        self.tdb.execute("INSERT INTO months (login, month, trades, gross, platform, wins, losses, growth) "
+                         "VALUES (123, '2026-08', 1, 5, 0, 1, 0, 4.25)")
         self.tdb.commit()
         store.save_deals(self.tdb, 123, [
             {"ticket": 90, "time": "2026-08-02T10:00:00", "is_balance": True, "is_closing": False,
@@ -1142,6 +1147,31 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         july = next(m for m in data["months"] if m["month"] == "2026-07")
         self.assertAlmostEqual(july["net"], 7)
         self.assertAlmostEqual(july["pct_capital"], 7.0, places=3)
+        august = next(m for m in data["months"] if m["month"] == "2026-08")
+        self.assertAlmostEqual(august["pct_capital"], 4.25, places=3)
+
+    async def test_card_and_dynamics_month_percent_agree(self):
+        # пополнение посреди месяца: сделка до него заработана на меньшем
+        # капитале. Карточка «Этот месяц» и «Динамика» за месяц раньше считали
+        # по-разному (сделка к капиталу её момента против суммы к сегодняшнему)
+        now = trades.clock()
+        first = now.replace(day=1, hour=10, minute=0, second=0, microsecond=0)
+        store.save_deals(self.tdb, 123, [
+            {"ticket": 501, "time": first, "symbol": "XAUUSD", "side": "buy", "net": 48,
+             "profit": 48, "swap": 0, "commission": 0, "volume": 0.1,
+             "is_closing": True, "is_opening": False, "is_balance": False},
+            {"ticket": 502, "time": first + timedelta(minutes=5), "is_balance": True,
+             "is_closing": False, "is_opening": False, "net": 2400.0, "volume": 0,
+             "comment": "Deposit"},
+            {"ticket": 503, "time": first + timedelta(minutes=10), "symbol": "XAUUSD", "side": "buy",
+             "net": 48, "profit": 48, "swap": 0, "commission": 0, "volume": 0.1,
+             "is_closing": True, "is_opening": False, "is_balance": False}])
+        store.save_state(self.tdb, 123, 4896, 4896, "USD", "Demo", 200)
+        data = await (await self.call("GET", "/api/accounts/123/report?period=month")).json()
+        acc = next(a for a in accounts.load(1) if int(a["login"]) == 123)
+        card = bot.account_totals(acc)["month_pct"]
+        self.assertAlmostEqual(data["summary"]["pct_capital"], card, places=2)
+        self.assertAlmostEqual(data["insights"]["month"]["pct_capital"], card, places=2)
 
     async def test_invites_shared_accounts_and_revoke(self):
         partner.kv_set(self.db, "partner_link:1", "")
