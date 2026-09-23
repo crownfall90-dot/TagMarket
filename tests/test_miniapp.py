@@ -1535,6 +1535,15 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         r = await self.client.get("/agent/accounts",headers={"X-Token":"agent-test"})
         self.assertEqual(len(await r.json()),0)
 
+    async def test_public_demo_is_polled_even_when_owner_hides_it(self):
+        # «Показывать общий счёт» у владельца пишет enabled в саму запись —
+        # это остановило опрос для всех, и сделки перестали приходить
+        accounts.add({**self.acc, "login": 456, "name": "Demo", "strategy": "Demo", "demo": True})
+        r = await self.call("PATCH", "/api/accounts/456", json={"enabled": False})
+        self.assertEqual(r.status, 200, await r.text())
+        r = await self.client.get("/agent/accounts", headers={"X-Token": "agent-test"})
+        self.assertIn(456, [int(a["login"]) for a in await r.json()])
+
     async def test_guest_cannot_toggle_shared_account_polling(self):
         accounts.share([123],1,2)
         r = await self.call("PATCH", "/api/accounts/123", uid=2, json={"enabled": False})
