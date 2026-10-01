@@ -860,20 +860,34 @@ def push_candles(since: datetime, until: datetime) -> int:
     return _retry_request(_do)
 
 
+def _restart_terminal() -> None:
+    result = _quiet_run(["taskkill", "/F", "/IM", "terminal64.exe"],
+                        capture_output=True, text=True, timeout=15)
+    if not result.returncode:
+        time.sleep(3)
+    # taskkill also fails when no terminal exists; trades.use() can start it.
+    listed = _quiet_run(["tasklist", "/FI", "IMAGENAME eq terminal64.exe",
+                         "/FO", "CSV", "/NH"],
+                        capture_output=True, text=True, timeout=15)
+    if listed.returncode or "terminal64.exe" in listed.stdout.casefold():
+        raise RuntimeError("terminal64.exe is still running after taskkill")
+    trades._current = ""                # заставить переоткрыть терминал
+
+
 def collect(acc: dict) -> dict:
     """Состояние счёта и его сделки. Первый раз — вся история, потом только новые."""
     done = False
+    command_id = None
     if acc.get("command") == "restart_terminal":
         # кнопка «запустить» из бота: убиваем терминал и поднимаем заново
         log.info("%s: команда перезапуска терминала", acc["name"])
         try:
-            _quiet_run(["taskkill", "/F", "/IM", "terminal64.exe"],
-                      capture_output=True, timeout=15)
-            time.sleep(3)
-            trades._current = ""            # заставить переоткрыть терминал
+            _restart_terminal()
         except Exception as e:
-            log.warning("не убил терминал: %s", e)
-        done = True
+            log.warning("не выполнил команду перезапуска терминала: %s", e)
+        else:
+            done = True
+            command_id = acc.get("command_id")
 
     trades.use(acc)
     info = trades.account()
@@ -907,6 +921,7 @@ def collect(acc: dict) -> dict:
         "holder": getattr(info, "name", "") or "",
         "deals": [{**d, "time": d["time"].isoformat()} for d in deals],
         "command_done": done,       # сервер снимет команду после выполнения
+        "command_id": command_id,
         "host": socket.gethostname(),
         "role": ROLE,
         "session": SESSION,

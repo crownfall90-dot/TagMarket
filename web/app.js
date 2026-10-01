@@ -68,7 +68,7 @@ function nav(){
   root.querySelectorAll('a[data-tab]').forEach(link=>{const on=link.dataset.tab===active;link.classList.toggle('active',on);if(on)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');});
   moveGlider(root);
  }
- const crumb=$('#crumb'),title=state.view==='account'?'Счета / Счёт':state.view==='faq'?'Частые вопросы':tabs.find(([id])=>id===state.view)?.[1]||'Счёт';
+ const crumb=$('#crumb'),title=state.view==='account'?'Счета / Счёт':state.view==='faq'?'Частые вопросы':state.view==='onboarding'?'Как добавить свой счёт':tabs.find(([id])=>id===state.view)?.[1]||'Счёт';
  // анимируем только настоящую смену: render() идёт и на фоновом обновлении,
  // где заголовок тот же и мигать ему незачем
  if(crumb.textContent!==title){
@@ -99,7 +99,7 @@ function moveGlider(root,instant=false){
 }
 // Порядок разделов для направления перехода: вглубь и вправо по панели —
 // новый экран въезжает справа, назад — слева
-const VIEW_ORDER={overview:0,faq:.5,accounts:1,account:1.5,people:2,settings:3};
+const VIEW_ORDER={overview:0,onboarding:.25,faq:.5,accounts:1,account:1.5,people:2,settings:3};
 // Въезд — CSS-классом, который снимается по окончании: после WAAPI-анимации
 // transform Chromium держал устаревшую карту попаданий, и первое нажатие в
 // новом разделе уходило «мимо» кнопки, пока стиль #main не изменится
@@ -249,45 +249,29 @@ function dayExtremes(points,capital,cur){const rows=(points||[]).filter(p=>Numbe
 function timeMsk(value){return `${String(value||'').slice(11,16)} МСК`;}
 function periodBar(){return `<section class="report-controls panel"><div class="report-control report-period">${periodTabs()}</div></section>${customDates()}`;}
 function customDates(){return state.period==='custom'?`<div class="custom-period"><div class="field-row"><label class="field">С даты<input type="date" id="from-date" value="${esc(state.from)}"></label><label class="field">По дату<input type="date" id="to-date" value="${esc(state.to)}"></label></div>${button('apply-period','Показать результат','secondary small')}</div>`:'';}
-// Новичок без своих счетов видит один экран — пошаговое подключение; панель
-// разделов скрыта. «Зарегистрируюсь позже» открывает всё приложение: общий
-// счёт и счета, которыми поделился пригласивший. Свой счёт добавлен —
-// экран больше не показывается
-function onboardingOnly(){const o=state.data?.onboarding;return !!(o?.needed&&!o?.later);}
+// Инструкция открывается только явным переходом на отдельный экран.
+function onboardingOnly(){return state.view==='onboarding';}
 function welcomeView(){
- const d=state.data,o=d.onboarding||{},p=o.progress||{},reg=o.registration_url||'';
- const keys=['registered','verified','broker_account'],done=keys.filter(k=>p[k]).length;
- const current=keys.findIndex(k=>!p[k]),now=current<0?3:current;
- const step=(i,title,sub,body)=>{const ok=i<3&&!!p[keys[i]],active=i===now;
-  return `<details class="faq-item welcome-step${ok?' is-done':''}${active?' is-current':''}"${active?' open':''}><summary><span class="welcome-num">${ok?'✓':i+1}</span><span class="welcome-title"><b>${title}</b><small>${sub}</small></span>${icon('chevron')}</summary><div class="faq-body">${body}</div></details>`;};
- const next=(key,label)=>p[key]?`<p class="welcome-done">${icon('check')} Готово</p>`:button('onboard-step',label,'primary','check',`data-step="${key}"`);
- const steps=
-  step(0,'Регистрация','Партнёрский портал и кабинет Tag Markets',faqSteps(REG_STEPS)
-   +`<div class="welcome-actions">${reg?`<a class="button secondary" href="${esc(reg)}" target="_blank" rel="noopener">Открыть регистрацию ${icon('arrow')}</a>`:'<p class="faq-note">Ссылку на регистрацию даст тот, кто вас пригласил.</p>'}${next('registered','Я зарегистрировался')}</div>`)
-  +step(1,'Верификация','Подтверждение личности у брокера',`<p>В кабинете Tag Markets пройдите проверку личности — без неё недоступны пополнение и вывод.</p><div class="welcome-actions">${p.registered?next('verified','Верификация пройдена'):'<p class="faq-note">Сначала завершите регистрацию.</p>'}</div>`)
-  +step(2,'Пополнение и копитрейдинг','CopyX · бонус ×24 кодом #NEO',faqSteps(copySteps())
-   +`<div class="faq-shots">${FAQ_IMG('faq-neo-card.jpg','Кнопка Connect в карточке стратегии')}${FAQ_IMG('faq-sonic-card.jpg','Карточка стратегии SONIC')}</div><div class="welcome-actions">${p.verified?next('broker_account','Подключился к стратегии'):'<p class="faq-note">Сначала пройдите верификацию.</p>'}</div>`)
-  +step(3,'Счёт в этом приложении','Сделки и доход — здесь, автоматически',`<p>Добавьте счёт Tag Markets с <b>инвесторским паролем</b> MT5 — он только для чтения. Логин и пароль — в личном кабинете брокера. Дальше сделки, баланс и доход обновляются сами.</p><div class="welcome-actions">${button('add','Добавить мой счёт','primary','plus')}</div>`);
- return `<section class="welcome-hero"><span class="eyebrow">ДОБРО ПОЖАЛОВАТЬ</span><h1>${esc(d.user.name)}, подключим копитрейдинг</h1><p>Четыре шага — и доход по стратегии будет виден здесь каждый день.</p><div class="welcome-progress" role="progressbar" aria-valuemin="0" aria-valuemax="4" aria-valuenow="${done}"><i style="width:${done/4*100}%"></i></div><small class="muted">Пройдено ${done} из 4</small></section>
- <section class="panel faq-card welcome-steps">${steps}</section>
- <section class="panel welcome-later"><div><b>Пока без своего счёта?</b><p>Можно смотреть общий счёт копитрейдинга${d.accounts.some(a=>a.shared)?' и счета, которыми с вами поделились':''} — и вернуться к подключению в любой момент.</p></div>${button('onboard-later','Зарегистрируюсь позже','secondary','arrow')}</section>
- <a class="text-link welcome-faq" href="#faq">Частые вопросы: стратегии, вывод, лицензия ${icon('arrow')}</a>`;
+ const step=(n,title,text)=>`<article class="own-step"><span>${n}</span><div><b>${title}</b><p>${text}</p></div></article>`;
+ return header('Как добавить свой счёт','',button('onboard-close','Назад','secondary small','back'))+
+  `<section class="own-guide"><p class="muted">Это займёт несколько шагов. К инструкции можно вернуться позже.</p>
+  <div class="own-steps">${step(1,'Откройте кабинет Tag Markets','Зарегистрируйтесь и пройдите проверку личности.')}${step(2,'Подготовьте данные','Нужны Customer Number кабинета, название стратегии, логин MT5 и инвесторский пароль. Сервер определится автоматически.')}${step(3,'Добавьте счёт в TagMarket','Используйте инвесторский пароль — он даёт доступ только для просмотра.')}</div>
+  ${button('add','Добавить свой счёт','primary','plus')}</section>`;
 }
-// Отложивший регистрацию видит всё приложение и небольшую плашку, чтобы
-// вернуться к шагам
-function resumeBanner(){const p=state.data?.onboarding?.progress||{},done=['registered','verified','broker_account'].filter(k=>p[k]).length;
- return `<section class="panel resume-banner"><span class="faq-card-icon">${icon('plus')}</span><div><b>Подключите свой счёт</b><small>Пройдено ${done} из 4 шагов</small></div>${button('onboard-resume','Продолжить','primary small','arrow')}</section>`;}
-function overview(){const d=state.data, curr=state.currency||Object.keys(d.totals)[0]||'USD', t=d.totals[curr]||{capital:0,pnl:0,month:0}, own=d.accounts.filter(a=>!a.demo&&!a.shared), demo=d.accounts.find(a=>a.demo&&a.enabled), rep=state.report;
- if(d.onboarding?.needed){const open=d.accounts.filter(a=>a.shared||(a.demo&&a.enabled));
-  return header(`Добро пожаловать, ${d.user.name}`)+resumeBanner()+(open.length?`<div class="account-list">${open.map((a,i)=>accountCard(a,i)).join('')}</div>`:empty('Пока нечего показать','Своих счетов ещё нет, а общий счёт скрыт в настройках.'))+sonicGuide();}
+// Карточка с инструкцией показывается только пока нет личного счёта.
+function resumeBanner(){return `<section class="panel resume-banner"><span class="faq-card-icon">${icon('plus')}</span><div><b>Добавить свой счёт</b><small>Хотите подключить личный счёт? Посмотрите, как это сделать.</small></div>${button('onboard-open','Как открыть счёт','secondary small','arrow')}</section>`;}
+function showAccountGuide(open){state.view=open?'onboarding':'overview';nav();render();window.scrollTo(0,0);}
+function overview(){const d=state.data, curr='USD', t=d.totals[curr]||{capital:0,pnl:0,month:0,today:0}, own=d.accounts.filter(a=>!a.demo&&!a.shared), demo=d.accounts.find(a=>a.demo&&a.enabled), rep=state.report;
  const dynamics=state.reportError?empty('Не удалось построить график',state.reportError):rep?`<div class="dynamics-main fade-swap">${resultPair(rep.summary.net_income,rep.currency,rep.summary.pct_capital)}<span class="muted">${countLabel(rep.summary.count,['сделка','сделки','сделок'])}</span></div>${spark(rep.chart,rep.currency,state.period)}${dayExtremes(rep.chart,t.capital,rep.currency)}`:skeleton('chart');
- return header('Мой кабинет','',button('add','Добавить счёт','secondary','plus'))+
-  `<div class="dashboard-grid"><div><section class="panel hero"><div class="hero-top"><span class="eyebrow">Мой капитал</span><span class="hero-pill">${esc(curr)}</span></div><div class="hero-value">${money(t.capital,curr)}</div><div class="hero-bottom"><div><p>За месяц</p>${resultPair(t.month,curr,t.capital>0?t.month/t.capital*100:null)}</div><div class="separator"></div><div><p>Сегодня</p>${resultPair(t.today,curr,t.capital>0?t.today/t.capital*100:null)}</div></div></section>
- ${Object.keys(d.totals).length>1?`<div class="filterbar"><label class="field no-margin">Валюта сводки<select id="currency">${Object.keys(d.totals).map(c=>`<option ${curr===c?'selected':''}>${esc(c)}</option>`).join('')}</select></label></div>`:''}
+ const shared=d.accounts.filter(a=>a.shared&&!a.demo);
+ return header('Мой кабинет','',button(own.length?'add':'onboard-open',own.length?'Добавить счёт':'Добавить свой счёт','secondary','plus'))+
+  `<div class="dashboard-grid"><div><section class="panel hero"><div class="hero-top"><span class="eyebrow">Мой капитал</span><span class="hero-pill">${esc(curr)}</span></div><div class="hero-value">${money(t.capital,curr)}</div><div class="hero-bottom"><div><p>За месяц</p>${resultPair(t.month,curr,t.capital>0?t.month/t.capital*100:null)}</div><div class="separator"></div><div><p>Сегодня</p>${resultPair(t.today,curr,t.capital>0?t.today/t.capital*100:null)}</div></div>${d.fx?`<small class="stat-note">По курсу <a href="https://myfin.by/bank/kursy_valjut_nbrb" target="_blank" rel="noopener">НБРБ на MYFIN</a>: 1 USD = ${number(d.fx.byn_per_usd)} BYN · 100 RUB = ${number(d.fx.byn_per_100_rub)} BYN · обновлено ${new Date(d.fx.updated_at).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})}</small>`:''}${d.fx_error?`<small class="stat-note error-text">${esc(d.fx_error)}. Итог в USD неполный.</small>`:''}</section>
+  ${shared.length?`<section class="account-group shared-overview"><div class="account-list">${shared.map((a,i)=>accountCard(a,i)).join('')}</div></section>`:''}
   <section class="panel chart-panel dynamics"><div class="panel-head"><h2>Динамика</h2>${periodTabs(['today','yesterday','week','month','all'])}</div>${dynamics}</section>
   ${priceChart(state.priceChart)}</div>
  <aside class="side-stack">${sonicStrategyCard()}
- ${demo?`<section class="panel demo-panel"><span class="eyebrow">Публичная стратегия</span><h3>Копитрейдинг 45k</h3><div class="demo-number">${demo.totals?money(demo.totals.now,demo.totals.cur):'—'}</div><span class="badge demo">Не входит в ваш капитал</span><a class="button" href="#account/${esc(demo.login)}">Открыть ${icon('arrow')}</a></section>`:''}</aside></div>`;
+ ${demo?`<section class="panel demo-panel"><span class="eyebrow">Публичная стратегия</span><h3>Копитрейдинг 45k</h3><div class="demo-number">${demo.totals?money(demo.totals.now,demo.totals.cur):'—'}</div><span class="badge demo">Не входит в ваш капитал</span><a class="button" href="#account/${esc(demo.login)}">Открыть ${icon('arrow')}</a></section>`:''}</aside></div>`+
+  (d.onboarding?.needed&&shared.length?resumeBanner():'');
 }
 function balanceCard(personal){const totals=state.data.totals||{},list=Object.keys(totals);if(!list.length)return '';return `<section class="panel balance-card">${list.map(c=>{const x=totals[c];return `<div class="balance-row"><div><span class="eyebrow">ОБЩИЙ БАЛАНС · ${esc(c)}</span><strong>${money(x.capital,c)}</strong><small>${countLabel(personal.length,['счёт','счёта','счетов'])}</small></div><div class="balance-side"><small>За месяц</small>${resultPair(x.month,c,x.capital>0?x.month/x.capital*100:null)}</div></div>`;}).join('')}</section>`;}
 function accountsView(){const items=state.data.accounts,personal=items.filter(a=>!a.demo&&!a.shared),shared=items.filter(a=>a.shared&&!a.demo),demo=items.find(a=>a.demo),groups=[...new Set(personal.map(a=>a.cabinet||'Без кабинета'))];
@@ -534,7 +518,7 @@ function render(){paintedKey='';nav();
   const fingerprint=[...strip.querySelectorAll('button')].map(b=>b.dataset.value||b.textContent).join('|');
   prevThumbs.set(fingerprint, {left:active.offsetLeft, width:active.offsetWidth});
  });
- const views={overview,accounts:accountsView,account:accountView,people:peopleView,settings:settingsView,faq:faqView};$('#main').innerHTML=(preview?'<div class="preview-label">Демо-режим · вымышленные данные. Отправка сообщений и управление счетами работают только при запуске из <a href="https://t.me/tagmarketgold_bot" target="_blank" rel="noopener">бота в Telegram</a>.</div>':'')+(onboardingOnly()&&state.view!=='faq'?welcomeView:views[state.view]||overview)()+(state.view==='settings'&&state.admin?.network?.length?networkView():'');$('#avatar').textContent=state.data.user.name.slice(0,1).toUpperCase();
+ const views={overview,accounts:accountsView,account:accountView,people:peopleView,settings:settingsView,faq:faqView,onboarding:welcomeView};$('#main').innerHTML=(preview?'<div class="preview-label">Демо-режим · вымышленные данные. Отправка сообщений и управление счетами работают только при запуске из <a href="https://t.me/tagmarketgold_bot" target="_blank" rel="noopener">бота в Telegram</a>.</div>':'')+(views[state.view]||overview)()+(state.view==='settings'&&state.admin?.network?.length?networkView():'');$('#avatar').textContent=state.data.user.name.slice(0,1).toUpperCase();
  // сначала все замеры, потом все записи: чередование чтения и записи в одном
  // цикле заставляет браузер пересчитывать вёрстку на каждой полосе
  const centering=[];
@@ -674,7 +658,7 @@ async function api(path,options={}){
  if(!response.ok)throw new Error(d.error||`Ошибка ${response.status}`);
  return d;
 }
-async function loadReport(){const params=new URLSearchParams({period:state.period});if(state.period==='custom'){if(!state.from||!state.to)return null;params.set('from',state.from);params.set('to',state.to);}if(state.view==='overview'){params.set('currency',state.currency||Object.keys(state.data.totals)[0]||'USD');return api(`/overview/report?${params}`);}const acc=currentAccount();if(!acc)return null;state.login=acc.login;params.set('kind',state.kind);params.set('offset',state.offset);return api(`/accounts/${acc.login}/report?${params}`);}
+async function loadReport(){const params=new URLSearchParams({period:state.period});if(state.period==='custom'){if(!state.from||!state.to)return null;params.set('from',state.from);params.set('to',state.to);}if(state.view==='overview')return api(`/overview/report?${params}`);const acc=currentAccount();if(!acc)return null;state.login=acc.login;params.set('kind',state.kind);params.set('offset',state.offset);return api(`/accounts/${acc.login}/report?${params}`);}
 // Данные самого раздела сверх общих /bootstrap: отчёт, график цены, гости,
 // сервисная панель. Нужны и фоновому обновлению, и переходу между разделами
 async function viewParts(){
@@ -819,7 +803,9 @@ document.addEventListener('click',async event=>{const el=event.target.closest('[
  else if(action==='share-accounts'){const g=state.people.guests.find(x=>x.id===el.dataset.guest),have=new Set(g.accounts.filter(a=>a.shared).map(a=>String(a.login))),list=(state.people.shareable||[]).filter(a=>!have.has(String(a.login)));const d=await dialog('Открыть счета гостю',`${list.map(a=>`<label class="check"><input name="login-${a.login}" type="checkbox">${esc(a.name)}${a.cabinet?` · ${esc(a.cabinet)}`:''}</label>`).join('')}<p class="stat-note">Гость увидит их только для просмотра.</p>`,'Открыть');if(d){const logins=Object.keys(d).filter(k=>k.startsWith('login-')).map(k=>Number(k.slice(6)));if(logins.length)await mutate('/guests/'+el.dataset.guest,{action:'share',logins});}}
  else if(action==='toast-close')$('#toast').classList.remove('visible');
  else if(action==='shortcut')await addShortcut();
- else if(action==='onboard-later'||action==='onboard-resume'){const later=action==='onboard-later';if(!preview)await api('/onboarding',{method:'POST',body:JSON.stringify({step:'later',done:later})});state.data.onboarding.later=later;tg?.HapticFeedback?.impactOccurred?.('light');if(location.hash!=='#overview')location.hash='overview';else{window.scrollTo(0,0);render();}toast(later?'Приложение открыто. Вернуться к подключению можно с «Обзора».':'Продолжим с того же шага');}
+ else if(action==='onboard-open'||action==='onboard-resume')showAccountGuide(true);
+ else if(action==='onboard-close')showAccountGuide(false);
+ else if(action==='onboard-later'){if(!preview)await api('/onboarding',{method:'POST',body:JSON.stringify({step:'later',done:true})});state.data.onboarding.later=true;location.hash='overview';}
  else if(action==='faq-image'){await dialog(el.dataset.alt||'Скриншот',`<img class="faq-full" src="${esc(el.dataset.src)}" alt="${esc(el.dataset.alt||'')}">`,'Закрыть');}
  else if(action==='chart-zoom'){const v=el.dataset.value;if(v==='reset'){chartView.key='';scheduleChart();}else chartZoom(v==='in'?.7:1/.7);}
  else if(action==='period'){if(state.period===el.dataset.value)return;state.period=el.dataset.value;state.offset=0;state.report=null;state.reportError='';if(state.period==='custom')render();else await showCached(el);}

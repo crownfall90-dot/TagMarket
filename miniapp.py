@@ -3,10 +3,13 @@
 Handlers do not yield while using the legacy trades calculation context.
 Only signed Telegram initData is accepted; no browser/demo authentication bypass.
 """
+import asyncio
 import hashlib
 import hmac
 import html
 from html.parser import HTMLParser
+import re
+import aiohttp
 import json
 import math
 import os
@@ -37,7 +40,72 @@ import trades
 STATIC = Path(__file__).parent / "web"
 MAX_AUTH_AGE = 86400
 _rates = OrderedDict()
+_myfin_rates = {"fetched_at": 0, "updated_at": None, "byn_per_unit": None}
 _broadcast_active = set()
+
+
+class _MyfinRateTable(HTMLParser):
+    """Read current BYN-per-unit quotes from MYFIN's NBRB table."""
+    def __init__(self):
+        super().__init__()
+        self.rows = []
+        self.row = None
+        self.cell = None
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "tr": self.row = []
+        elif tag == "td" and self.row is not None: self.cell = []
+
+    def handle_data(self, data):
+        if self.cell is not None: self.cell.append(data.strip())
+
+    def handle_endtag(self, tag):
+        if tag == "td" and self.cell is not None:
+            self.row.append(" ".join(filter(None, self.cell)))
+            self.cell = None
+        elif tag == "tr" and self.row is not None:
+            self.rows.append(self.row)
+            self.row = None
+
+
+def parse_myfin_nbrb_rates(markup):
+    parser = _MyfinRateTable()
+    parser.feed(markup)
+    rates = {"BYN": 1.0}
+    for row in parser.rows:
+        if len(row) < 5 or not re.fullmatch(r"[A-Z]{3}", row[-2]):
+            continue
+        try:
+            quote = float(row[1].replace(",", "."))
+            units = float(row[-1].replace(",", "."))
+        except ValueError:
+            continue
+        if quote > 0 and units > 0:
+            rates[row[-2]] = quote / units
+    if rates.get("USD", 0) <= 0 or rates.get("RUB", 0) <= 0:
+        raise ValueError("MYFIN NBRB table is missing USD or RUB")
+    return rates
+
+
+async def myfin_nbrb_rates():
+    now = time.monotonic()
+    if _myfin_rates["byn_per_unit"] and now - _myfin_rates["fetched_at"] < 3600:
+        return _myfin_rates["byn_per_unit"]
+    timeout = aiohttp.ClientTimeout(total=10)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.get("https://myfin.by/bank/kursy_valjut_nbrb") as response:
+            response.raise_for_status()
+            rates = parse_myfin_nbrb_rates(await response.text())
+    _myfin_rates.update(fetched_at=now, updated_at=datetime.now(timezone.utc).isoformat(),
+                         byn_per_unit=rates)
+    return rates
+
+
+def usd_factor(currency, byn_per_unit):
+    currency = (currency or "USD").upper()
+    if currency not in {"USD", "RUB", "BYN"}:
+        return None
+    return byn_per_unit[currency] / byn_per_unit["USD"]
 
 
 def plain_report(markup):
@@ -228,6 +296,19 @@ def owned(uid, login):
     return acc
 
 
+def current_account_settings(acc):
+    """Use the inviter's current capital settings for a read-only shared account."""
+    inviter = acc.get("shared_by")
+    if not inviter:
+        return acc
+    source = next((item for item in accounts.load(inviter)
+                   if int(item["login"]) == int(acc["login"])
+                   and item.get("server") == acc.get("server")), None)
+    if not source:
+        return acc
+    return {**acc, **{key: source.get(key) for key in ("multiplier", "base", "base_at")}}
+
+
 def public_account(acc, db):
     result = {k: acc.get(k) for k in ("login", "name", "strategy", "cabinet", "holder",
               "server", "enabled", "notify", "demo", "base", "base_at")}
@@ -243,7 +324,7 @@ def public_account(acc, db):
     if state:
         age = (logic.utcnow() - datetime.fromisoformat(state["synced"])).total_seconds()
         result["status"] = "fresh" if age < logic.TERMINAL_STALE else "stale"
-        result["totals"] = logic.account_totals(acc)
+        result["totals"] = logic.account_totals(current_account_settings(acc))
     return result
 
 
@@ -263,21 +344,42 @@ async def bootstrap(request):
                 try: demo_view["notify"] = {**(demo_view.get("notify") or {}), **json.loads(saved_notify)}
                 except (TypeError, ValueError, json.JSONDecodeError): pass
             items.append(demo_view)
-    # Never combine currencies or include demonstration capital in personal totals.
+    currencies = {a["totals"]["cur"].upper() for a in items
+                  if not a["demo"] and not a.get("shared") and a["totals"]}
+    unsupported = currencies - {"USD", "RUB", "BYN"}
+    byn_per_unit = None
+    fx_error = ""
+    if currencies - {"USD"}:
+        try:
+            byn_per_unit = await myfin_nbrb_rates()
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+            logging.warning("MYFIN NBRB rates unavailable: %s", type(exc).__name__)
+            fx_error = "Не удалось обновить курс НБРБ на MYFIN"
+    if unsupported:
+        fx_error = "Для полной сводки поддерживаются только USD, RUB и BYN"
+    # Personal totals are shown in USD when a current official quote is available.
     totals = {}
     for a in items:
         t = a["totals"]
         if a["demo"] or a.get("shared") or not t:
             continue
-        bucket = totals.setdefault(t["cur"], {"capital": 0, "pnl": 0, "month": 0, "today": 0, "kept": 0})
+        currency = t["cur"].upper()
+        factor = usd_factor(currency, byn_per_unit) if byn_per_unit else (1 if currency == "USD" else None)
+        if factor is None:
+            continue
+        bucket = totals.setdefault("USD", {"capital": 0, "pnl": 0, "month": 0, "today": 0, "kept": 0})
         for key, source in (("capital", "now"), ("pnl", "pnl"), ("month", "month_net"),
                             ("today", "today_net"), ("kept", "kept")):
-            bucket[key] += t[source]
+            bucket[key] += t[source] * factor if factor is not None else t[source]
     own_accounts = [a for a in items if not a["demo"] and not a.get("shared")]
     inviter = partner.kv_get(db, f"guest_by:{uid}")
     registration_url = (logic.partner_link(db, inviter) if inviter else logic.partner_registration_url())
     return web.json_response({"user": {"id": user["id"], "name": user.get("first_name", "Инвестор")},
         "accounts": items, "totals": totals,
+        "fx": ({"source": "MYFIN · НБРБ", "currency": "USD",
+                "byn_per_usd": byn_per_unit["USD"], "byn_per_100_rub": byn_per_unit["RUB"] * 100,
+                "updated_at": _myfin_rates["updated_at"]}
+               if byn_per_unit else None), "fx_error": fx_error,
         "onboarding": {"needed": not own_accounts,
                         "later": partner.kv_get(db, f"onboard:{uid}:later") == "1",
                         "registration_url": registration_url,
@@ -362,34 +464,47 @@ def report_archive(since, until):
 async def overview_report(request):
     uid, _ = authorize(request)
     title, since, until = report_period(request.query)
-    currency = request.query.get("currency", "USD").upper()
-    if not 3 <= len(currency) <= 5 or not currency.isalpha():
-        raise ValueError("currency")
     db = request.app["trades"]
+    personal = [a for a in accounts.dedup(accounts.load(uid))
+                if not a.get("demo") and not a.get("shared_by")]
+    currencies = {((store.get_state(db, a["login"]) or {}).get("currency") or "USD").upper()
+                  for a in personal}
+    unsupported = currencies - {"USD", "RUB", "BYN"}
+    if unsupported:
+        raise web.HTTPServiceUnavailable(text="В сводке поддерживаются только USD, RUB и BYN")
+    byn_per_unit = None
+    if currencies - {"USD"}:
+        try:
+            byn_per_unit = await myfin_nbrb_rates()
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+            logging.warning("MYFIN NBRB rates unavailable: %s", type(exc).__name__)
+            raise web.HTTPServiceUnavailable(text="Не удалось обновить курс НБРБ на MYFIN") from exc
     chart = {}
     total = count = account_count = archived_count = pending_count = 0
     current_capital = weighted = 0
-    for acc in accounts.dedup(accounts.load(uid)):
+    for acc in personal:
         if acc.get("demo") or acc.get("shared_by"):
             continue
         state = store.get_state(db, acc["login"])
         if not state:
             pending_count += 1
             continue
-        if state["currency"].upper() != currency:
+        factor = usd_factor(state["currency"], byn_per_unit) if byn_per_unit else (
+            1 if state["currency"].upper() == "USD" else None)
+        if factor is None:
             continue
         trades.use(acc)
         cap = trades.capital()
-        current_capital += max(0, cap)
+        current_capital += max(0, cap) * factor
         rows = trades.fetch(since, until)
         archived = report_archive(since, until)
         summary = trades.summary(rows)
         # процент «Обзора» — средний по счетам, взвешенный капиталом, той же
         # мерой, что карточки (как в сводке бота), а не сумма ÷ общий капитал
-        weighted += max(0, cap) * trades.period_growth(
+        weighted += max(0, cap) * factor * trades.period_growth(
             rows, trades.fetch(datetime(2000, 1, 1), logic.utcnow() + timedelta(days=1)), archived, cap)
         total += trades.net_of_fee(trades.mine(
-            summary["total"] + sum((m["gross"] or 0) + (m["platform"] or 0) for m in archived)))
+            summary["total"] + sum((m["gross"] or 0) + (m["platform"] or 0) for m in archived))) * factor
         count += summary["count"] + sum(m["trades"] or 0 for m in archived)
         account_count += 1
         archived_count += len(archived)
@@ -397,15 +512,15 @@ async def overview_report(request):
             if row["is_closing"] or (row["is_balance"] and not trades.is_transfer(row)
                                       and not trades.is_perf_fee(row)):
                 day = row["time"].strftime("%Y-%m-%d")
-                chart[day] = chart.get(day, 0) + trades.net_of_fee(trades.mine(row["net"]))
+                chart[day] = chart.get(day, 0) + trades.net_of_fee(trades.mine(row["net"])) * factor
         for month in archived:
             last_day = calendar.monthrange(*map(int, month["month"].split("-")))[1]
             day = f'{month["month"]}-{last_day:02d}'
             chart[day] = chart.get(day, 0) + trades.net_of_fee(trades.mine(
-                (month["gross"] or 0) + (month["platform"] or 0)))
+                (month["gross"] or 0) + (month["platform"] or 0))) * factor
     return web.json_response({"title": title, "summary": {"count": count, "net_income": total,
         "pct_capital": round(weighted / current_capital, 3) if current_capital > 0 else None},
-        "currency": currency, "chart": [{"day": k, "value": v} for k, v in sorted(chart.items())],
+        "currency": "USD", "chart": [{"day": k, "value": v} for k, v in sorted(chart.items())],
         "archived": bool(archived_count), "accounts": account_count, "pending_accounts": pending_count})
 
 
@@ -471,7 +586,7 @@ def capital_steps(moves):
 
 async def report(request):
     uid, _ = authorize(request)
-    acc = owned(uid, request.match_info["login"])
+    acc = current_account_settings(owned(uid, request.match_info["login"]))
     if not store.get_state(request.app["trades"], acc["login"]):
         return web.json_response({"pending": True, "deals": [], "months": [], "chart": []})
     trades.use(acc)
@@ -585,7 +700,7 @@ async def price_chart(request):
     (см. store.trim_candles), поэтому глубокие периоды обрезаются по факту.
     """
     uid, _ = authorize(request)
-    acc = owned(uid, request.match_info["login"])
+    acc = current_account_settings(owned(uid, request.match_info["login"]))
     if not store.get_state(request.app["trades"], acc["login"]):
         return web.json_response({"pending": True, "candles": [], "trades": []})
     trades.use(acc)

@@ -10,9 +10,14 @@
 import logging
 import os
 import sqlite3
+import uuid
 from datetime import datetime, timedelta, timezone
 
 log = logging.getLogger(__name__)
+
+
+class ServerMismatchError(ValueError):
+    """A login already belongs to another trading server in this database."""
 
 
 def utcnow() -> datetime:
@@ -85,9 +90,10 @@ CREATE TABLE IF NOT EXISTS months (
 -- Команды агенту: бот на сервере кладёт сюда, агент на ПК забирает при опросе.
 -- Так реализуем «кнопку запустить терминал» без прямого доступа сервер→ПК.
 CREATE TABLE IF NOT EXISTS commands (
-    login   INTEGER PRIMARY KEY,
-    cmd     TEXT,
-    created TEXT
+    login      INTEGER PRIMARY KEY,
+    cmd        TEXT,
+    created    TEXT,
+    command_id TEXT
 );
 
 -- Свечи M15 XAUUSD для графика цены на карточке стратегии. Общие для всех
@@ -132,6 +138,13 @@ def open_db(path: str = None) -> sqlite3.Connection:
         except sqlite3.OperationalError as e:
             if "duplicate column" not in str(e):
                 raise
+    if "command_id" not in {r["name"] for r in db.execute("PRAGMA table_info(commands)").fetchall()}:
+        try:
+            db.execute("ALTER TABLE commands ADD COLUMN command_id TEXT")
+        except sqlite3.OperationalError as exc:
+            if "duplicate column" not in str(exc):
+                raise
+        db.execute("UPDATE commands SET command_id=? WHERE command_id IS NULL", (uuid.uuid4().hex,))
     # колонки статистики появились позже — базы прошлых версий дополняем
     have = {r["name"] for r in db.execute("PRAGMA table_info(months)").fetchall()}
     for col, kind in (("wins", "INTEGER"), ("losses", "INTEGER"),
@@ -199,18 +212,12 @@ def get_candles(db, since: datetime, until: datetime) -> list[dict]:
 
 def save_state(db, login: int, balance: float, equity: float, currency: str,
                server: str, capital_hist: float = None, *, commit: bool = True) -> None:
-    # DATA-02: state/deals/months/commands ключуются одним login, а физический
-    # счёт — это login+server. Пока брокер один, номера не пересекаются и
-    # проблема не проявляется; со вторым брокером два счёта начали бы молча
-    # затирать друг другу баланс и капитал. Переписывать схему ради этого
-    # рано — но молчать нельзя, поэтому ловим момент, когда риск станет
-    # реальным. ponytail: заметка в логе, не защита; настоящее лечение —
-    # составной ключ (login, server) во всех четырёх таблицах
+    # Tables are keyed by login, so accepting a different server would mix
+    # state and history belonging to different physical accounts.
     was = db.execute("SELECT server FROM state WHERE login=?", (int(login),)).fetchone()
     if was and was[0] and server and was[0] != server:
-        log.error("DATA-02: счёт %s числится на «%s», а синк пришёл с «%s» — "
-                  "историю и баланс этих счетов смешает, нужен ключ login+server",
-                  login, was[0], server)
+        raise ServerMismatchError(
+            f"account {login} is stored on server {was[0]!r}, sync came from {server!r}")
     db.execute(
         "INSERT INTO state (login, balance, equity, currency, server, synced, capital_hist) "
         "VALUES (?, ?, ?, ?, ?, ?, ?) "
@@ -229,8 +236,9 @@ def get_state(db, login: int) -> dict | None:
 
 
 def set_command(db, login: int, cmd: str) -> None:
-    db.execute("INSERT OR REPLACE INTO commands VALUES (?, ?, ?)",
-               (int(login), cmd, utcnow().isoformat()))
+    db.execute("INSERT OR REPLACE INTO commands (login, cmd, created, command_id) "
+               "VALUES (?, ?, ?, ?)",
+               (int(login), cmd, utcnow().isoformat(), uuid.uuid4().hex))
     db.commit()
 
 
@@ -239,21 +247,41 @@ def get_command(db, login: int) -> str | None:
     return row["cmd"] if row else None
 
 
-def clear_command(db, login: int, *, commit: bool = True) -> None:
-    db.execute("DELETE FROM commands WHERE login=?", (int(login),))
+def get_command_id(db, login: int) -> str | None:
+    row = db.execute("SELECT command_id FROM commands WHERE login=?", (int(login),)).fetchone()
+    return row["command_id"] if row else None
+
+
+def get_command_record(db, login: int) -> dict | None:
+    row = db.execute("SELECT cmd, command_id FROM commands WHERE login=?", (int(login),)).fetchone()
+    return dict(row) if row else None
+
+
+def clear_command(db, login: int, command_id: str = None, *, commit: bool = True) -> None:
+    if command_id is None:
+        db.execute("DELETE FROM commands WHERE login=?", (int(login),))
+    else:
+        db.execute("DELETE FROM commands WHERE login=? AND command_id=?",
+                   (int(login), command_id))
     if commit:
         db.commit()
 
 
-def save_sync(db, login: int, state: dict, deals: list[dict], command_done: bool) -> int:
-    """Apply one agent packet atomically, including command acknowledgement."""
+def save_sync(db, login: int, state: dict, deals: list[dict], command_done: bool,
+              command_id: str = None, before_commit=None) -> int:
+    """Apply one agent packet and run dependent persistence before commit."""
     with db:
         save_state(db, login, state["balance"], state["equity"],
                    state["currency"], state["server"], state["capital_hist"],
                    commit=False)
         new = save_deals(db, login, deals, commit=False)
-        if command_done:
-            clear_command(db, login, commit=False)
+        # A completion flag without the ID cannot safely identify which
+        # command the agent actually executed; never fall back to deleting the
+        # current command for this login.
+        if command_done and command_id is not None:
+            clear_command(db, login, command_id, commit=False)
+        if before_commit:
+            before_commit()
     return new
 
 

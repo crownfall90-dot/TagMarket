@@ -370,9 +370,12 @@ def _stored_capital() -> float:
     from_deals = live + archived
     row = store.get_state(_store_db(), _login)
     from_agent = float(row["capital_hist"] or 0.0) if row else 0.0
-    # своя история полнее агентской (старый агент считал с отсечки) — берём
-    # большую: недосчитать капитал хуже, чем показать его целиком
-    return max(from_deals, from_agent)
+    # Если история сделок и свёрнутых месяцев собрана — опираемся на неё,
+    # так как max(from_deals, from_agent) скрывал бы реальный вывод средств.
+    # from_agent (capital_hist) остаётся запасом, если локальной истории ещё нет.
+    if from_deals > 0.0:
+        return from_deals
+    return from_agent if from_agent > 0.0 else from_deals
 
 
 def capital_moves_after(rows: list[dict], when: datetime) -> float:
@@ -810,7 +813,7 @@ def positions() -> list[dict]:
 
 # ── оформление ────────────────────────────────────────────────────────────
 
-SIGNS = {"USD": "$", "EUR": "€", "GBP": "£", "RUB": "₽"}
+SIGNS = {"USD": "$", "EUR": "€", "GBP": "£", "RUB": "₽", "BYN": " Br"}
 
 
 def sign(cur: str) -> str:

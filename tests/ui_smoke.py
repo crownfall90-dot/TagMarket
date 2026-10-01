@@ -183,25 +183,48 @@ def faq_opens_smoothly(page, url):
     close_dialog(page)
 
 
-def newcomer_sees_only_onboarding(page):
-    """Новичок без своих счетов видит один экран шагов, панель разделов
-    скрыта; «Зарегистрируюсь позже» открывает приложение, «Продолжить» —
-    возвращает к шагам."""
-    page.evaluate("""() => { state.data.onboarding = {needed: true, later: false,
-        progress: {registered: true, verified: false, broker_account: false},
-        registration_url: 'https://exfusion.ibportal.io/auth/register?e=x'}; render(); }""")
-    page.locator(".welcome-hero").wait_for()
-    assert page.evaluate("getComputedStyle(document.querySelector('#mobile-nav')).display") == "none"
-    assert page.evaluate("getComputedStyle(document.querySelector('#desktop-nav')).display") == "none"
-    current = page.locator(".welcome-step[open] .welcome-title b").inner_text()
-    assert current == "Верификация", current
-    page.locator('[data-action="onboard-later"]').click()
-    page.locator(".resume-banner").wait_for()
-    assert page.locator(".welcome-hero").count() == 0
-    page.locator('[data-action="onboard-resume"]').click()
-    page.locator(".welcome-hero").wait_for()
-    page.evaluate("state.data.onboarding.needed = false; render()")
-    page.locator(".welcome-hero").wait_for(state="detached")
+def guest_with_shared_account_sees_home_and_opens_guide_on_demand(page):
+    """Shared-счёт остаётся на обычной главной; короткая инструкция
+    открывается вручную, а её CTA использует существующую форму добавления."""
+    page.evaluate("""() => {
+        window.__smokeSavedData = structuredClone(state.data);
+        const shared = {...state.data.accounts[0], shared:true, shared_by:'1'};
+        state.data.accounts = [shared]; state.data.totals = {};
+        state.data.onboarding = {needed:true, later:false, progress:{}};
+        state.view = 'overview'; render();
+    }""")
+    page.locator(".hero").wait_for()
+    assert page.locator(".account-card").count() == 1
+    assert page.locator(".resume-banner").count() == 1
+    assert page.locator(".own-guide").count() == 0
+    assert page.locator('.page-head [data-action="onboard-open"] .button-label').inner_text() == "Добавить свой счёт"
+    page.locator('.page-head [data-action="onboard-open"]').click()
+    page.locator(".own-guide").wait_for()
+    assert page.evaluate("location.hash !== '#onboarding'")
+    fits(page)
+    page.locator('[data-action="onboard-close"]').click()
+    page.locator(".hero").wait_for()
+    page.locator('[data-action="onboard-open"]').first.click()
+    page.locator(".own-guide").wait_for()
+    assert page.locator(".own-step").count() == 3
+    page.locator('[data-action="add"]').click()
+    assert page.locator("#dialog-title").inner_text() == "Подключить счёт MT5"
+    close_dialog(page)
+    page.locator('[data-action="onboard-close"]').click()
+    page.locator(".hero").wait_for()
+    assert page.locator(".account-card").count() == 1
+    page.evaluate("render()")
+    assert page.locator(".own-guide").count() == 0
+    page.evaluate("""() => {
+        state.data.accounts = [{...state.data.accounts[0], shared:false, shared_by:null}];
+        state.data.onboarding.needed = false;
+        state.data.totals = {USD:{capital:321,pnl:0,month:0,today:0}};
+        render();
+    }""")
+    assert page.locator(".hero").count() == 1
+    assert page.locator(".resume-banner").count() == 0
+    assert page.locator('.page-head [data-action="add"] .button-label').inner_text() == "Добавить счёт"
+    page.evaluate("state.data=window.__smokeSavedData;delete window.__smokeSavedData;state.view='overview';render()")
 
 
 def close_dialog(page):
@@ -241,8 +264,8 @@ def main():
                     # динамика: другой период — другой итог
                     result = page.locator('.chart-panel .dynamics-main .result-pair b')
                     today_result = result.inner_text()
-                    page.locator('.chart-panel [data-action="period"][data-value="month"]').click()
-                    page.locator('.chart-panel [data-action="period"][data-value="month"].active').wait_for()
+                    page.locator('.chart-panel [data-action="period"][data-value="all"]').click()
+                    page.locator('.chart-panel [data-action="period"][data-value="all"].active').wait_for()
                     # подсветка переезжает сразу, цифры приходят следом — ждём загрузку
                     page.wait_for_function("!document.body.classList.contains('is-loading')")
                     assert result.inner_text() != today_result
@@ -302,7 +325,7 @@ def main():
                     rapid_taps_render_once(page, nav)
                     page.locator('.hero').wait_for()
                     rapid_switching_stays_under_limit(page, nav)
-                    newcomer_sees_only_onboarding(page)
+                    guest_with_shared_account_sees_home_and_opens_guide_on_demand(page)
                     faq_opens_smoothly(page, url)
                     page.goto(url + "#overview", wait_until="domcontentloaded")
                     page.locator('.hero').wait_for()

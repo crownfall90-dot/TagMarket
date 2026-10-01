@@ -1436,8 +1436,7 @@ def short_name(acc: dict, cabinet: str = None) -> str:
 def build_all(name: str, owner=None, cabinet: str = None) -> str:
     """Сводка по счетам: одного кабинета, если он задан, иначе по всем."""
     title, since, until, subtitle = period(name)
-    lines, total_my, total_period, total_ever, cur = [], 0.0, 0.0, 0.0, ""
-    total_kept = 0.0        # накопленный профит: лежит на стратегии, не выведен
+    lines, totals, cur = [], {}, ""
     # профит — величина «на сейчас». Рядом с прошлой неделей или месяцем он
     # читался бы как профит того периода, чем он не является
     now_view = name == "today"
@@ -1449,6 +1448,7 @@ def build_all(name: str, owner=None, cabinet: str = None) -> str:
             lines.append(f"<b>{html.escape(label)}</b> · <i>нет связи</i>")
             continue
         cur = trades.currency()
+        total = totals.setdefault(cur, {"my": 0.0, "period": 0.0, "ever": 0.0, "kept": 0.0})
         my = trades.capital()       # реальные деньги, не торговый баланс ×плечо
         kept = trades.retained()    # профит чистыми, который ещё не вывели
         per = trades.net_of_fee(trades.mine(trades.summary(trades.fetch(since, until))["total"]))
@@ -1459,10 +1459,10 @@ def build_all(name: str, owner=None, cabinet: str = None) -> str:
             + trades.archived_before_now()[0]))
         if since <= trades.REPORT_FROM:     # период захватывает архив
             per = ever
-        total_my += my
-        total_kept += kept
-        total_period += per
-        total_ever += ever
+        total["my"] += my
+        total["kept"] += kept
+        total["period"] += per
+        total["ever"] += ever
         mark = "▲" if per > 0 else ("▼" if per < 0 else "•")
         on_top = (f" + {trades.amount(abs(kept), cur)} профит"
                   if now_view and abs(kept) >= 0.01 else "")
@@ -1478,22 +1478,26 @@ def build_all(name: str, owner=None, cabinet: str = None) -> str:
         for acc in scope:
             if not connect(acc):
                 continue
+            cur = trades.currency()
             for m in trades.monthly(limit=1000):
-                got = by_month.setdefault(m["month"], {"net": 0.0, "trades": 0})
+                key = (m["month"], cur)
+                got = by_month.setdefault(key, {"net": 0.0, "trades": 0})
                 got["net"] += trades.net_of_fee(trades.mine(
                     (m["gross"] or 0.0) + (m["platform"] or 0.0)))
                 got["trades"] += m["trades"] or 0
         if len(by_month) > 1:
             now_key = trades.clock().strftime("%Y-%m")
             rows_m = []
-            for key in sorted(by_month):
-                got = by_month[key]
+            mixed_currency = len({currency for _, currency in by_month}) > 1
+            for key, currency in sorted(by_month):
+                got = by_month[(key, currency)]
                 # своё имя переменной: title занят заголовком периода, и
                 # перезапись превращала «За всё время» в «Август»
                 month_name = trades.MONTHS.get(int(key[5:7]), key)
                 mark = " <i>(идёт)</i>" if key == now_key else ""
-                rows_m.append(f"<b>{trades.amount(got['net'], cur, signed=True)}</b> · "
-                              f"{got['trades']} сд · <i>{month_name}</i>{mark}")
+                currency_label = f" · {html.escape(currency)}" if mixed_currency else ""
+                rows_m.append(f"<b>{trades.amount(got['net'], currency, signed=True)}</b> · "
+                              f"{got['trades']} сд · <i>{month_name}{currency_label}</i>{mark}")
             months = "\n\n📦 <b>По месяцам</b>\n" + trades.quote(rows_m)
 
     # для демо-псевдокабинета accounts.label() вернул бы технический ключ
@@ -1507,21 +1511,37 @@ def build_all(name: str, owner=None, cabinet: str = None) -> str:
     # Профит — величина «на сейчас», а не результат периода отчёта, поэтому
     # показываем его независимо от выбранного periода (как на дашборде) —
     # иначе за неделю/месяц «на стратегии» тихо показывал только капитал
-    split = (f"\n<i>капитал {trades.amount(total_my, cur)} · "
-             f"профит {trades.amount(total_kept, cur, signed=True)}</i>"
-             if abs(total_kept) >= 0.01 else "")
-    on_strategy = total_my + total_kept
-    head = (f"👤 <b>{html.escape(where)}</b>\n"
-            f"💎 <b>{trades.amount(on_strategy, cur, whole=True)}</b> на стратегии{split}\n"
-            f"◆ <i>всего заработано {trades.amount(total_ever, cur, signed=True)}</i>")
+    currency_keys = sorted(totals) or [cur]
+    if len(currency_keys) == 1:
+        amounts = totals.get(currency_keys[0], {"my": 0.0, "period": 0.0, "ever": 0.0, "kept": 0.0})
+        split = (f"\n<i>капитал {trades.amount(amounts['my'], cur)} · "
+                 f"профит {trades.amount(amounts['kept'], cur, signed=True)}</i>"
+                 if abs(amounts["kept"]) >= 0.01 else "")
+        head = (f"👤 <b>{html.escape(where)}</b>\n"
+                f"💎 <b>{trades.amount(amounts['my'] + amounts['kept'], cur, whole=True)}</b> на стратегии{split}\n"
+                f"◆ <i>всего заработано {trades.amount(amounts['ever'], cur, signed=True)}</i>")
+        totals_period = [(cur, amounts["period"])]
+    else:
+        blocks, totals_period = [], []
+        for currency in currency_keys:
+            amounts = totals[currency]
+            split = (f" · капитал {trades.amount(amounts['my'], currency)} · "
+                     f"профит {trades.amount(amounts['kept'], currency, signed=True)}"
+                     if abs(amounts["kept"]) >= 0.01 else "")
+            blocks.append(f"💎 <b>{trades.amount(amounts['my'] + amounts['kept'], currency, whole=True)}</b> "
+                          f"на стратегии · <i>{html.escape(currency)}</i>{split}\n"
+                          f"◆ <i>всего заработано {trades.amount(amounts['ever'], currency, signed=True)}</i>")
+            totals_period.append((currency, amounts["period"]))
+        head = f"👤 <b>{html.escape(where)}</b>\n" + "\n".join(blocks)
     table = trades.quote(lines)
     # пустая суббота — не поломка: рынок закрыт, и «+0.00» без пояснения пугает
-    if (not total_period and since.date() == until.date()
+    if (len(totals_period) == 1 and not totals_period[0][1] and since.date() == until.date()
             and trades.is_weekend(since)):
         total = trades.WEEKEND
     else:
-        total = (f"{'▲' if total_period >= 0 else '▼'} "
-                 f"<b>{trades.amount(total_period, cur, signed=True)}</b>")
+        total = "\n".join(
+            f"{'▲' if amount >= 0 else '▼'} <b>{trades.amount(amount, currency, signed=True)}</b>"
+            for currency, amount in totals_period)
     return (f"{head}\n\n<b>{title}</b>  <i>{subtitle}</i>\n{trades.THIN}\n"
             f"{total}\n\n{table}{months}")
 

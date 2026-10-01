@@ -123,33 +123,38 @@ async def handle(request: web.Request, kind: str, fmt) -> web.Response:
         # потом взять; безусловно и до дедупа: регистрация может прийти
         # раньше первого запуска бота и потеряться как first_run
         partner.remember_client_name(db, row)
-    fresh, first_run = partner.unseen(db, kind, [row])
-    if fresh and not first_run and not _just_sent(db, kind, row):
-        # Telegram с этого сервера отвечает медленно, а портал ждёт ответа
-        # считанные секунды и по таймауту шлёт событие заново — поэтому
-        # подтверждаем сразу, а сообщение отправляем следом
+    queued = []
+
+    def queue_fresh(events, first_run):
+        if first_run:
+            return
+        for event in events:
+            if _just_sent(db, kind, event, commit=False):
+                continue
+            try:
+                own = partner.own_income_notice(db, event) \
+                    if kind == "deposit" and partner.whose(event)[1] else None
+            except Exception:
+                log.exception("не подготовил уведомление о приходе на свой кабинет")
+                own = None
+            payload = ({"type": "own", "own": own} if own else
+                       {"type": "text", "text": fmt(event)})
+            event_key = f"hook:{kind}:{partner.row_id(event)}"
+            partner.enqueue_webhook_delivery(db, event_key, payload)
+            queued.append((event, event_key, payload["type"]))
+
+    fresh, first_run = partner.unseen(db, kind, [row], on_fresh=queue_fresh)
+    if fresh and not first_run:
         recipient = os.getenv("FOUNDER_ID") or os.getenv("TELEGRAM_CHAT_ID", "")
-        # приход на свой кабинет — обычно вывод со стратегии или заведение на
-        # неё, о котором следом сообщит и MT5: одно событие — одно сообщение
-        try:
-            own = partner.own_income_notice(db, row) \
-                if kind == "deposit" and partner.whose(row)[1] else None
-        except Exception:
-            # событие уже отмечено увиденным: упасть здесь — потерять его
-            # насовсем, поэтому при сбое сообщаем по-старому
-            log.exception("не подготовил уведомление о приходе на свой кабинет")
-            own = None
-        if own:
-            fire(announce_own(request.app, own))
-        else:
-            if recipient:
+        for event, event_key, delivery_type in queued:
+            if delivery_type == "text" and recipient:
                 title = "Новая регистрация" if kind == "registration" else "Пополнение"
-                detail = partner.who(row) if kind == "registration" else \
-                    f"{partner.whose(row, db)[0]} · {partner.money(row)}"
-                partner.record_notification(db, recipient, f"hook:{kind}:{partner.row_id(row)}",
-                                            kind, title, detail)
-            fire(notify(request.app, fmt(row)))
-        _remember_wallet_income(db, kind, row)
+                detail = partner.who(event) if kind == "registration" else \
+                    f"{partner.whose(event, db)[0]} · {partner.money(event)}"
+                partner.record_notification(db, recipient, event_key, kind, title, detail)
+            _remember_wallet_income(db, kind, event)
+        if queued:
+            fire(deliver_webhook_outbox(request.app))
     log.info("вебхук %s: %s", kind, row.get("customer_no", row.get("tx_id", "?")))
     return web.Response(text="ok")
 
@@ -176,18 +181,28 @@ def _remember_wallet_income(db, kind: str, row: dict) -> None:
     partner.site_move_add(db, cabinet, "deposit", amount, currency)
 
 
-def _just_sent(db, kind: str, row: dict) -> bool:
+def _just_sent(db, kind: str, row: dict, *, commit=True) -> bool:
     """Не то же ли самое мы отправляли минуту назад.
 
     Портал шлёт одно событие дважды: сначала зачисление на баланс, следом
     перевод в стратегию — суммы и кабинет совпадают, и в чат падали два
     одинаковых сообщения. Дедупликация по id не спасает: id у них разные.
     """
+    parsed = partner.parsed_amount(row)
+    cur = parsed[1] if parsed else str(partner.pick(row, "currency", "curr") or "")
+    tx = str(partner.pick(row, "tx_id", "transaction_id", "trans_id") or "").strip()
     key = ("hook:" + kind + ":" + str(partner.pick(row, "customer_no", "customer") or "")
-           + ":" + str(partner.pick(row, "amount", "sum") or ""))
+           + ":" + str(partner.pick(row, "amount", "sum") or "")
+           + (":" + cur if cur else ""))
+    if tx:
+        last_tx = partner.kv_get(db, key + ":last_tx")
+        if last_tx and last_tx != tx:
+            partner.kv_set(db, key + ":last_tx", tx, commit=commit)
+            return False
+        partner.kv_set(db, key + ":last_tx", tx, commit=commit)
     seen_at = partner.kv_get(db, key)
     now = utcnow()
-    partner.kv_set(db, key, now.isoformat())
+    partner.kv_set(db, key, now.isoformat(), commit=commit)
     if not seen_at:
         return False
     try:
@@ -204,6 +219,8 @@ NOTIFY_BACKOFF = 5       # со стороны портала не будет, �
 # обрабатывает бот — токен у них один
 DASHBOARD_MARKUP = json.dumps({"inline_keyboard": [[{"text": "📊 Дашборд",
                                                       "callback_data": "dash"}]]})
+OUTBOX_LOCK = web.AppKey("webhook_outbox_lock", asyncio.Lock)
+OUTBOX_TASK = web.AppKey("webhook_outbox_task", asyncio.Task)
 
 
 async def notify(app, text: str, markup: str = None) -> int | None:
@@ -260,7 +277,7 @@ async def edit_notification(app, chat_id, message_id, text: str) -> bool:
     return False
 
 
-async def announce_own(app, own: dict) -> None:
+async def announce_own(app, own: dict) -> bool:
     """Приход на баланс своего кабинета: одно сообщение на один перевод.
 
     Строка MT5 о том же переводе приходит к боту позже вебхука. Кто первый,
@@ -274,11 +291,67 @@ async def announce_own(app, own: dict) -> None:
         return await edit_notification(app, chat, msg, text)
 
     try:
-        await partner.announce_once(app["db"], own["cabinet"], own["cents"], own["when"],
-                                    "hook", own["exact"], own["text"], own["feed"],
-                                    own["chat"], send, edit)
+        result = await partner.announce_once(app["db"], own["cabinet"], own["cents"], own["when"],
+                                             "hook", own["exact"], own["text"], own["feed"],
+                                             own["chat"], send, edit)
+        return result != "failed"
     except Exception:
         log.exception("не сообщил о приходе на баланс кабинета %s", own["cabinet"])
+        return False
+
+
+async def deliver_webhook_outbox(app) -> None:
+    lock = app.get(OUTBOX_LOCK)
+    if lock is None:
+        lock = asyncio.Lock()
+    async with lock:
+        while True:
+            items = partner.pending_webhook_deliveries(app["db"], limit=1)
+            if not items:
+                return
+            item = items[0]
+            try:
+                payload = json.loads(item["payload"])
+                if payload["type"] == "own":
+                    own = payload["own"]
+                    own["when"] = datetime.fromisoformat(own["when"])
+                    own["feed"] = tuple(own["feed"])
+                    delivered = await announce_own(app, own)
+                else:
+                    delivered = await notify(app, payload["text"]) is not None
+            except Exception:
+                log.exception("webhook outbox delivery failed")
+                delivered = False
+            partner.finish_webhook_delivery(app["db"], item["event_key"], delivered)
+
+
+async def webhook_outbox_worker(app) -> None:
+    while True:
+        try:
+            await deliver_webhook_outbox(app)
+        except Exception:
+            log.exception("webhook outbox worker failed")
+        await asyncio.sleep(15)
+
+
+async def start_webhook_outbox(app) -> None:
+    app[OUTBOX_TASK] = asyncio.create_task(webhook_outbox_worker(app))
+
+
+async def stop_webhook_outbox(app) -> None:
+    task = app.get(OUTBOX_TASK)
+    if task:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
+def setup_webhook_outbox(app) -> None:
+    app[OUTBOX_LOCK] = asyncio.Lock()
+    app.on_startup.append(start_webhook_outbox)
+    app.on_cleanup.append(stop_webhook_outbox)
 
 
 _background: set[asyncio.Task] = set()   # держит задачи, пока notify() ретраит
@@ -419,7 +492,8 @@ async def agent_accounts(request):
         {"name": a["name"], "login": a["login"], "password": a["password"],
          "server": a["server"], "multiplier": a.get("multiplier", 1),
          "since": store.last_ticket(db, a["login"]),
-         "command": store.get_command(db, a["login"])}   # напр. «restart_terminal»
+         "command": command["cmd"] if command else None,
+         "command_id": command["command_id"] if command else None}
         # дедуп по логину+серверу БЕЗ владельца: агенту он не важен — это
         # один физический MT5-логин, даже если на него есть записи у разных
         # владельцев (свой счёт + расшаренная гостевая копия через share()).
@@ -429,6 +503,7 @@ async def agent_accounts(request):
         # дедуп раньше расшаренной гостевой копии того же логина, иначе
         # гость держит копию enabled и опрос продолжается вопреки паузе владельца
         for a in accounts.dedup(sorted((a for a in accounts.load()), key=lambda a: bool(a.get("shared_by"))), by_owner=False)
+        for command in (store.get_command_record(db, a["login"]),)
         # общий демо-счёт опрашивается всегда: он один на всех, и галочка
         # «Показывать общий счёт» у владельца (пишет enabled в саму запись)
         # остановила опрос для всех — с 20.09.2026 сделок не было ни у кого.
@@ -657,6 +732,11 @@ def _sync_payload(data: dict) -> tuple[int, dict, list[dict], bool]:
     if not state["currency"].strip() or not state["server"].strip():
         raise ValueError("currency/server: required")
     command_done = _sync_flag(data.get("command_done", False), "command_done")
+    command_id = data.get("command_id")
+    if command_id is not None and (not isinstance(command_id, str) or
+                                   len(command_id) != 32 or
+                                   any(ch not in "0123456789abcdef" for ch in command_id)):
+        raise ValueError("command_id: invalid identifier")
     incoming = data.get("deals")
     if not isinstance(incoming, list) or len(incoming) > 50000:
         raise ValueError("deals: invalid list")
@@ -700,7 +780,7 @@ def _sync_payload(data: dict) -> tuple[int, dict, list[dict], bool]:
         if sum(deal[field] for field in ("is_balance", "is_closing", "is_opening")) > 1:
             raise ValueError(f"{label}: contradictory flags")
         deals.append(deal)
-    return login, state, deals, command_done
+    return login, state, deals, command_done, command_id
 
 
 async def agent_sync(request):
@@ -720,15 +800,10 @@ async def agent_sync(request):
     if not coordination.authorize(request.app["db"], host, session):
         raise web.HTTPConflict(text="polling lease lost")
     try:
-        login, state, deals, command_done = _sync_payload(data)
+        login, state, deals, command_done, command_id = _sync_payload(data)
     except (ValueError, TypeError, KeyError, OverflowError) as e:
         raise web.HTTPBadRequest(text=f"bad payload: {e}")
 
-    try:
-        new = store.save_sync(db, login, state, deals, command_done)
-    except sqlite3.DatabaseError as exc:
-        log.warning("temporary database failure during sync for %s: %s", login, exc)
-        raise web.HTTPServiceUnavailable(text="database temporarily busy")
     reported_server = state["server"].strip()
     # имя владельца из MT5 необязательно: непригодное (не строка, слишком
     # длинное) просто не трогает accounts.json, а не отвергает весь пакет —
@@ -736,10 +811,12 @@ async def agent_sync(request):
     holder = data.get("holder")
     reported_holder = (holder.strip() if isinstance(holder, str) and len(holder) <= 128
                        and "\x00" not in holder else "")
-    if reported_server or reported_holder:
-        # MT5 is authoritative for broker server and account owner label.
-        # Update every legitimate owner copy atomically; a shared copy must
-        # never drift from the physical account it represents.
+
+    def update_accounts():
+        if not reported_server and not reported_holder:
+            return
+        # Keep the account file update inside the SQLite transaction's
+        # success boundary: an account-file error rolls the sync back too.
         with locked(accounts.PATH):
             all_accounts = accounts._read()
             changed = False
@@ -752,6 +829,19 @@ async def agent_sync(request):
                     acc["holder"] = reported_holder; changed = True
             if changed:
                 accounts.save(all_accounts)
+
+    try:
+        new = store.save_sync(db, login, state, deals, command_done, command_id,
+                              before_commit=update_accounts)
+    except store.ServerMismatchError as exc:
+        log.error("rejecting sync for login %s: %s", login, exc)
+        raise web.HTTPConflict(text="account server does not match stored state") from exc
+    except sqlite3.DatabaseError as exc:
+        log.warning("temporary database failure during sync for %s: %s", login, exc)
+        raise web.HTTPServiceUnavailable(text="database temporarily busy")
+    except (OSError, ValueError) as exc:
+        log.warning("temporary account-file failure during sync for %s: %s", login, exc)
+        raise web.HTTPServiceUnavailable(text="account data temporarily unavailable") from exc
     if new:
         log.info("счёт %s: %d новых сделок", login, new)
 
@@ -842,6 +932,7 @@ async def main():
     # Telegram media broadcasts are capped at 20 MiB by the API handler;
     # leave a small multipart overhead margin here.
     app = web.Application(client_max_size=22 * 1024 * 1024)
+    setup_webhook_outbox(app)
     app["db"] = partner.open_db()
     # Telegram недоступен с сервера напрямую (Москва) — тот же прокси, что у бота.
     # Без него вебхуки исправно приходили, а сообщения молча не доставлялись

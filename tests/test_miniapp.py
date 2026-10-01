@@ -10,7 +10,7 @@ import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlencode
@@ -25,6 +25,7 @@ os.environ.update(TRADES_SOURCE="store", TELEGRAM_BOT_TOKEN="test-token",
 from aiohttp import FormData, web
 from aiohttp.test_utils import TestClient, TestServer
 import accounts
+import agent
 import bot
 import coordination
 import miniapp
@@ -49,6 +50,7 @@ class LeaseTests(unittest.TestCase):
 
     def tearDown(self):
         self.db.close()
+
 
     def test_recovered_primary_preempts_healthy_standby(self):
         # Primary always takes the lease back, even from a standby whose
@@ -117,6 +119,104 @@ class LeaseTests(unittest.TestCase):
                 self.assertIsNone(coordination.read(self.db))
                 self.assertTrue(coordination.permits(self.db, "main", "m", 0))
                 self.assertTrue(coordination.claim(self.db, "main", "m", "primary", 0)["granted"])
+
+
+class AgentCommandTests(unittest.TestCase):
+    def test_restart_is_not_reported_done_while_terminal_still_runs(self):
+        taskkill = type("Result", (), {"returncode": 128, "stdout": ""})()
+        tasklist = type("Result", (), {"returncode": 0,
+                                        "stdout": '"terminal64.exe","123","Console"'})()
+        with patch.object(agent, "_quiet_run", side_effect=(taskkill, tasklist)):
+            with self.assertRaises(RuntimeError):
+                agent._restart_terminal()
+
+    def test_restart_accepts_terminal_already_stopped(self):
+        taskkill = type("Result", (), {"returncode": 128, "stdout": ""})()
+        tasklist = type("Result", (), {"returncode": 0,
+                                        "stdout": '"INFO: No tasks are running"'})()
+        agent.trades._current = "previous"
+        with patch.object(agent, "_quiet_run", side_effect=(taskkill, tasklist)):
+            agent._restart_terminal()
+        self.assertEqual(agent.trades._current, "")
+
+    def test_restart_verifies_termination_after_successful_taskkill(self):
+        taskkill = type("Result", (), {"returncode": 0, "stdout": ""})()
+        tasklist = type("Result", (), {"returncode": 0, "stdout": '"terminal64.exe"'})()
+        with patch.object(agent, "_quiet_run", side_effect=(taskkill, tasklist)), \
+             patch.object(agent.time, "sleep"):
+            with self.assertRaises(RuntimeError):
+                agent._restart_terminal()
+
+    def test_restart_propagates_taskkill_failure(self):
+        with patch.object(agent, "_quiet_run", side_effect=OSError("access denied")):
+            with self.assertRaises(OSError):
+                agent._restart_terminal()
+
+    def test_failed_restart_is_not_acknowledged_in_agent_sync_payload(self):
+        info = type("Info", (), {"login": 123, "balance": 10.0, "equity": 10.0,
+                                 "currency": "USD", "server": "Demo", "name": ""})()
+        with patch.object(agent, "_restart_terminal", side_effect=RuntimeError("still running")), \
+             patch.object(agent.trades, "use"), \
+             patch.object(agent.trades, "account", return_value=info), \
+             patch.object(agent.trades, "fetch", return_value=[]), \
+             patch.object(agent.trades, "_capital_moves", return_value=10.0):
+            payload = agent.collect({"login":123, "name":"test", "command":"restart_terminal",
+                                     "command_id":"a" * 32, "since":0})
+        self.assertFalse(payload["command_done"])
+        self.assertIsNone(payload["command_id"])
+
+
+class BuildAllCurrencyTests(unittest.TestCase):
+    def test_archived_months_are_kept_separate_by_currency(self):
+        accs = [
+            {"owner":"1", "name":"USD", "strategy":"USD", "login":101, "multiplier":1},
+            {"owner":"1", "name":"RUB", "strategy":"RUB", "login":202, "multiplier":1},
+        ]
+        current = {"login":None}
+
+        def connect(acc):
+            current["login"] = acc["login"]
+            return True
+
+        summaries = {
+            101: [{"month":"2026-01", "gross":100, "platform":0, "trades":2}],
+            202: [{"month":"2026-01", "gross":200, "platform":0, "trades":3}],
+        }
+        with patch.object(accounts, "in_cabinet", return_value=accs), \
+             patch.object(accounts, "dedup", side_effect=lambda rows: rows), \
+             patch.object(accounts, "label", return_value="CU1"), \
+             patch.object(bot, "connect", side_effect=connect), \
+             patch.object(trades, "currency", side_effect=lambda: "USD" if current["login"] == 101 else "RUB"), \
+             patch.object(trades, "capital", return_value=100), \
+             patch.object(trades, "retained", return_value=0), \
+             patch.object(trades, "summary", return_value={"total":0}), \
+             patch.object(trades, "fetch", return_value=[]), \
+             patch.object(trades, "mine", side_effect=lambda value: value), \
+             patch.object(trades, "net_of_fee", side_effect=lambda value: value), \
+             patch.object(trades, "archived_before_now", return_value=(0, 0)), \
+             patch.object(trades, "monthly", side_effect=lambda **_: summaries[current["login"]]), \
+             patch.object(trades, "clock", return_value=datetime(2026, 10, 1)):
+            text = bot.build_all("all", owner=1, cabinet="CU1")
+
+        self.assertIn("+100.00" + trades.NBSP + "$", text)
+        self.assertIn("+200.00" + trades.NBSP + "₽", text)
+        self.assertIn("Январь · USD", text)
+        self.assertIn("Январь · RUB", text)
+        self.assertIn("<b>100" + trades.NBSP + "$</b> на стратегии · <i>USD</i>", text)
+        self.assertIn("<b>100" + trades.NBSP + "₽</b> на стратегии · <i>RUB</i>", text)
+        self.assertIn("+0.00" + trades.NBSP + "$", text)
+        self.assertIn("+0.00" + trades.NBSP + "₽", text)
+
+
+class MyfinRateTests(unittest.TestCase):
+    def test_parses_official_rates_with_non_unit_scales(self):
+        html = ("<table><tbody><tr><td>Доллар США</td><td>3.0207</td><td>3.0051</td>"
+                "<td>USD</td><td>1</td></tr><tr><td>Российский рубль</td><td>3.5962</td>"
+                "<td>3.6121</td><td>RUB</td><td>100</td></tr></tbody></table>")
+        rates = miniapp.parse_myfin_nbrb_rates(html)
+        self.assertAlmostEqual(miniapp.usd_factor("RUB", rates), (3.5962 / 100) / 3.0207)
+        self.assertEqual(miniapp.usd_factor("BYN", rates), 1 / 3.0207)
+        self.assertIsNone(miniapp.usd_factor("EUR", rates))
 
 
 class MachineStateTests(unittest.TestCase):
@@ -308,6 +408,7 @@ class OneEventOneMessageTests(unittest.IsolatedAsyncioTestCase):
         partner.unseen(self.db, "deposit", [{"tx_id": "old"}])     # не первый запуск
         self.app = web.Application()
         self.app["db"] = self.db
+        webhook_server.setup_webhook_outbox(self.app)
         self.app.router.add_route("*", "/hook/deposit", webhook_server.on_deposit)
         self.client = TestClient(TestServer(self.app))
         await self.client.start_server()
@@ -400,12 +501,59 @@ class OneEventOneMessageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.chat, [["1", first]], "бот не шлёт и не правит")
         self.assertEqual([i["event_key"] for i in self.feed()], ["trade:123:10"])
 
+    async def test_webhook_notification_retries_from_durable_outbox(self):
+        fail = AsyncMock(return_value=None)
+        with patch.object(webhook_server, "notify", fail):
+            response = await self.client.get(
+                "/hook/deposit?token=hook-test&customer_no=CU9&amount=5&currency=USD&tx_id=retry1")
+            self.assertEqual(response.status, 200, await response.text())
+            await asyncio.gather(*list(webhook_server._background))
+
+        rows = self.db.execute("SELECT event_key,attempts,delivered_at FROM webhook_outbox").fetchall()
+        self.assertEqual(len(rows), 1)
+        event_key, attempts, delivered_at = rows[0]
+        self.assertEqual(attempts, 1)
+        self.assertIsNone(delivered_at)
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM seen WHERE kind='deposit' AND id='retry1'").fetchone()[0], 1)
+
+        # Reopen the state DB to verify the pending event survives a restart.
+        self.db.close()
+        self.db = partner.open_db(str(Path(self.tmp.name) / "state.db"))
+        restarted_app = {"db": self.db}
+        # Make the persisted backoff due without waiting in a test.
+        self.db.execute("UPDATE webhook_outbox SET next_attempt_at='2000-01-01T00:00:00+00:00'")
+        self.db.commit()
+        succeed = AsyncMock(return_value=42)
+        with patch.object(webhook_server, "notify", succeed):
+            await webhook_server.deliver_webhook_outbox(restarted_app)
+            await webhook_server.deliver_webhook_outbox(restarted_app)
+        succeed.assert_awaited_once()
+        final = self.db.execute("SELECT attempts,delivered_at FROM webhook_outbox WHERE event_key=?",
+                                (event_key,)).fetchone()
+        self.assertEqual(final[0], 2)
+        self.assertIsNotNone(final[1])
+
     async def test_capital_to_strategy_is_the_same_event_as_hook(self):
         await self.hook(amount="100", tx="tx2")
         self.deal(11, 2400.0, "Deposit")       # 2400 ÷ 24 = 100 своих денег
         await self.bot.poll_mt5(self.fake_bot, self.db)
         self.assertEqual(len(self.chat), 1)
         self.assertIn("Заведено на стратегию", self.chat[0][1])
+
+    async def test_same_amount_with_different_tx_are_both_processed(self):
+        # MONEY-04: повторное пополнение на ту же сумму с другим tx_id не отсекается
+        await self.hook(amount="100", tx="tx_deposit_1")
+        await self.hook(amount="100", tx="tx_deposit_2")
+        self.assertEqual(len(self.chat), 2)
+        self.assertEqual(len(self.feed()), 2)
+
+    def test_stored_capital_prefers_local_history_after_withdrawal(self):
+        # MONEY-03: вывод капитала не должен перебиваться старым capital_hist
+        db = store.open_db(":memory:")
+        store.save_state(db, 1001, balance=5000.0, equity=5000.0, currency="USD",
+                         server="Tag-Live", capital_hist=10000.0)
+        with patch.object(trades, "_store_db", return_value=db),              patch.object(trades, "_login", 1001),              patch.object(trades, "HAS_MT5", False),              patch.object(trades, "_multiplier", 1),              patch.object(trades, "_capital_moves", return_value=7000.0),              patch.object(trades, "archive", return_value=[]):
+            self.assertEqual(trades._stored_capital(), 7000.0)
 
     async def test_different_amounts_are_different_events(self):
         await self.hook()
@@ -570,9 +718,9 @@ class BroadcastFormatTests(unittest.TestCase):
         row = {"ticket": 5, "time": "2026-09-01T10:00:00", "symbol": "XAUUSD", "side": "BUY",
                "volume": 0.02, "price": 2400, "profit": 0, "swap": 0, "commission": 0, "net": 0,
                "is_balance": False, "is_closing": False, "is_opening": True, "comment": ""}
-        _, _, deals, _ = webhook_server._sync_payload({**base, "deals": [{**row, "position": 42}]})
+        _, _, deals, _, _ = webhook_server._sync_payload({**base, "deals": [{**row, "position": 42}]})
         self.assertEqual(deals[0]["position"], 42)
-        _, _, deals, _ = webhook_server._sync_payload({**base, "deals": [row]})
+        _, _, deals, _, _ = webhook_server._sync_payload({**base, "deals": [row]})
         self.assertIsNone(deals[0]["position"])
         for bad in (-1, "42", 1.5, True):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
@@ -584,22 +732,16 @@ class BroadcastFormatTests(unittest.TestCase):
     def test_telegram_counts_emoji_as_two_caption_units(self):
         self.assertEqual(miniapp.telegram_length("😀" * 600), 1200)
 
-    def test_same_login_on_another_server_is_reported(self):
-        """DATA-02: один login на двух серверах — разные физические счета.
-
-        Таблицы ключуются одним login, поэтому такой синк молча затрёт
-        баланс и капитал чужого счёта. Пока брокер один, этого не бывает;
-        защёлка должна сказать, когда появится второй.
-        """
+    def test_same_login_on_another_server_is_rejected(self):
+        """DATA-02: не смешивать данные при изменении server у login."""
         db = store.open_db(":memory:")
         store.save_state(db, 500, 10.0, 10.0, "USD", "Broker-A")
-        with self.assertLogs("store", level="ERROR") as logs:
+        with self.assertRaises(store.ServerMismatchError):
             store.save_state(db, 500, 20.0, 20.0, "USD", "Broker-B")
-        self.assertIn("DATA-02", logs.output[0])
-        # тот же сервер — молчим, это обычный синк
-        with patch.object(store.log, "error") as quiet:
-            store.save_state(db, 500, 30.0, 30.0, "USD", "Broker-B")
-            quiet.assert_not_called()
+        self.assertEqual(store.get_state(db, 500)["balance"], 10.0)
+        # Тот же сервер продолжает обновляться штатно.
+        store.save_state(db, 500, 30.0, 30.0, "USD", "Broker-A")
+        self.assertEqual(store.get_state(db, 500)["balance"], 30.0)
 
     def test_undelivered_portal_event_comes_back_next_round(self):
         """Сбой Telegram не должен съедать событие кабинета.
@@ -705,6 +847,24 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def call(self, method, path, uid=1, **kwargs):
         return await self.client.request(method, path, headers={"X-Telegram-Init-Data":signed(uid)}, **kwargs)
+
+    async def test_bootstrap_converts_supported_currencies_to_usd(self):
+        accounts.add({**self.acc, "login":456, "name":"RUB", "strategy":"RUB",
+                      "currency":"RUB", "multiplier":1})
+        accounts.add({**self.acc, "login":789, "name":"BYN", "strategy":"BYN",
+                      "currency":"BYN", "multiplier":1})
+        store.save_state(self.tdb, 456, 100, 100, "RUB", "Demo", 100)
+        store.save_state(self.tdb, 789, 10, 10, "BYN", "Demo", 10)
+        totals = {123: {"cur":"USD", "now":50, "pnl":0, "month_net":0, "today_net":0, "kept":0},
+                  456: {"cur":"RUB", "now":100, "pnl":0, "month_net":0, "today_net":0, "kept":0},
+                  789: {"cur":"BYN", "now":10, "pnl":0, "month_net":0, "today_net":0, "kept":0}}
+        rates = {"USD":2.0, "RUB":0.02, "BYN":1.0}
+        with patch.object(miniapp.logic, "account_totals", side_effect=lambda acc: totals[acc["login"]]), \
+             patch.object(miniapp, "myfin_nbrb_rates", new=AsyncMock(return_value=rates)):
+            data = await (await self.call("GET", "/api/bootstrap")).json()
+        self.assertAlmostEqual(data["totals"]["USD"]["capital"], 56)
+        self.assertEqual(set(data["totals"]), {"USD"})
+        self.assertEqual(data["fx"]["source"], "MYFIN · НБРБ")
 
     async def test_formatted_media_broadcast_and_duplicate_request(self):
         partner.kv_set(self.db, "guest:2", "1")
@@ -1095,6 +1255,16 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data["accounts"], 0)
         self.assertEqual(data["summary"]["net_income"], 0)
 
+    async def test_shared_account_balance_uses_inviter_current_capital_settings(self):
+        accounts.share([123], 1, 2)
+        # Shared rows are snapshots. A later owner override must still drive
+        # the read-only balance shown to the guest.
+        accounts.update("SONIC", 1, base=150)
+        home = await (await self.call("GET", "/api/bootstrap", uid=2)).json()
+        observed = next(a for a in home["accounts"] if a["login"] == 123)
+        self.assertTrue(observed["shared"])
+        self.assertEqual(observed["totals"]["now"], 150)
+
     async def test_week_report_survives_archived_month_at_its_start(self):
         # понедельник этой недели может лежать в уже свёрнутом (архивном) месяце —
         # report_archive не должен ронять весь отчёт 422, а просто не учитывать
@@ -1439,16 +1609,35 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status,409)
         self.assertEqual(store.get_state(self.tdb,123)["balance"],2400)
 
+    async def test_sync_from_different_server_does_not_mix_account_data(self):
+        coordination.claim(self.db, "main", "session-aaaaaaaaaaaaaaaa", "primary")
+        store.set_command(self.tdb, 123, "restart_terminal")
+        command_id = store.get_command_id(self.tdb, 123)
+        packet = {"login":123, "balance":2500, "equity":2500, "currency":"USD",
+                  "server":"Other-Broker", "deals":[], "command_done":True,
+                  "command_id":command_id, "host":"main",
+                  "session":"session-aaaaaaaaaaaaaaaa"}
+        response = await self.client.post("/agent/sync", headers={"X-Token":"agent-test"},
+                                          json=packet)
+        self.assertEqual(response.status, 409, await response.text())
+        self.assertEqual(store.get_state(self.tdb, 123)["balance"], 2400)
+        self.assertEqual(store.get_state(self.tdb, 123)["server"], "Demo")
+        self.assertEqual(store.last_ticket(self.tdb, 123), 0)
+        self.assertEqual(store.get_command_id(self.tdb, 123), command_id)
+        self.assertEqual(accounts.load(1)[0]["server"], "Demo")
+
     async def test_sync_rejects_entire_invalid_packet_without_acking_command(self):
         coordination.claim(self.db, "main", "session-aaaaaaaaaaaaaaaa", "primary")
         store.set_command(self.tdb, 123, "restart_terminal")
+        command_id = store.get_command_id(self.tdb, 123)
         deal = {"ticket": 701, "time": "2026-09-17T09:00:00", "symbol": "XAUUSD",
                 "side": "BUY", "volume": .1, "price": 3000, "profit": 12,
                 "swap": 0, "commission": 0, "net": 12, "is_balance": False,
                 "is_closing": True, "is_opening": False, "comment": ""}
         packet = {"login":123, "balance":2500, "equity":2500, "currency":"USD",
                   "server":"Demo", "capital_hist":100, "deals":[deal],
-                  "command_done":True, "host":"main", "session":"session-aaaaaaaaaaaaaaaa"}
+                  "command_done":True, "command_id":command_id,
+                  "host":"main", "session":"session-aaaaaaaaaaaaaaaa"}
         for broken in ({**deal, "ticket":None}, {**deal, "ticket":702, "net":"NaN"},
                        {**deal, "ticket":702, "time":"bad"},
                        {**deal, "ticket":702, "is_closing":True, "is_opening":True}):
@@ -1465,6 +1654,40 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(store.get_state(self.tdb,123)["balance"], 2500)
         self.assertEqual(store.last_ticket(self.tdb,123), 701)
         self.assertIsNone(store.get_command(self.tdb,123))
+
+    async def test_retry_of_old_command_ack_does_not_clear_new_command(self):
+        coordination.claim(self.db, "main", "session-aaaaaaaaaaaaaaaa", "primary")
+        store.set_command(self.tdb, 123, "restart_terminal")
+        old_id = store.get_command_id(self.tdb, 123)
+        packet = {"login":123, "balance":2500, "equity":2500, "currency":"USD",
+                  "server":"Demo", "deals":[], "command_done":True,
+                  "command_id":old_id, "host":"main",
+                  "session":"session-aaaaaaaaaaaaaaaa"}
+        first = await self.client.post("/agent/sync", headers={"X-Token":"agent-test"},
+                                       json=packet)
+        self.assertEqual(first.status, 200, await first.text())
+        self.assertIsNone(store.get_command(self.tdb, 123))
+
+        store.set_command(self.tdb, 123, "restart_terminal")
+        new_id = store.get_command_id(self.tdb, 123)
+        self.assertNotEqual(old_id, new_id)
+        retry = await self.client.post("/agent/sync", headers={"X-Token":"agent-test"},
+                                       json=packet)
+        self.assertEqual(retry.status, 200, await retry.text())
+        self.assertEqual(store.get_command(self.tdb, 123), "restart_terminal")
+        self.assertEqual(store.get_command_id(self.tdb, 123), new_id)
+
+    async def test_command_done_without_id_does_not_clear_current_command(self):
+        coordination.claim(self.db, "main", "session-aaaaaaaaaaaaaaaa", "primary")
+        store.set_command(self.tdb, 123, "restart_terminal")
+        command_id = store.get_command_id(self.tdb, 123)
+        response = await self.client.post("/agent/sync", headers={"X-Token":"agent-test"},
+            json={"login":123, "balance":2500, "equity":2500, "currency":"USD",
+                  "server":"Demo", "deals":[], "command_done":True,
+                  "host":"main", "session":"session-aaaaaaaaaaaaaaaa"})
+        self.assertEqual(response.status, 200, await response.text())
+        self.assertEqual(store.get_command_id(self.tdb, 123), command_id)
+        self.assertEqual(store.get_command(self.tdb, 123), "restart_terminal")
 
     async def test_sync_rolls_back_state_and_ack_if_database_insert_fails(self):
         coordination.claim(self.db, "main", "session-aaaaaaaaaaaaaaaa", "primary")
@@ -1484,6 +1707,35 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(store.get_state(self.tdb,123)["balance"], 2400)
         self.assertEqual(store.last_ticket(self.tdb,123), 0)
         self.assertEqual(store.get_command(self.tdb,123), "restart_terminal")
+
+    async def test_sync_rolls_back_when_account_file_write_fails(self):
+        coordination.claim(self.db, "main", "session-aaaaaaaaaaaaaaaa", "primary")
+        store.set_command(self.tdb, 123, "restart_terminal")
+        command_id = store.get_command_id(self.tdb, 123)
+        deal = {"ticket":702,"time":"2026-09-17T09:00:00","symbol":"XAUUSD",
+                "side":"BUY","volume":.1,"price":3000,"profit":12,"swap":0,
+                "commission":0,"net":12,"is_balance":False,"is_closing":True,
+                "is_opening":False,"comment":""}
+        packet = {"login":123,"balance":2600,"equity":2600,"currency":"USD",
+                  "server":"Demo","holder":"Updated Holder","deals":[deal],
+                  "command_done":True,"command_id":command_id,"host":"main",
+                  "session":"session-aaaaaaaaaaaaaaaa"}
+        with patch.object(accounts, "save", side_effect=OSError("disk full")):
+            failed = await self.client.post("/agent/sync", headers={"X-Token":"agent-test"},
+                                            json=packet)
+        self.assertEqual(failed.status, 503)
+        self.assertEqual(store.get_state(self.tdb, 123)["balance"], 2400)
+        self.assertEqual(store.last_ticket(self.tdb, 123), 0)
+        self.assertEqual(store.get_command_id(self.tdb, 123), command_id)
+        self.assertEqual(accounts.load(1)[0]["holder"], "Test")
+
+        retried = await self.client.post("/agent/sync", headers={"X-Token":"agent-test"},
+                                         json=packet)
+        self.assertEqual(retried.status, 200, await retried.text())
+        self.assertEqual(store.get_state(self.tdb, 123)["balance"], 2600)
+        self.assertEqual(store.last_ticket(self.tdb, 123), 702)
+        self.assertIsNone(store.get_command(self.tdb, 123))
+        self.assertEqual(accounts.load(1)[0]["holder"], "Updated Holder")
 
     async def test_agent_candles_upserts_and_rejects_bad_rows(self):
         now = trades.clock()

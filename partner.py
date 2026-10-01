@@ -398,6 +398,16 @@ def open_db(path: str = None):
         UNIQUE(user_id, event_key)
     )""")
     db.execute("CREATE INDEX IF NOT EXISTS notifications_user_time ON notifications(user_id, id DESC)")
+    db.execute("""CREATE TABLE IF NOT EXISTS webhook_outbox (
+        event_key TEXT PRIMARY KEY,
+        payload TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        next_attempt_at TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        delivered_at TEXT
+    )""")
+    db.execute("CREATE INDEX IF NOT EXISTS webhook_outbox_pending "
+               "ON webhook_outbox(next_attempt_at) WHERE delivered_at IS NULL")
     db.commit()
     return db
 
@@ -760,15 +770,16 @@ def kv_del_exact(db, key: str) -> int:
     return n
 
 
-def kv_set(db, key, value):
+def kv_set(db, key, value, *, commit=True):
     db.execute("INSERT OR REPLACE INTO kv VALUES (?, ?)", (key, str(value)))
-    db.commit()
+    if commit:
+        db.commit()
 
 
 SEEN_KEEP = 5000    # сколько последних событий каждого вида помним для дедупликации
 
 
-def unseen(db, kind: str, rows: list[dict]) -> tuple[list[dict], bool]:
+def unseen(db, kind: str, rows: list[dict], on_fresh=None) -> tuple[list[dict], bool]:
     """Новые записи + признак первого запуска (тогда только запоминаем, не шлём)."""
     first_run = db.execute("SELECT 1 FROM seen WHERE kind=? LIMIT 1", (kind,)).fetchone() is None
     fresh = []
@@ -783,6 +794,12 @@ def unseen(db, kind: str, rows: list[dict]) -> tuple[list[dict], bool]:
             "DELETE FROM seen WHERE kind=? AND rowid NOT IN "
             "(SELECT rowid FROM seen WHERE kind=? ORDER BY rowid DESC LIMIT ?)",
             (kind, kind, SEEN_KEEP))
+    if on_fresh and fresh:
+        try:
+            on_fresh(fresh, first_run)
+        except Exception:
+            db.rollback()
+            raise
     db.commit()
     return fresh, first_run
 
@@ -798,4 +815,53 @@ def forget_seen(db, kind: str, rows: list[dict]) -> None:
     """
     for row in rows:
         db.execute("DELETE FROM seen WHERE kind=? AND id=?", (kind, row_id(row)))
+    db.commit()
+
+
+def enqueue_webhook_delivery(db, event_key: str, payload: dict) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    db.execute("INSERT OR IGNORE INTO webhook_outbox "
+               "(event_key,payload,created_at,next_attempt_at) VALUES (?,?,?,?)",
+               (event_key, json.dumps(payload, ensure_ascii=False, default=str), now, now))
+
+
+def pending_webhook_deliveries(db, limit=25) -> list[dict]:
+    now = datetime.now(timezone.utc).isoformat()
+    if db.in_transaction:
+        db.commit()
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        rows = db.execute("SELECT event_key,payload,attempts FROM webhook_outbox "
+                          "WHERE delivered_at IS NULL AND next_attempt_at<=? "
+                          "ORDER BY created_at LIMIT ?", (now, limit)).fetchall()
+        if rows:
+            claimed_until = (datetime.now(timezone.utc) + timedelta(minutes=2)).isoformat()
+            db.executemany("UPDATE webhook_outbox SET next_attempt_at=? "
+                           "WHERE event_key=? AND delivered_at IS NULL",
+                           [(claimed_until, row[0]) for row in rows])
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return [{"event_key": row[0], "payload": row[1], "attempts": row[2]} for row in rows]
+
+
+def finish_webhook_delivery(db, event_key: str, delivered: bool) -> None:
+    now = datetime.now(timezone.utc)
+    if delivered:
+        db.execute("UPDATE webhook_outbox SET attempts=attempts+1, delivered_at=? "
+                   "WHERE event_key=? AND delivered_at IS NULL",
+                   (now.isoformat(), event_key))
+    else:
+        row = db.execute("SELECT attempts FROM webhook_outbox WHERE event_key=? "
+                         "AND delivered_at IS NULL", (event_key,)).fetchone()
+        if not row:
+            return
+        delay = min(3600, 30 * 2 ** min(row[0], 7))
+        db.execute("UPDATE webhook_outbox SET attempts=attempts+1,next_attempt_at=? "
+                   "WHERE event_key=? AND delivered_at IS NULL",
+                   ((now + timedelta(seconds=delay)).isoformat(), event_key))
+    cutoff = (now - timedelta(days=30)).isoformat()
+    db.execute("DELETE FROM webhook_outbox WHERE delivered_at IS NOT NULL AND delivered_at<?",
+               (cutoff,))
     db.commit()
