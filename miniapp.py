@@ -599,7 +599,6 @@ async def report(request):
     # один раз на запрос: капитал на дату сделки/месяца — это он же минус
     # позднейшие движения (trades.capital_at с current), а не новый пересчёт
     raw_capital = trades.capital()
-    current_capital = max(0, raw_capital)
     # проценты — единой мерой trades.period_growth, как у карточек счёта: вся
     # история движений нужна, чтобы найти капитал на момент каждой сделки
     all_rows = trades.fetch(datetime(2000, 1, 1), logic.utcnow() + timedelta(days=1))
