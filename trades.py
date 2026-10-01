@@ -328,12 +328,14 @@ def capital() -> float:
     данных счёта, а не истинность его баланса.
     """
     a = account()
+    if a is not None and a.balance == 0:
+        return 0.0
     if _base is not None:
         extra = _capital_moves(_base_at) if _base_at else 0.0
-        return _base + extra
+        return max(0.0, _base + extra)
 
     if a is not None and _multiplier:
-        return (a.balance - _profit_on_account()) / _multiplier
+        return max(0.0, (a.balance - _profit_on_account()) / _multiplier)
 
     # Капитал, сложенный из всей истории счёта: живые сделки плюс свёрнутые
     # месяцы. Прибыль в него не попадает.

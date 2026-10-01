@@ -4,6 +4,7 @@ const tg = window.Telegram?.WebApp;
 const preview = new URLSearchParams(location.search).get('preview') === '1';
 const state = {data:null, people:null, admin:null, report:null, reportError:'', priceChart:null, notifications:{items:[],unread:0}, view:'overview', login:null, period:'today', kind:'trades', offset:0, from:'', to:'', filters:{overview:{period:'today',from:'',to:''},account:{period:'today',from:'',to:''}}, busy:false, currency:null};
 let generation = 0, refreshTimer, toastTimer, notificationsStarted = false, lastNotificationId = 0;
+state.projects=null;state.projectsError='';state.projectId=null;
 const paths = {overview:'M3 10l9-7 9 7v10H3z M9 20v-7h6v7',accounts:'M3 7h18v14H3z M3 7V4h14v3 M16 12h5v5h-5z',deals:'M4 5h16 M4 12h16 M4 19h16 M8 2v6 M16 9v6 M9 16v6',people:'M16 21v-3a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v3 M9 10a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M17 3a4 4 0 0 1 0 8 M22 21v-3a4 4 0 0 0-3-4',settings:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M12 2v3 M12 19v3 M2 12h3 M19 12h3 M5 5l2 2 M17 17l2 2 M5 19l2-2 M17 7l2-2',plus:'M12 5v14 M5 12h14',arrow:'M5 12h14 M14 7l5 5-5 5',up:'M7 17 17 7 M7 7h10v10',down:'M7 7l10 10 M7 17h10V7',refresh:'M20 7A8 8 0 0 0 6 5L3 8 M3 3v5h5 M4 17a8 8 0 0 0 14 2l3-3 M21 21v-5h-5',sun:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M12 1v2 M12 21v2 M1 12h2 M21 12h2 M4 4l2 2 M18 18l2 2 M4 20l2-2 M18 6l2-2',chevron:'M9 5l7 7-7 7',chart:'M3 19h18 M4 15l5-5 5 3 6-9',check:'m5 12 4 4L19 6',clock:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 7v5l3 2',link:'M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-2 2 M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l2-2',back:'M19 12H5 M10 7l-5 5 5 5',shield:'M12 2l9 4v6c0 5-9 10-9 10S3 17 3 12V6z M8 12l3 3 5-6',copy:'M8 8h13v13H8z M16 8V3H3v13h5'};
 paths.bell='M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9 M10 21h4';paths.exit='M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4 M16 17l5-5-5-5 M21 12H9';paths.palette='M12 3a9 9 0 1 0 0 18c1.4 0 2-.9 2-1.8 0-1.4-1.2-1.6-1.2-2.8 0-.9.7-1.4 1.6-1.4H17a4 4 0 0 0 4-4c0-4.4-4-8-9-8z';
 Object.assign(paths,{
@@ -38,7 +39,8 @@ function button(action,text,style='secondary',ico='',attrs=''){return `<button t
 function broadcastPreview(text){return esc(text).replace(/&lt;(\/?)(b|i|code|blockquote)&gt;/g,'<$1$2>');}
 function fileSize(bytes){return `${number(bytes/1024/1024)} МБ`;}
 async function mediaKind(file){const b=new Uint8Array(await file.slice(0,12).arrayBuffer());if(b[0]===255&&b[1]===216&&b[2]===255)return 'photo';if([137,80,78,71,13,10,26,10].every((v,i)=>b[i]===v))return 'photo';if(b[4]===102&&b[5]===116&&b[6]===121&&b[7]===112)return 'video';return null;}
-const tabs=[['overview','Обзор'],['accounts','Счета'],['people','Гости'],['settings','Настройки']];
+paths.projects='M3 7h7l2 2h9v11H3z M3 7V4h7l2 3 M7 13h10 M7 16h6';
+const tabs=[['overview','Обзор'],['accounts','Счета'],['projects','Проекты'],['people','Гости'],['settings','Настройки']];
 const periods=[['today','Сегодня'],['yesterday','Вчера'],['week','Эта неделя'],['lastweek','Прошлая неделя'],['month','Этот месяц'],['lastmonth','Прошлый месяц'],['all','Всё время'],['custom','Свои даты']];
 // Панель навигации строится один раз и дальше только переключает активную
 // вкладку: если пересобирать разметку на каждый render(), подсветке не из
@@ -50,7 +52,7 @@ const NAV_ROOTS=['#desktop-nav','#mobile-nav'];
 function reducedMotion(){return !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;}
 function nav(){
  document.body.classList.toggle('onboarding-only',onboardingOnly());
- const active=state.view==='account'?'accounts':state.view==='faq'?'overview':state.view;
+ const active=state.view==='account'?'accounts':state.view==='project'?'projects':state.view==='faq'?'overview':state.view;
  for(const selector of NAV_ROOTS){
   const root=$(selector);
   if(!root.dataset.ready){
@@ -68,7 +70,7 @@ function nav(){
   root.querySelectorAll('a[data-tab]').forEach(link=>{const on=link.dataset.tab===active;link.classList.toggle('active',on);if(on)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');});
   moveGlider(root);
  }
- const crumb=$('#crumb'),title=state.view==='account'?'Счета / Счёт':state.view==='faq'?'Частые вопросы':state.view==='onboarding'?'Как добавить свой счёт':tabs.find(([id])=>id===state.view)?.[1]||'Счёт';
+ const crumb=$('#crumb'),title=state.view==='project'?'Проекты / Проект':state.view==='account'?'Счета / Счёт':state.view==='faq'?'Частые вопросы':state.view==='onboarding'?'Как добавить свой счёт':tabs.find(([id])=>id===state.view)?.[1]||'Счёт';
  // анимируем только настоящую смену: render() идёт и на фоновом обновлении,
  // где заголовок тот же и мигать ему незачем
  if(crumb.textContent!==title){
@@ -99,7 +101,7 @@ function moveGlider(root,instant=false){
 }
 // Порядок разделов для направления перехода: вглубь и вправо по панели —
 // новый экран въезжает справа, назад — слева
-const VIEW_ORDER={overview:0,onboarding:.25,faq:.5,accounts:1,account:1.5,people:2,settings:3};
+const VIEW_ORDER={overview:0,onboarding:.25,faq:.5,accounts:1,account:1.5,projects:2,project:2.5,people:3,settings:4};
 // Въезд — CSS-классом, который снимается по окончании: после WAAPI-анимации
 // transform Chromium держал устаревшую карту попаданий, и первое нажатие в
 // новом разделе уходило «мимо» кнопки, пока стиль #main не изменится
@@ -502,7 +504,7 @@ function settingsView(){const personal=state.data.accounts.filter(a=>!a.demo&&!a
 // отпечаток всего, из чего строится экран; server_time меняется на каждом
 // запросе и на вид не влияет — без него одинаковые данные дают одинаковый ключ
 let paintedKey='';
-function paintKey(){const {server_time,...data}=state.data||{};return JSON.stringify([state.view,state.login,state.period,state.from,state.to,state.currency,state.kind,state.offset,data,state.report,state.reportError,state.priceChart,state.people,state.admin]);}
+function paintKey(){const {server_time,...data}=state.data||{};return JSON.stringify([state.view,state.login,state.projectId,state.projects,state.projectsError,state.period,state.from,state.to,state.currency,state.kind,state.offset,data,state.report,state.reportError,state.priceChart,state.people,state.admin]);}
 function render(){paintedKey='';nav();
  // FLIP: #main.innerHTML заменяется целиком на каждый render(), поэтому
  // .segmented-thumb каждый раз новый DOM-узел без истории — обычный CSS
@@ -518,7 +520,7 @@ function render(){paintedKey='';nav();
   const fingerprint=[...strip.querySelectorAll('button')].map(b=>b.dataset.value||b.textContent).join('|');
   prevThumbs.set(fingerprint, {left:active.offsetLeft, width:active.offsetWidth});
  });
- const views={overview,accounts:accountsView,account:accountView,people:peopleView,settings:settingsView,faq:faqView,onboarding:welcomeView};$('#main').innerHTML=(preview?'<div class="preview-label">Демо-режим · вымышленные данные. Отправка сообщений и управление счетами работают только при запуске из <a href="https://t.me/tagmarketgold_bot" target="_blank" rel="noopener">бота в Telegram</a>.</div>':'')+(views[state.view]||overview)()+(state.view==='settings'&&state.admin?.network?.length?networkView():'');$('#avatar').textContent=state.data.user.name.slice(0,1).toUpperCase();
+ const views={overview,accounts:accountsView,account:accountView,projects:projectsView,project:projectView,people:peopleView,settings:settingsView,faq:faqView,onboarding:welcomeView};$('#main').innerHTML=(preview?'<div class="preview-label">Демо-режим · вымышленные данные. Отправка сообщений и управление счетами работают только при запуске из <a href="https://t.me/tagmarketgold_bot" target="_blank" rel="noopener">бота в Telegram</a>.</div>':'')+(views[state.view]||overview)()+(state.view==='settings'&&state.admin?.network?.length?networkView():'');$('#avatar').textContent=state.data.user.name.slice(0,1).toUpperCase();
  // сначала все замеры, потом все записи: чередование чтения и записи в одном
  // цикле заставляет браузер пересчитывать вёрстку на каждой полосе
  const centering=[];
@@ -642,6 +644,8 @@ async function api(path,options={}){
   const d=previewData(await fetch('preview.json',{cache:'no-store'}).then(r=>r.json()));
   if(path==='/bootstrap')return d.bootstrap;
   if(path==='/people')return d.people;
+  if(path==='/projects')return {projects:d.projects||[]};
+  if(path.startsWith('/projects/'))return (d.projects||[]).find(p=>p.id===path.split('/')[2])||null;
   if(path==='/admin')return d.admin;
   if(path.startsWith('/guests/'))return {report:'Виктория Орлова\n\nСчета гостя\n• SONIC 2 · 2 840,00 $\n\nЗаработок без демо-счёта\nСегодня  +42,18 $\nНеделя   +186,40 $\nМесяц    +312,66 $\n\nДемо-счёт в расчёт не входит.'};
   if(path.startsWith('/cabinets/'))return {report:'Отчёт кабинета · CU-1\n\nЛичные стратегии: 2\nРезультат после комиссии: +684,32 $\nДемо-счёт исключён из итога.'};
@@ -666,6 +670,7 @@ async function viewParts(){
  if(['overview','account'].includes(state.view)){try{out.report=await loadReport();out.reportError='';}catch(error){out.report=null;out.reportError=error.message;}}
  if(state.view==='overview'){const sonic=state.data.accounts.find(a=>!a.demo&&/sonic|sonik/i.test(`${a.strategy||''} ${a.name||''}`));out.priceChart=sonic?await api(`/accounts/${sonic.login}/candles?period=${state.period==='custom'?'week':state.period}`).catch(()=>null):null;}
  if(state.view==='people')out.people=await api('/people');
+ if(['projects','project'].includes(state.view)){try{out.projects=(await api('/projects')).projects;out.projectsError='';}catch(error){out.projects=state.projects;out.projectsError=error.message;}}
  if(state.view==='settings'&&state.data.founder)out.admin=await api('/admin');
  return out;
 }
@@ -674,10 +679,10 @@ async function viewParts(){
 // данные и перерисовывал экран, и раздел заметно «обновлялся» на глазах.
 // Свежесть держит фоновое обновление; старше его интервала — грузим заново
 const viewCache=new Map();
-function viewKey(){return [state.view,state.login,state.period,state.from,state.to,state.currency,state.kind,state.offset].join('|');}
-function remember(){viewCache.set(viewKey(),{report:state.report,reportError:state.reportError,priceChart:state.priceChart,at:Date.now()});}
+function viewKey(){return [state.view,state.login,state.projectId,state.period,state.from,state.to,state.currency,state.kind,state.offset].join('|');}
+function remember(){viewCache.set(viewKey(),{report:state.report,reportError:state.reportError,priceChart:state.priceChart,projects:state.projects,projectsError:state.projectsError,at:Date.now()});}
 function refreshEvery(){return Math.max(30,Number(state.data?.refresh_seconds)||60)*1000;}
-const VIEW_NEEDS_DATA=view=>['overview','account','people'].includes(view)||(view==='settings'&&!!state.data?.founder);
+const VIEW_NEEDS_DATA=view=>['overview','account','people','projects','project'].includes(view)||(view==='settings'&&!!state.data?.founder);
 // Смена периода, вкладки истории, страницы, валюты: то же, что переход —
 // из памяти, если свежее, иначе догружаем только отчёт раздела. Раньше каждое
 // такое нажатие перегружало всё (4 запроса), и частые переключения упирались
@@ -744,21 +749,22 @@ let navSeq=0;
 async function navigate(){
  const seq=++navSeq;
  const [view,login]=location.hash.slice(1).split('/');
- const next=['overview','accounts','account','people','settings','faq'].includes(view)?view:'overview';
+ const next=['overview','accounts','account','projects','project','people','settings','faq'].includes(view)?view:'overview';
  const direction=Math.sign((VIEW_ORDER[next]??0)-(VIEW_ORDER[state.view]??0));
- const moved=next!==state.view||(!!login&&Number(login)!==state.login);
+ const moved=next!==state.view||(!!login&&(next==='project'?login!==state.projectId:Number(login)!==state.login));
  // тот же раздел (повторное событие hashchange) — экран уже верный
  if(state.data&&!moved)return;
  clearTimeout(choiceTimer);if(state.data)cancelLoads();
  if(state.filters[state.view])state.filters[state.view]={period:state.period,from:state.from,to:state.to};
  if(next!==state.view&&state.filters[next])Object.assign(state,state.filters[next]);
  state.view=next;
- if(login)state.login=Number(login);
+ if(login){if(next==='project')state.projectId=login;else state.login=Number(login);}
  state.offset=0;state.kind='trades';
  const cached=state.data&&viewCache.get(viewKey());
  const fresh=!!state.data&&(!VIEW_NEEDS_DATA(next)||(!!cached&&Date.now()-cached.at<refreshEvery()));
  state.report=cached?cached.report:null;state.reportError=cached?.reportError||'';
  if(cached&&next==='overview')state.priceChart=cached.priceChart;
+ if(cached&&['projects','project'].includes(next)){state.projects=cached.projects;state.projectsError=cached.projectsError||'';}
  // подсветка панели едет сразу по нажатию, а старый экран уходит параллельно:
  // ждать отрисовки нового значило бы показать задержку на самом заметном месте
  nav();
@@ -773,7 +779,7 @@ async function navigate(){
  }
  if(!state.data)await refresh();
  else if(!fresh)await loadView();
- tg?.BackButton?.[state.view==='account'?'show':'hide']();
+ tg?.BackButton?.[['account','project'].includes(state.view)?'show':'hide']();
 }
 // [id, название, цвет шапки Telegram, образцы]. Фон у всех схем один —
 // графитовый: гамма меняет только акценты, не всю тему
@@ -784,6 +790,51 @@ function dialog(title,body,label='Сохранить'){return new Promise(resolv
 async function confirm(title,text,label='Подтвердить'){return !!await dialog(title,`<p>${esc(text)}</p>`,label);}
 async function mutate(path,data,method='POST'){await api(path,{method,body:data===undefined?undefined:JSON.stringify(data)});tg?.HapticFeedback?.notificationOccurred('success');toast('Сохранено. Изменения доступны и в боте.');await refresh();}
 function field(label,name,type='text',value='',extra=''){return `<label class="field">${esc(label)}<input type="${type}" name="${name}" value="${esc(value)}" ${extra}></label>`;}
+const PROJECT_PERIODS={day:'день',week:'неделю',month:'месяц'};
+let projectFormSeq=0;
+function projectMoney(value,currency){return `${number(value)} ${esc(currency)}`;}
+function projectIncome(p){return `≈ ${p.expected_income>0?'+':''}${projectMoney(p.expected_income,p.currency)} / ${PROJECT_PERIODS[p.period]}`;}
+function projectCard(p){return `<a href="#project/${esc(p.id)}" class="panel project-card"><div class="project-card-head"><span class="project-icon">${icon('projects')}</span><h2>${esc(p.name)}</h2>${icon('arrow')}</div><b class="project-total">${projectMoney(p.total,p.currency)}</b><small>${p.multi?countLabel(p.accounts.length,['аккаунт','аккаунта','аккаунтов']):'Вложено'}</small><div class="project-rate"><span>${number(p.rate_percent)}% / ${PROJECT_PERIODS[p.period]}</span><b>${projectIncome(p)}</b></div></a>`;}
+function projectsView(){
+ const head=header('Проекты','Вклады и дополнительные источники дохода',button('project-create','Добавить проект','primary','plus'));
+ if(state.projects===null)return `<div class="project-space">${head}${state.projectsError?empty('Не удалось загрузить проекты',state.projectsError,button('refresh','Попробовать снова')):'<p class="muted">Загружаем проекты…</p>'}</div>`;
+ if(!state.projects.length)return `<div class="project-space">${header('Проекты')}${empty('Ваши проекты','Соберите вклады и дополнительные источники дохода в одном месте.',button('project-create','Добавить проект','primary','plus'))}${state.projectsError?notice(state.projectsError,true):''}</div>`;
+ const sums={};for(const p of state.projects)sums[p.currency]=(sums[p.currency]||0)+p.total;
+ return `<div class="project-space">${head}${state.projectsError?notice('Не удалось обновить проекты. Показаны последние данные.',true):''}<section class="panel project-summary"><div><span class="eyebrow">МОИ ПРОЕКТЫ</span><h2>${countLabel(state.projects.length,['проект','проекта','проектов'])}</h2></div><div><small>Вложено</small>${Object.entries(sums).map(([cur,total])=>`<b>${projectMoney(total,cur)}</b>`).join('')}</div></section><div class="project-grid">${state.projects.map(projectCard).join('')}</div><p class="project-note">Доход расчётный, без капитализации. Проекты учитываются отдельно от торговых счетов.</p></div>`;
+}
+function projectView(){
+ const p=state.projects?.find(p=>p.id===state.projectId),back='<a href="#projects" class="button secondary small back">← Проекты</a>';
+ if(!p)return `<div class="project-space">${back}${state.projects===null?empty('Загружаем проект',state.projectsError||''):empty('Проект не найден','Возможно, он был удалён.')}</div>`;
+ return `<div class="project-space">${back}${header(p.name,`${number(p.rate_percent)}% / ${PROJECT_PERIODS[p.period]}`,button('project-edit','Редактировать','secondary','',`data-id="${esc(p.id)}"`))}${state.projectsError?notice('Не удалось обновить проект. Показаны последние данные.',true):''}<section class="panel project-detail-summary"><div><small>Вложено</small><b class="project-total">${projectMoney(p.total,p.currency)}</b></div><div><small>Ожидаемый доход</small><b class="project-income">${projectIncome(p)}</b></div></section>${p.multi?`<section class="panel"><div class="project-accounts-head"><h2>${countLabel(p.accounts.length,['аккаунт','аккаунта','аккаунтов'])}</h2>${button('project-account-add','Добавить аккаунт','secondary small','plus',`data-id="${esc(p.id)}"`)}</div>${p.accounts.map((a,i)=>`<div class="project-account"><div><b>${esc(a.name||`Аккаунт ${i+1}`)}</b><span>${projectMoney(a.amount,p.currency)}</span></div><div class="inline-actions">${button('project-account-edit','Изменить','secondary small','',`data-id="${esc(p.id)}" data-account="${esc(a.id)}"`)}${button('project-account-delete','Удалить','danger small','',`data-id="${esc(p.id)}" data-account="${esc(a.id)}"`)}</div></div>`).join('')}</section>`:''}<p class="project-note">Это ожидаемый доход за один период, без капитализации и учёта фактических выплат.</p><div class="actions">${button('project-delete','Удалить проект','danger small','',`data-id="${esc(p.id)}"`)}</div></div>`;
+}
+function projectFormAccount(a={},index=0){const seq=++projectFormSeq;return `<div class="project-form-account" data-index="${seq}" ${a.id?`data-id="${esc(a.id)}"`:''}><div class="project-form-account-head"><b>Аккаунт ${index+1}</b>${button('project-form-remove','Удалить','danger small')}</div><div class="project-account-name">${field('Название аккаунта (необязательно)',`account-name-${seq}`,'text',a.name||'','maxlength="96"')}</div>${field('Вложенная сумма',`account-amount-${seq}`,'number',a.amount??'','required min="0.01" max="1000000000000" step="0.01" inputmode="decimal"')}</div>`;}
+function projectFormTotals(){const form=$('.project-form');if(!form)return;const cur=$('[name="currency"]',form).value;const total=[...form.querySelectorAll('.project-form-account input[type="number"]')].reduce((sum,input)=>sum+(Number(input.value)||0),0),rate=Number($('[name="rate_percent"]',form).value)||0,period=$('[name="period"]',form).value;$('.project-form-total',form).textContent=`Вложено: ${number(total)} ${cur} · ≈ +${number(total*rate/100)} ${cur} / ${PROJECT_PERIODS[period]}`;}
+function acceptProject(p){state.projects=state.projects?.some(x=>x.id===p.id)?state.projects.map(x=>x.id===p.id?p:x):[...(state.projects||[]),p];state.projectsError='';viewCache.clear();render();}
+async function projectEditor(original=null){
+ let draft=original?structuredClone(original):{name:'',currency:'USD',rate_percent:'',period:'month',multi:false,accounts:[{name:'',amount:''}]},error='';
+ while(true){
+  const body=`<div class="project-form ${draft.multi?'multi':''}">${error?notice(error,true):''}${field('Название','name','text',draft.name,'required maxlength="96"')}<label class="field">Валюта<select name="currency" ${original?'disabled':''}>${['USD','RUB','BYN'].map(cur=>`<option ${cur===draft.currency?'selected':''}>${cur}</option>`).join('')}</select>${original?'<small>Валюта проекта с вложениями фиксирована</small>':''}</label><div class="field-row">${field('Доходность, %','rate_percent','number',draft.rate_percent,'required min="0" max="1000" step="0.0001" inputmode="decimal"')}<label class="field">Период<select name="period">${Object.entries(PROJECT_PERIODS).map(([id,label])=>`<option value="${id}" ${id===draft.period?'selected':''}>В ${label}</option>`).join('')}</select></label></div><label class="check"><input type="checkbox" name="multi" ${draft.multi?'checked':''}>Несколько аккаунтов</label><div class="project-form-accounts">${draft.accounts.map(projectFormAccount).join('')}</div><div class="project-form-add">${button('project-form-add','Добавить аккаунт','secondary small','plus')}</div><p class="project-form-total" aria-live="polite"></p></div>`;
+  const pending=dialog(original?'Редактировать проект':'Добавить проект',body);projectFormTotals();const values=await pending;if(!values)return;
+  draft={name:values.name,currency:original?.currency||values.currency,rate_percent:Number(values.rate_percent),period:values.period,multi:values.multi==='on',accounts:[...document.querySelectorAll('.project-form-account')].map(row=>({...(row.dataset.id?{id:row.dataset.id}:{}),name:values[`account-name-${row.dataset.index}`]||'',amount:Number(values[`account-amount-${row.dataset.index}`])}))};
+  try{const p=await api('/projects'+(original?'/'+original.id:''),{method:original?'PATCH':'POST',body:JSON.stringify(draft)});acceptProject(p);location.hash='project/'+p.id;toast('Проект сохранён');return;}catch(exc){error=exc.message;}
+ }
+}
+async function projectAccountEditor(p,a=null){let draft=a?{name:a.name,amount:a.amount}:{name:'',amount:''},error='';while(true){const values=await dialog(a?'Редактировать аккаунт':'Добавить аккаунт',`${error?notice(error,true):''}${field('Название (необязательно)','name','text',draft.name,'maxlength="96"')}${field(`Сумма, ${p.currency}`,'amount','number',draft.amount,'required min="0.01" max="1000000000000" step="0.01" inputmode="decimal"')}`);if(!values)return;draft={name:values.name,amount:Number(values.amount)};try{acceptProject(await api(`/projects/${p.id}/accounts${a?'/'+a.id:''}`,{method:a?'PATCH':'POST',body:JSON.stringify(draft)}));toast('Аккаунт сохранён');return;}catch(exc){error=exc.message;}}}
+async function projectAction(action,el){
+ if(action==='project-form-add'){const list=$('.project-form-accounts');if(list.children.length>=100)throw new Error('До 100 аккаунтов в проекте');list.insertAdjacentHTML('beforeend',projectFormAccount({},list.children.length));projectFormTotals();return;}
+ if(action==='project-form-remove'){const row=el.closest('.project-form-account');if($('.project-form-accounts').children.length===1)throw new Error('Оставьте хотя бы один аккаунт');const title=$('input[type="text"]',row).value||$('b',row).textContent;el.insertAdjacentHTML('afterend',`<span class="project-remove-confirm">Удалить аккаунт «${esc(title)}»? ${button('project-form-remove-confirm','Удалить','danger small')}</span>`);el.hidden=true;return;}
+ if(action==='project-form-remove-confirm'){el.closest('.project-form-account').remove();document.querySelectorAll('.project-form-account-head>b').forEach((b,i)=>b.textContent=`Аккаунт ${i+1}`);projectFormTotals();return;}
+ if(action==='project-create')return projectEditor();
+ const p=state.projects?.find(p=>p.id===el.dataset.id);if(!p)throw new Error('Проект не найден');
+ if(action==='project-edit')return projectEditor(p);
+ if(action==='project-delete'){if(await confirm(`Удалить проект «${p.name}»?`,'Проект и его аккаунты исчезнут из вашего списка.','Удалить')){await api('/projects/'+p.id,{method:'DELETE'});state.projects=state.projects.filter(x=>x.id!==p.id);viewCache.clear();location.hash='projects';render();toast('Проект удалён');}return;}
+ if(action==='project-account-add')return projectAccountEditor(p);
+ const a=p.accounts.find(a=>a.id===el.dataset.account);if(!a)throw new Error('Аккаунт не найден');
+ if(action==='project-account-edit')return projectAccountEditor(p,a);
+ if(action==='project-account-delete'){if(p.accounts.length===1)throw new Error('Последний аккаунт удаляется вместе с проектом');const title=a.name||`Аккаунт ${p.accounts.indexOf(a)+1}`;if(await confirm(`Удалить аккаунт «${title}»?`,'Итог проекта будет пересчитан.','Удалить'))acceptProject(await api(`/projects/${p.id}/accounts/${a.id}`,{method:'DELETE'}));}
+}
+document.addEventListener('input',event=>{if(event.target.closest('.project-form'))projectFormTotals();});
+document.addEventListener('change',event=>{if(event.target.matches('.project-form [name="multi"]')){const input=event.target,form=input.closest('.project-form');if(!input.checked&&form.querySelectorAll('.project-form-account').length>1){input.checked=true;toast('Для одного аккаунта сначала удалите лишние записи');}form.classList.toggle('multi',input.checked);projectFormTotals();}});
 async function addAccount(){
  const known=[...new Set(state.data.accounts.filter(a=>!a.demo&&!a.shared).map(a=>a.cabinet).filter(Boolean))];
  const choice=known.length?`<label class="field">Кабинет<select name="cabinet_choice" id="add-cabinet-choice">${known.map(c=>{const owner=state.data.accounts.find(a=>a.cabinet===c)?.holder;return `<option value="${esc(c)}">${esc(owner?`${owner} · ${c}`:c)}</option>`;}).join('')}<option value="new">Другой кабинет…</option></select></label><div id="add-new-cabinet" hidden>${field('Customer Number нового кабинета','cabinet','text','','required disabled maxlength="32" placeholder="Например, CU228816"')}</div>`:field('Customer Number кабинета','cabinet','text','','required maxlength="32" placeholder="Например, CU228816"');
@@ -794,7 +845,8 @@ async function addAccount(){
 }
 async function configureAccount(login){const a=state.data.accounts.find(a=>Number(a.login)===Number(login));if(!a)return;const capital=!a.demo&&!a.shared?`${field('Капитал Invested','base','number',a.base??'','min="0" max="1000000000000" step="0.01"')}<p class="stat-note">Если указать сумму из портала, она станет основой расчёта капитала. Дальнейшие пополнения и выводы прибавятся автоматически.</p>${a.base!=null?'<label class="check"><input type="checkbox" name="reset_base"> Вернуть автоматический расчёт</label>':''}`:'';const body=`${a.demo?notice('Общий счёт для просмотра. Настройки уведомлений личные.'):field('Название стратегии','name','text',a.strategy||a.name,'required maxlength="48"')}<label class="check"><input type="checkbox" name="enabled" ${a.enabled?'checked':''}>${a.demo?'Показывать общий счёт':'Отслеживать счёт'}</label>${[['all','Все уведомления'],['trades','Сделки'],['deposits','Пополнения'],['withdrawals','Выводы']].map(([k,v])=>`<label class="check"><input type="checkbox" name="${k}" ${a.notify?.[k]!==false?'checked':''}>${v}</label>`).join('')}${capital}${!a.demo?`<div class="inline-actions mt">${button('delete-account','Удалить счёт из кабинета','danger small','',`data-login="${esc(a.login)}"`)}</div><p class="stat-note">Счёт у брокера и терминал останутся без изменений.</p>`:''}`;const values=await dialog('Настройки счёта',body);if(!values)return;const data={enabled:values.enabled==='on',notify:Object.fromEntries(['all','trades','deposits','withdrawals'].map(k=>[k,values[k]==='on']))};if(values.name)data.name=values.name;if(values.reset_base==='on')data.base=null;else if(values.base!==''&&values.base!==undefined&&Number(values.base)!==a.base)data.base=Number(values.base);await mutate(`/accounts/${a.login}`,data,'PATCH');}
 document.addEventListener('click',async event=>{const el=event.target.closest('[data-action]');if(!el)return;event.preventDefault();const action=el.dataset.action;if(el.disabled)return;el.disabled=true;try{
- if(action==='refresh')await refresh();
+ if(action.startsWith('project-'))await projectAction(action,el);
+ else if(action==='refresh')await refresh();
  else if(action==='notifications')await openNotifications();
  else if(action==='notification-open')await openNotification(el.dataset.id);
  else if(action==='notifications-read')await readAllNotifications();
@@ -858,7 +910,7 @@ document.addEventListener('input',event=>{if(event.target.matches('#dialog texta
  document.addEventListener('change',async event=>{try{if(event.target.matches('#dialog input[name="media"]')){const info=$('#compose-file-name');if(info)info.textContent=event.target.files?.[0]?`${event.target.files[0].name} · ${fileSize(event.target.files[0].size)}`:'JPG/PNG до 10 МБ · MP4 до 20 МБ';}if(event.target.id==='add-cabinet-choice'){const fresh=$('#add-new-cabinet');fresh.hidden=event.target.value!=='new';fresh.querySelector('input').disabled=fresh.hidden;}if(event.target.id==='account-select'){state.login=Number(event.target.value);state.offset=0;if(state.view==='account'){location.hash='account/'+state.login;}else await refresh();}if(event.target.id==='currency'){state.currency=event.target.value;await showCached();}}catch(error){toast(error.message);}});
 $('#notifications').innerHTML=icon('bell');$('#refresh').innerHTML=icon('refresh');$('#refresh').addEventListener('click',()=>refresh());
 let savedScheme;try{savedScheme=localStorage.getItem('tag-scheme');}catch{}setScheme(savedScheme||'lime',false);
-try{tg?.ready();tg?.expand();tg?.BackButton?.onClick(()=>{location.hash='accounts';});tg?.onEvent('homeScreenAdded',()=>toast('Ярлык Tag Markets добавлен на экран'));tg?.onEvent('homeScreenChecked',e=>{if(e?.status==='added')toast('Ярлык уже добавлен');});tg?.onEvent('homeScreenFailed',()=>toast('Telegram не смог добавить ярлык'));}catch{}
+try{tg?.ready();tg?.expand();tg?.BackButton?.onClick(()=>{location.hash=state.view==='project'?'projects':'accounts';});tg?.onEvent('homeScreenAdded',()=>toast('Ярлык Tag Markets добавлен на экран'));tg?.onEvent('homeScreenChecked',e=>{if(e?.status==='added')toast('Ярлык уже добавлен');});tg?.onEvent('homeScreenFailed',()=>toast('Telegram не смог добавить ярлык'));}catch{}
 window.addEventListener('hashchange',navigate);
 // подсветка вкладки следует за размерами панели: смена ориентации, переход
 // через 740px (боковая ↔ нижняя), свёрнутая боковая панель — без анимации

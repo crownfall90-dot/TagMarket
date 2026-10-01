@@ -813,6 +813,7 @@ async def agent_sync(request):
                        and "\x00" not in holder else "")
 
     def update_accounts():
+        import trades
         if not reported_server and not reported_holder:
             return
         # Keep the account file update inside the SQLite transaction's
@@ -823,6 +824,15 @@ async def agent_sync(request):
             for acc in all_accounts:
                 if int(acc.get("login", -1)) != login:
                     continue
+                if state["balance"] == 0 and acc.get("base") is not None:
+                    since = datetime.fromisoformat(acc["base_at"]) if acc.get("base_at") else datetime(2000, 1, 1)
+                    # Агент присылает только новые тикеты: вывод мог быть сохранён до обновления сервера.
+                    history = store.fetch(db, login, since, datetime.max)
+                    if any(r["is_balance"] and r["net"] < 0 and trades.is_transfer(r)
+                           and not trades.is_profit_side(r) for r in history):
+                        acc["base"] = None
+                        acc["base_at"] = None
+                        changed = True
                 if reported_server and acc.get("server") != reported_server:
                     acc["server"] = reported_server; changed = True
                 if reported_holder and acc.get("holder") != reported_holder:

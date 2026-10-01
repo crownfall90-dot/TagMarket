@@ -41,7 +41,7 @@ FILES = (
 # бэкапы без них всё ещё годны для отката (в отличие от FILES).
 # картинки «Частых вопросов» появились позже: снимки до них должны оставаться
 # пригодными для отката, поэтому они необязательны, как и audit.py
-OPTIONAL_FILES = ("tools/audit.py", "docs/AUDIT_HOWTO.md",
+OPTIONAL_FILES = ("projects.py", "tools/audit.py", "docs/AUDIT_HOWTO.md",
                   "web/faq-neo-card.jpg", "web/faq-neo-stats.jpg", "web/faq-sonic-card.jpg",
                   "web/faq-sonic-stats.jpg", "web/faq-license.jpg", "web/faq-mt5.jpg", "web/faq-neo-myfxbook.jpg")
 # Раскладка до переноса тестов и документов в tests/ и docs/: старые копии остаются пригодными.

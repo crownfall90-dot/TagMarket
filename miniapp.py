@@ -34,6 +34,7 @@ import accounts
 import bot as logic
 import coordination
 import partner
+import projects
 import store
 import trades
 
@@ -1238,7 +1239,32 @@ async def app_redirect(request):
     raise web.HTTPFound("app/")
 
 
+async def project_api(request):
+    uid, _ = authorize(request)
+    db = request.app["db"]
+    project_id = request.match_info.get("project_id")
+    account_id = request.match_info.get("account_id")
+    data = await json_object(request) if request.method in {"POST", "PATCH"} else {}
+    try:
+        if "/accounts" in request.path:
+            result = projects.account_change(db, uid, project_id, data, account_id,
+                                             remove=request.method == "DELETE")
+        elif request.method == "GET":
+            result = projects.get(db, uid, project_id) if project_id else {"projects": projects.list_for(db, uid)}
+        elif request.method == "DELETE":
+            projects.delete(db, uid, project_id)
+            result = {"ok": True}
+        else:
+            result = projects.save(db, uid, data, project_id)
+    except LookupError as exc:
+        raise web.HTTPNotFound(text=str(exc))
+    except ValueError as exc:
+        raise web.HTTPBadRequest(text=str(exc))
+    return web.json_response(result, status=201 if request.method == "POST" else 200)
+
+
 def setup(app):
+    projects.setup(app["db"])
     # Legacy copies lack provenance. Matching only a login is unsafe: an
     # independently added account may use that number with another password.
     with locked(accounts.PATH):
@@ -1261,6 +1287,14 @@ def setup(app):
     app.router.add_get("/app/", static)
     app.router.add_get("/app/{file}", static)
     app.router.add_get("/api/bootstrap", bootstrap)
+    app.router.add_get("/api/projects", project_api)
+    app.router.add_post("/api/projects", project_api)
+    app.router.add_get("/api/projects/{project_id}", project_api)
+    app.router.add_patch("/api/projects/{project_id}", project_api)
+    app.router.add_delete("/api/projects/{project_id}", project_api)
+    app.router.add_post("/api/projects/{project_id}/accounts", project_api)
+    app.router.add_patch("/api/projects/{project_id}/accounts/{account_id}", project_api)
+    app.router.add_delete("/api/projects/{project_id}/accounts/{account_id}", project_api)
     app.router.add_get("/api/notifications", notifications)
     app.router.add_post("/api/notifications", notifications)
     app.router.add_post("/api/onboarding", onboarding_progress)

@@ -1,4 +1,8 @@
 {
+ "projects": [
+  {"id":"preview-home","name":"Недвижимость","currency":"USD","rate_percent":2.5,"period":"month","multi":false,"accounts":[{"id":"preview-home-1","project_id":"preview-home","name":"","amount":10000}],"total":10000,"expected_income":250},
+  {"id":"preview-private","name":"Private Invest","currency":"USD","rate_percent":1.5,"period":"week","multi":true,"accounts":[{"id":"preview-private-1","project_id":"preview-private","name":"Основной","amount":5000},{"id":"preview-private-2","project_id":"preview-private","name":"Дополнительный","amount":3000},{"id":"preview-private-3","project_id":"preview-private","name":"Резерв","amount":2000}],"total":10000,"expected_income":150}
+ ],
  "bootstrap": {
   "user": {
    "id": 1,

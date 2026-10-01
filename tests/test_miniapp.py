@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, patch
 from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlencode
+from contextlib import closing
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 _root = tempfile.TemporaryDirectory()
@@ -847,6 +848,98 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def call(self, method, path, uid=1, **kwargs):
         return await self.client.request(method, path, headers={"X-Telegram-Init-Data":signed(uid)}, **kwargs)
+
+    async def test_projects_single_persistence_and_ownership(self):
+        before = await (await self.call("GET", "/api/bootstrap")).json()
+        payload = {"name": "Project", "currency": "USD", "rate_percent": 2.5,
+                   "period": "month", "multi": False, "accounts": [{"amount": 10000}],
+                   "owner_id": "2", "user_id": 2, "total": 999999}
+        response = await self.call("POST", "/api/projects", json=payload)
+        self.assertEqual(response.status, 201, await response.text())
+        project = await response.json()
+        self.assertEqual((project["total"], project["expected_income"]), (10000, 250))
+        self.assertEqual(len(project["accounts"]), 1)
+        path = "/api/projects/" + project["id"]
+        self.assertEqual((await self.call("GET", path)).status, 200)
+        self.assertEqual(await (await self.call("GET", "/api/projects", uid=2)).json(), {"projects": []})
+        for method in ("GET", "PATCH", "DELETE"):
+            kwargs = {"json": {"name": "Stolen"}} if method == "PATCH" else {}
+            self.assertEqual((await self.call(method, path, uid=2, **kwargs)).status, 404)
+        for method, suffix, data in (("POST", "/accounts", {"amount": 1}),
+                                     ("PATCH", "/accounts/" + project["accounts"][0]["id"], {"amount": 1}),
+                                     ("DELETE", "/accounts/" + project["accounts"][0]["id"], None)):
+            kwargs = {"json": data} if data else {}
+            self.assertEqual((await self.call(method, path + suffix, uid=2, **kwargs)).status, 404)
+        self.assertEqual((await self.client.get("/api/projects")).status, 401)
+        import sqlite3
+        with closing(sqlite3.connect(str(Path(self.tmp.name) / "state.db"))) as reopened:
+            self.assertEqual(miniapp.projects.get(reopened, "1", project["id"])["total"], 10000)
+        after = await (await self.call("GET", "/api/bootstrap")).json()
+        self.assertEqual(before["accounts"], after["accounts"])
+        self.assertEqual(before["totals"], after["totals"])
+
+    async def test_projects_multi_account_lifecycle_and_recalculation(self):
+        response = await self.call("POST", "/api/projects", json={"name": "Multi", "currency": "BYN",
+                                  "rate_percent": 1.5, "period": "week", "multi": True,
+                                  "accounts": [{"name": "Main", "amount": 5000}, {"amount": 3000}]})
+        self.assertEqual(response.status, 201, await response.text())
+        project = await response.json()
+        path = "/api/projects/" + project["id"]
+        first_id, second_id = [a["id"] for a in project["accounts"]]
+        project = await (await self.call("POST", path + "/accounts", json={"name": "Reserve", "amount": 2000})).json()
+        self.assertEqual((project["total"], project["expected_income"]), (10000, 150))
+        project = await (await self.call("PATCH", path + "/accounts/" + second_id,
+                                        json={"name": "Updated", "amount": 4000})).json()
+        self.assertEqual((project["total"], project["expected_income"]), (11000, 165))
+        self.assertEqual(project["accounts"][1]["id"], second_id)
+        project = await (await self.call("PATCH", path, json={"rate_percent": 2, "period": "day"})).json()
+        self.assertEqual((project["expected_income"], project["period"]), (220, "day"))
+        self.assertEqual((await self.call("PATCH", path, json={"multi": False})).status, 400)
+        self.assertEqual((await self.call("PATCH", path, json={"currency": "RUB"})).status, 400)
+        for account_id in (second_id, project["accounts"][2]["id"]):
+            response = await self.call("DELETE", path + "/accounts/" + account_id)
+            self.assertEqual(response.status, 200, await response.text())
+        project = await (await self.call("GET", path)).json()
+        self.assertEqual((project["total"], project["multi"], project["accounts"][0]["id"]), (5000, True, first_id))
+        self.assertEqual((await self.call("DELETE", path + "/accounts/" + first_id)).status, 400)
+        self.assertEqual((await self.call("DELETE", path)).status, 200)
+        self.assertEqual((await self.call("GET", path)).status, 404)
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM project_accounts WHERE project_id=?", (project["id"],)).fetchone()[0], 0)
+
+    async def test_projects_single_to_multi_preserves_ids_and_amount(self):
+        payload = {"name": "Single", "currency": "RUB", "rate_percent": 0,
+                   "period": "month", "multi": False, "accounts": [{"amount": 5000}]}
+        first = await (await self.call("POST", "/api/projects", json=payload)).json()
+        other = await (await self.call("POST", "/api/projects", json=payload, uid=2)).json()
+        path = "/api/projects/" + first["id"]
+        converted = await (await self.call("PATCH", path, json={"multi": True})).json()
+        self.assertEqual(converted["id"], first["id"])
+        self.assertEqual(converted["accounts"], first["accounts"])
+        converted = await (await self.call("POST", path + "/accounts", json={"amount": 3000})).json()
+        self.assertEqual(converted["total"], 8000)
+        foreign_id = other["accounts"][0]["id"]
+        self.assertEqual((await self.call("PATCH", path + "/accounts/" + foreign_id, json={"amount": 1})).status, 404)
+        self.assertEqual((await self.call("DELETE", path + "/accounts/" + foreign_id)).status, 404)
+        self.assertEqual((await self.call("PATCH", path, json={"accounts": [{"id": foreign_id, "amount": 1}]})).status, 404)
+        self.assertEqual((await (await self.call("GET", path)).json())["total"], 8000)
+
+    async def test_projects_validation_and_decimal_totals(self):
+        payload = {"name": "Valid", "currency": "USD", "rate_percent": 2.5,
+                   "period": "month", "multi": True, "accounts": [{"amount": .1}, {"amount": .2}]}
+        created = await (await self.call("POST", "/api/projects", json=payload)).json()
+        self.assertEqual(created["total"], .3)
+        self.assertEqual(created["expected_income"], .0075)
+        for amount in (0, -1, True, "1", 1e13, float("nan"), float("inf"), .001):
+            response = await self.call("POST", "/api/projects", json={**payload, "accounts": [{"amount": amount}]})
+            self.assertEqual(response.status, 400, (amount, await response.text()))
+        for changes in ({"name": " "}, {"name": 1}, {"name": "x" * 97}, {"currency": "EUR"}, {"currency": []},
+                        {"period": "year"}, {"period": []}, {"multi": "true"}, {"accounts": []},
+                        {"multi": False}, {"rate_percent": -1}, {"rate_percent": True},
+                        {"rate_percent": "2.5"}, {"rate_percent": 1001}, {"rate_percent": float("nan")},
+                        {"rate_percent": float("inf")}, {"rate_percent": .00001}):
+            response = await self.call("POST", "/api/projects", json={**payload, **changes})
+            self.assertEqual(response.status, 400, await response.text())
+        self.assertEqual(len((await (await self.call("GET", "/api/projects")).json())["projects"]), 1)
 
     async def test_bootstrap_converts_supported_currencies_to_usd(self):
         accounts.add({**self.acc, "login":456, "name":"RUB", "strategy":"RUB",
@@ -1840,6 +1933,41 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         r = await self.call("PATCH","/api/accounts/123",json={"name":"Changed","base":"NaN"})
         self.assertEqual(r.status,400)
         self.assertEqual(accounts.load(1)[0]["name"],"SONIC")
+
+    async def test_full_withdrawal_clears_invested_and_partial_keeps_remainder(self):
+        base_at = (trades.clock() - timedelta(days=1)).isoformat()
+        accounts.update("SONIC", 1, base=100, base_at=base_at)
+        coordination.claim(self.db, "main", "session-aaaaaaaaaaaaaaaa", "primary")
+        packet = {"login": 123, "balance": 1200, "equity": 1200, "currency": "USD",
+                  "server": "Demo", "host": "main", "session": "session-aaaaaaaaaaaaaaaa",
+                  "capital_hist": 100, "deals": []}
+        row = {"ticket": 1, "time": trades.clock().isoformat(), "symbol": "", "side": "",
+               "comment": "Capital Withdrawal", "volume": 0, "price": 0, "profit": -1200,
+               "swap": 0, "commission": 0, "net": -1200, "is_balance": True,
+               "is_closing": False, "is_opening": False}
+        packet["deals"] = [row]
+        response = await self.client.post("/agent/sync", headers={"X-Token": "agent-test"}, json=packet)
+        self.assertEqual(response.status, 200, await response.text())
+        data = await (await self.call("GET", "/api/bootstrap")).json()
+        self.assertEqual(data["accounts"][0]["totals"]["now"], 50)
+        self.assertEqual(accounts.load(1)[0]["base"], 100)
+        packet.update(balance=0, equity=0, deals=[{**row, "ticket": 2}])
+        response = await self.client.post("/agent/sync", headers={"X-Token": "agent-test"}, json=packet)
+        self.assertEqual(response.status, 200, await response.text())
+        self.assertIsNone(accounts.load(1)[0]["base"])
+        self.assertIsNone(accounts.load(1)[0]["base_at"])
+        data = await (await self.call("GET", "/api/bootstrap")).json()
+        self.assertEqual(data["accounts"][0]["totals"]["now"], 0)
+        self.assertEqual(data["totals"]["USD"]["capital"], 0)
+        accounts.update("SONIC", 1, base=100, base_at=base_at)
+        packet["deals"] = []
+        response = await self.client.post("/agent/sync", headers={"X-Token": "agent-test"}, json=packet)
+        self.assertEqual(response.status, 200, await response.text())
+        self.assertIsNone(accounts.load(1)[0]["base"])
+        accounts.update("SONIC", 1, base=100, base_at=trades.clock().isoformat())
+        # Подтверждённый нулевой баланс не показывается старой ручной привязкой.
+        data = await (await self.call("GET", "/api/bootstrap")).json()
+        self.assertEqual(data["accounts"][0]["totals"]["now"], 0)
 
     async def test_invested_override_changes_capital_and_can_be_reset(self):
         response = await self.call("PATCH", "/api/accounts/123", json={"base": 120})

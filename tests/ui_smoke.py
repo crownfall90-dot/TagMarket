@@ -227,6 +227,97 @@ def guest_with_shared_account_sees_home_and_opens_guide_on_demand(page):
     page.evaluate("state.data=window.__smokeSavedData;delete window.__smokeSavedData;state.view='overview';render()")
 
 
+def projects_ui(page, nav):
+    page.locator(f'{nav} a[href="#projects"]').click()
+    page.locator('.project-card').first.wait_for()
+    assert page.locator(f'{nav} a[data-tab]').count() == 5
+    assert page.locator('.project-card').count() == 2
+    glider_on_active(page, nav)
+    fits(page)
+    page.locator('a[href="#project/preview-home"]').click()
+    page.locator('[data-action="project-edit"]').click()
+    amount = page.locator('.project-form-account input[type="number"]')
+    assert amount.input_value() == '10000'
+    assert page.locator('.project-form [name="currency"]').is_disabled()
+    page.locator('.project-form [name="multi"]').check()
+    assert amount.input_value() == '10000'
+    page.locator('[data-action="project-form-add"]').click()
+    page.locator('.project-form-account input[type="number"]').nth(1).fill('3000')
+    assert '13' in page.locator('.project-form-total').inner_text()
+    assert page.locator('.project-account-name input').count() == 2
+    page.locator('.project-form [name="multi"]').click()
+    assert page.locator('.project-form [name="multi"]').is_checked()
+    fits(page)
+    close_dialog(page)
+    page.locator('a.back[href="#projects"]').click()
+    page.locator('a[href="#project/preview-private"]').click()
+    page.locator('.project-account').first.wait_for()
+    assert page.locator('.project-account').count() == 3
+    page.locator('[data-action="project-account-add"]').click()
+    page.locator('#dialog input[name="amount"]').fill('999999999999.99')
+    fits(page)
+    close_dialog(page)
+    page.locator('[data-action="project-account-edit"]').nth(1).click()
+    assert page.locator('#dialog input[name="amount"]').input_value() == '3000'
+    fits(page)
+    close_dialog(page)
+    page.locator('[data-action="project-account-delete"]').nth(2).click()
+    assert 'Резерв' in page.locator('#dialog-title').inner_text()
+    close_dialog(page)
+    page.locator('[data-action="project-delete"]').click()
+    assert 'Private Invest' in page.locator('#dialog-title').inner_text()
+    close_dialog(page)
+    page.locator('a.back[href="#projects"]').click()
+    page.locator('[data-action="project-create"]').click()
+    assert not page.locator('.project-form [name="multi"]').is_checked()
+    assert page.locator('.project-form [name="currency"] option').all_text_contents() == ['USD', 'RUB', 'BYN']
+    page.locator('.project-form input[name="name"]').fill('Long project name ' * 4)
+    page.locator('.project-form [name="rate_percent"]').fill('2.5')
+    page.locator('.project-form-account input[type="number"]').fill('10000')
+    fits(page)
+    # Только ответы UI-теста: реальная безопасность и расчёты проверяются API-тестами.
+    page.evaluate("""() => { window.__projectUiApi=window.api;
+        window.api=async (path,options={}) => {
+            if(path==='/projects'&&!options.method)return {projects:state.projects};
+            if((path==='/projects'||path==='/projects/ui-created')&&['POST','PATCH'].includes(options.method)){
+                const d=JSON.parse(options.body);window.__projectUiSaved=d;
+                const total=d.accounts.reduce((s,a)=>s+a.amount,0);
+                return {...d,id:'ui-created',accounts:d.accounts.map((a,i)=>({...a,id:a.id||'ui-account-'+i,project_id:'ui-created'})),total,expected_income:total*d.rate_percent/100};
+            }
+            if(path==='/projects/ui-created'&&options.method==='DELETE')return {ok:true};
+            return window.__projectUiApi(path,options);
+        };
+    }""")
+    page.locator('#dialog-submit').click()
+    page.wait_for_function("state.view==='project'&&state.projectId==='ui-created'")
+    page.locator('[data-action="project-edit"]').wait_for()
+    saved = page.evaluate('window.__projectUiSaved')
+    assert saved['accounts'][0]['amount'] == 10000 and not saved['multi']
+    page.locator('[data-action="project-edit"]').click()
+    page.locator('.project-form [name="multi"]').check()
+    page.locator('[data-action="project-form-add"]').click()
+    page.locator('.project-form-account input[type="number"]').nth(1).fill('3000')
+    page.locator('#dialog-submit').click()
+    page.locator('.project-account').first.wait_for()
+    saved = page.evaluate('window.__projectUiSaved')
+    assert saved['multi'] and saved['accounts'][0]['id'] == 'ui-account-0'
+    assert [a['amount'] for a in saved['accounts']] == [10000, 3000]
+    assert page.locator('.project-account').count() == 2
+    page.locator('[data-action="project-delete"]').click()
+    page.locator('#dialog-submit').click()
+    page.wait_for_function("state.view==='projects'&&!state.projects.some(p=>p.id==='ui-created')")
+    page.evaluate("window.api=window.__projectUiApi;state.projects[0].total=999999999999.99;state.projects[0].currency='BYN';state.projects[0].name='x'.repeat(96);render()")
+    assert page.locator('.project-summary b').count() == 2
+    fits(page)
+    if page.viewport_size['width'] == 390:
+        page.wait_for_function("!document.querySelector('#main').getAnimations({subtree:true}).some(a=>a.playState==='running')")
+        page.screenshot(path=str(Path(tempfile.gettempdir()) / 'tagmarkets-mobile-projects.png'), full_page=True)
+    page.evaluate("state.projects=[];render()")
+    assert page.locator('.project-card').count() == 0
+    assert page.locator('[data-action="project-create"]').count() == 1
+    fits(page)
+
+
 def close_dialog(page):
     """Закрыть диалог крестиком в шапке: у информационных окон кнопка
     «Отмена» спрятана, а крестик есть у всех."""
@@ -462,6 +553,7 @@ def main():
                     if width == 390:
                         page.wait_for_timeout(500)
                         page.screenshot(path=str(screenshots / "tagmarkets-mobile-velvet-smoke.png"), full_page=True)
+                    projects_ui(page, nav)
                     assert not errors, errors
                     page.close()
                 print("UI smoke PASS: 320px, 390px, 768px and 1280px")
