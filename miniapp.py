@@ -347,10 +347,12 @@ async def bootstrap(request):
             items.append(demo_view)
     currencies = {a["totals"]["cur"].upper() for a in items
                   if not a["demo"] and not a.get("shared") and a["totals"]}
+    project_currencies = {p[0] for p in db.execute("SELECT currency FROM projects WHERE owner_id=?", (str(uid),))}
+    display_currency = partner.kv_get(db, f"display_currency:{uid}", "USD")
     unsupported = currencies - {"USD", "RUB", "BYN"}
     byn_per_unit = None
     fx_error = ""
-    if currencies - {"USD"}:
+    if currencies - {"USD"} or project_currencies - {"USD"} or display_currency != "USD":
         try:
             byn_per_unit = await myfin_nbrb_rates()
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
@@ -377,10 +379,11 @@ async def bootstrap(request):
     registration_url = (logic.partner_link(db, inviter) if inviter else logic.partner_registration_url())
     return web.json_response({"user": {"id": user["id"], "name": user.get("first_name", "Инвестор")},
         "accounts": items, "totals": totals,
-        "fx": ({"source": "MYFIN · НБРБ", "currency": "USD",
+        "fx": ({"source": "MYFIN · НБРБ", "currency": "USD", "byn_per_unit": byn_per_unit,
                 "byn_per_usd": byn_per_unit["USD"], "byn_per_100_rub": byn_per_unit["RUB"] * 100,
                 "updated_at": _myfin_rates["updated_at"]}
                if byn_per_unit else None), "fx_error": fx_error,
+        "display_currency": display_currency,
         "onboarding": {"needed": not own_accounts,
                         "later": partner.kv_get(db, f"onboard:{uid}:later") == "1",
                         "registration_url": registration_url,
@@ -462,6 +465,56 @@ def report_archive(since, until):
     return kept
 
 
+
+def report_timeline(chart, since, until, state=None, rows=(), retained_from=None):
+    """Display points only: preserve empty days without adding deals or estimated balances."""
+    end = min(until.date(), trades.clock().date())
+    start = since.date()
+    if since.year == 2000:  # all time: start at the first available observation
+        start = min((date.fromisoformat(day) for day in chart), default=end)
+    if start > end:
+        return [{"day": start.isoformat(), "value": 0, "balance": None}]
+    # ponytail: daily UI series is capped at 10,000 days; longer ranges need aggregation.
+    if (end - start).days > 10000:
+        return [{"day": d.isoformat(), "value": chart.get(d.isoformat(), 0), "balance": None}
+                for d in sorted({start, end, *(date.fromisoformat(k) for k in chart)})]
+    synced = None
+    if state and state.get("synced"):
+        synced = datetime.fromisoformat(state["synced"]).replace(tzinfo=None) + timedelta(hours=trades.TZ_HOURS)
+    history_from = datetime.fromisoformat(os.getenv("HISTORY_FROM", "2026-06-01")).date()
+    if retained_from:
+        history_from = max(history_from, retained_from)
+    after = {}
+    for row in rows:
+        if synced and row["time"] <= synced:
+            day = row["time"].date()
+            after[day] = after.get(day, 0) + row["net"]
+    balance = state.get("balance") if synced else None
+    result = []
+    cursor = synced.date() if synced else end
+    # Walk back through retained raw operations, not net-income/fee estimates.
+    while cursor > end:
+        balance -= after.get(cursor, 0)
+        cursor -= timedelta(days=1)
+    day = end
+    while day >= start:
+        known = synced and history_from <= day <= synced.date() and balance is not None and balance >= 0
+        key = day.isoformat()
+        result.append({"day": key, "value": chart.get(key, 0), "balance": round(balance, 2) if known else None})
+        if balance is not None:
+            balance -= after.get(day, 0)
+        day -= timedelta(days=1)
+    return list(reversed(result))
+
+
+def retained_history_start(db, login):
+    month = db.execute("SELECT MAX(month) FROM months WHERE login=?", (login,)).fetchone()[0]
+    if not month:
+        return None
+    year, index = map(int, month.split("-"))
+    return date(year + (index == 12), index % 12 + 1, 1)
+
+
 async def overview_report(request):
     uid, _ = authorize(request)
     title, since, until = report_period(request.query)
@@ -483,6 +536,7 @@ async def overview_report(request):
     chart = {}
     total = count = account_count = archived_count = pending_count = 0
     current_capital = weighted = 0
+    timelines = []
     for acc in personal:
         if acc.get("demo") or acc.get("shared_by"):
             continue
@@ -502,8 +556,9 @@ async def overview_report(request):
         summary = trades.summary(rows)
         # процент «Обзора» — средний по счетам, взвешенный капиталом, той же
         # мерой, что карточки (как в сводке бота), а не сумма ÷ общий капитал
-        weighted += max(0, cap) * factor * trades.period_growth(
-            rows, trades.fetch(datetime(2000, 1, 1), logic.utcnow() + timedelta(days=1)), archived, cap)
+        all_rows = trades.fetch(datetime(2000, 1, 1), logic.utcnow() + timedelta(days=1))
+        timelines.append((report_timeline({r["time"].date().isoformat(): 0 for r in all_rows}, since, until, state, all_rows, retained_history_start(db, acc["login"])), factor))
+        weighted += max(0, cap) * factor * trades.period_growth(rows, all_rows, archived, cap)
         total += trades.net_of_fee(trades.mine(
             summary["total"] + sum((m["gross"] or 0) + (m["platform"] or 0) for m in archived))) * factor
         count += summary["count"] + sum(m["trades"] or 0 for m in archived)
@@ -519,7 +574,13 @@ async def overview_report(request):
             day = f'{month["month"]}-{last_day:02d}'
             chart[day] = chart.get(day, 0) + trades.net_of_fee(trades.mine(
                 (month["gross"] or 0) + (month["platform"] or 0))) * factor
-    return web.json_response({"title": title, "summary": {"count": count, "net_income": total,
+    timeline = report_timeline(chart, since, until)
+    per_account = [(dict((p["day"], p["balance"]) for p in points), factor) for points, factor in timelines]
+    for point in timeline:
+        balances = [days.get(point["day"]) for days, _ in per_account]
+        if balances and not pending_count and all(b is not None for b in balances):
+            point["balance"] = round(sum(b * factor for b, (_, factor) in zip(balances, per_account)), 2)
+    return web.json_response({"timeline": timeline, "title": title, "summary": {"count": count, "net_income": total,
         "pct_capital": round(weighted / current_capital, 3) if current_capital > 0 else None},
         "currency": "USD", "chart": [{"day": k, "value": v} for k, v in sorted(chart.items())],
         "archived": bool(archived_count), "accounts": account_count, "pending_accounts": pending_count})
@@ -588,7 +649,8 @@ def capital_steps(moves):
 async def report(request):
     uid, _ = authorize(request)
     acc = current_account_settings(owned(uid, request.match_info["login"]))
-    if not store.get_state(request.app["trades"], acc["login"]):
+    account_state = store.get_state(request.app["trades"], acc["login"])
+    if not account_state:
         return web.json_response({"pending": True, "deals": [], "months": [], "chart": []})
     trades.use(acc)
     title, since, until = report_period(request.query)
@@ -686,7 +748,9 @@ async def report(request):
         extra = {"commission_total": round(sum(fees), 2), "commission_count": len(fees),
                  "capital_series": series,
                  "site_moves": [{**m, "time": m["time"] + "Z"} for m in site]}
-    return web.json_response({**extra, "title": title, "summary": summary, "currency": trades.currency(),
+    timeline = report_timeline(chart, since, until, account_state, all_rows,
+                               retained_history_start(request.app["trades"], acc["login"]))
+    return web.json_response({**extra, "timeline": timeline, "title": title, "summary": summary, "currency": trades.currency(),
         "deals": deals, "has_more": offset + 50 < len(filtered), "offset": offset,
         "insights": insights, "day_totals": day_totals,
         "chart": [{"day": k, "value": v} for k, v in sorted(chart.items())],
@@ -1263,6 +1327,36 @@ async def project_api(request):
     return web.json_response(result, status=201 if request.method == "POST" else 200)
 
 
+async def project_forecast(request):
+    uid, _ = authorize(request)
+    db = request.app["db"]
+    ids = request.query.getall("id", [])
+    if not ids and request.query.get("all", "1") != "0":
+        ids = [p["id"] for p in projects.list_for(db, uid)]
+    if len(ids) > 100:
+        raise web.HTTPBadRequest(text="Можно выбрать до 100 проектов")
+    try:
+        results = [projects.forecast(db, uid, pid, request.query.get("until"), request.query.get("bonus", "1") != "0") for pid in ids]
+    except LookupError as exc:
+        raise web.HTTPNotFound(text=str(exc))
+    except ValueError as exc:
+        raise web.HTTPBadRequest(text=str(exc))
+    return web.json_response({"projects": results})
+
+
+async def display_preference(request):
+    uid, _ = authorize(request)
+    key = f"display_currency:{uid}"
+    if request.method == "GET":
+        return web.json_response({"currency": partner.kv_get(request.app["db"], key, "USD")})
+    data = await json_object(request)
+    currency = data.get("currency")
+    if currency not in {"USD", "BYN", "RUB"}:
+        raise web.HTTPBadRequest(text="Выберите USD, BYN или RUB")
+    partner.kv_set(request.app["db"], key, currency)
+    return web.json_response({"currency": currency})
+
+
 def setup(app):
     projects.setup(app["db"])
     # Legacy copies lack provenance. Matching only a login is unsafe: an
@@ -1288,6 +1382,9 @@ def setup(app):
     app.router.add_get("/app/{file}", static)
     app.router.add_get("/api/bootstrap", bootstrap)
     app.router.add_get("/api/projects", project_api)
+    app.router.add_get("/api/projects/forecast", project_forecast)
+    app.router.add_get("/api/preferences/display-currency", display_preference)
+    app.router.add_put("/api/preferences/display-currency", display_preference)
     app.router.add_post("/api/projects", project_api)
     app.router.add_get("/api/projects/{project_id}", project_api)
     app.router.add_patch("/api/projects/{project_id}", project_api)

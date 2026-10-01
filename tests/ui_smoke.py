@@ -159,7 +159,7 @@ def rapid_period_taps_load_once(page):
     assert period == "month", period
     assert renders == 1, f"{renders} перерисовки на три быстрых нажатия"
     assert len(reports) == 1 and "period=month" in reports[0], reports
-    active = page.evaluate("document.querySelector('.segmented button.active').dataset.value")
+    active = page.evaluate("document.querySelector('.chart-panel .segmented button.active').dataset.value")
     assert active == "month", f"на экране подсвечен {active}"
 
 
@@ -180,6 +180,8 @@ def faq_opens_smoothly(page, url):
     page.wait_for_function("el => !el.open", arg=item.element_handle())
     strategies = page.locator('.faq-strategy')
     assert strategies.count() == 2
+    assert page.get_by_role('heading', name='MetaTrader 5', exact=True).count() == 0
+    assert page.locator('a[href*="metatrader"]').count() == 0
     assert page.locator('.faq-strategies.panel').count() == 0
     page.evaluate("window.__faqNode=document.querySelector('.faq-page')")
     for index in range(2):
@@ -277,20 +279,20 @@ def projects_ui(page, nav):
     page.locator(f'{nav} a[href="#projects"]').click()
     page.locator('.project-card').first.wait_for()
     assert page.locator(f'{nav} a[data-tab]').count() == 5
-    assert page.locator('.project-card').count() == 2
+    assert page.locator('.project-card').count() == 3  # TagMarket плюс два preview-проекта
     glider_on_active(page, nav)
     fits(page)
     page.locator('a[href="#project/preview-home"]').click()
     page.locator('[data-action="project-edit"]').click()
-    amount = page.locator('.project-form-account input[type="number"]')
+    amount = page.locator('.project-form-account input[name^="account-amount-"]')
     assert amount.input_value() == '10000'
     assert page.locator('.project-form [name="currency"]').is_disabled()
     page.locator('.project-form [name="multi"]').check()
     assert amount.input_value() == '10000'
     page.locator('[data-action="project-form-add"]').click()
-    page.locator('.project-form-account input[type="number"]').nth(1).fill('3000')
+    page.locator('.project-form-account input[name^="account-amount-"]').nth(1).fill('3000')
     assert '13' in page.locator('.project-form-total').inner_text()
-    assert page.locator('.project-account-name input').count() == 2
+    assert page.locator('.project-account-name input[type="text"]').count() == 2
     page.locator('.project-form [name="multi"]').click()
     assert page.locator('.project-form [name="multi"]').is_checked()
     fits(page)
@@ -307,7 +309,9 @@ def projects_ui(page, nav):
     assert page.locator('#dialog input[name="amount"]').input_value() == '3000'
     fits(page)
     close_dialog(page)
-    page.locator('[data-action="project-account-delete"]').nth(2).click()
+    page.locator('[data-action="project-account-edit"]').nth(2).click()
+    page.locator('[data-action="project-account-delete"]').click()
+    page.wait_for_function("document.querySelector('#dialog-title').textContent.includes('Удалить аккаунт')")
     assert 'Резерв' in page.locator('#dialog-title').inner_text()
     close_dialog(page)
     page.locator('[data-action="project-delete"]').click()
@@ -319,7 +323,14 @@ def projects_ui(page, nav):
     assert page.locator('.project-form [name="currency"] option').all_text_contents() == ['USD', 'RUB', 'BYN']
     page.locator('.project-form input[name="name"]').fill('Long project name ' * 4)
     page.locator('.project-form [name="rate_percent"]').fill('2.5')
-    page.locator('.project-form-account input[type="number"]').fill('10000')
+    page.locator('.project-form-account input[name^="account-amount-"]').fill('10000')
+    page.locator('.project-form [name="period"]').select_option('day')
+    page.locator('.project-form [name="capitalization"]').check()
+    start = page.locator('.project-form [name="capitalization_from"]').input_value()
+    yesterday = page.evaluate("d=>new Date(Date.parse(d+'T00:00:00Z')-86400000).toISOString().slice(0,10)", start)
+    page.locator('.project-form [name="capitalization_from"]').fill(yesterday)
+    total_preview = ''.join(page.locator('.project-form-total').inner_text().split()).replace(',', '.')
+    assert '10250.00$' in total_preview, total_preview
     fits(page)
     # Только ответы UI-теста: реальная безопасность и расчёты проверяются API-тестами.
     page.evaluate("""() => { window.__projectUiApi=window.api;
@@ -328,7 +339,7 @@ def projects_ui(page, nav):
             if((path==='/projects'||path==='/projects/ui-created')&&['POST','PATCH'].includes(options.method)){
                 const d=JSON.parse(options.body);window.__projectUiSaved=d;
                 const total=d.accounts.reduce((s,a)=>s+a.amount,0);
-                return {...d,id:'ui-created',accounts:d.accounts.map((a,i)=>({...a,id:a.id||'ui-account-'+i,project_id:'ui-created'})),total,expected_income:total*d.rate_percent/100};
+                return {...d,id:'ui-created',accounts:d.accounts.map((a,i)=>({...a,id:a.id||'ui-account-'+i,project_id:'ui-created',current_amount:d.capitalization? a.amount*(1+d.rate_percent/100):a.amount})),total,current_total:d.capitalization?total*(1+d.rate_percent/100):total,calculation_limited:false,expected_income:(d.capitalization?total*(1+d.rate_percent/100):total)*d.rate_percent/100};
             }
             if(path==='/projects/ui-created'&&options.method==='DELETE')return {ok:true};
             return window.__projectUiApi(path,options);
@@ -338,11 +349,11 @@ def projects_ui(page, nav):
     page.wait_for_function("state.view==='project'&&state.projectId==='ui-created'")
     page.locator('[data-action="project-edit"]').wait_for()
     saved = page.evaluate('window.__projectUiSaved')
-    assert saved['accounts'][0]['amount'] == 10000 and not saved['multi']
+    assert saved['accounts'][0]['amount'] == 10000 and not saved['multi'] and saved['capitalization']
     page.locator('[data-action="project-edit"]').click()
     page.locator('.project-form [name="multi"]').check()
     page.locator('[data-action="project-form-add"]').click()
-    page.locator('.project-form-account input[type="number"]').nth(1).fill('3000')
+    page.locator('.project-form-account input[name^="account-amount-"]').nth(1).fill('3000')
     page.locator('#dialog-submit').click()
     page.locator('.project-account').first.wait_for()
     saved = page.evaluate('window.__projectUiSaved')
@@ -353,21 +364,172 @@ def projects_ui(page, nav):
     page.locator('#dialog-submit').click()
     page.wait_for_function("state.view==='projects'&&!state.projects.some(p=>p.id==='ui-created')")
     page.evaluate("window.api=window.__projectUiApi;state.projects[0].total=999999999999.99;state.projects[0].currency='BYN';state.projects[0].name='x'.repeat(96);render()")
-    assert page.locator('.project-summary b').count() == 2
+    assert page.locator('.project-summary b').count() == 3
     fits(page)
     if page.viewport_size['width'] == 390:
         page.wait_for_function("!document.querySelector('#main').getAnimations({subtree:true}).some(a=>a.playState==='running')")
         page.screenshot(path=str(Path(tempfile.gettempdir()) / 'tagmarkets-mobile-projects.png'), full_page=True)
     page.evaluate("state.projects=[];render()")
-    assert page.locator('.project-card').count() == 0
+    assert page.locator('.project-card').count() == 1  # торговые счета остаются отдельной карточкой
     assert page.locator('[data-action="project-create"]').count() == 1
     fits(page)
 
 
+
+def compact_ui_and_quiet_refresh(page, url):
+    page.goto(url+'#settings', wait_until='domcontentloaded')
+    page.locator('.settings-account-row').first.wait_for()
+    page.evaluate("""() => { const a=state.data.accounts.find(a=>!a.demo&&!a.shared);
+      state.data.accounts=Array.from({length:8},(_,i)=>({...a,login:90000+i,name:'SONIC',strategy:'Long strategy '.repeat(4),cabinet:'CU'.repeat(20),totals:i===7?null:{...a.totals,now:123456.78,cur:['USD','RUB','BYN'][i%3]}})).concat(state.data.accounts.filter(a=>a.demo||a.shared));render(); }""")
+    assert page.locator('.settings-account-row').count() == 8
+    assert page.locator('.settings-account-row .settings-balance').last.inner_text() == '—'
+    for index in range(3):
+        expected = page.evaluate("i=>money(123456.78,['USD','RUB','BYN'][i])", index)
+        assert page.locator('.settings-account-row .settings-balance').nth(index).inner_text() == expected
+    fits(page)
+    page.locator('.settings-account-row').first.click()
+    page.locator('#dialog[open]').wait_for()
+    assert page.locator('#dialog-title').inner_text() == 'Настройки счёта'
+    assert page.locator('#dialog input[name="name"]').input_value().startswith('Long strategy')
+    close_dialog(page)
+    page.goto(url+'#people', wait_until='domcontentloaded')
+    page.locator('.people-card').first.wait_for()
+    page.evaluate("""() => {
+      window.__uxApi=window.api;window.__guestCalls=[];window.__uxMutate=window.mutate;
+      const own=state.people.shareable[0];
+      window.__people=structuredClone(state.people);
+      __people.guests=[0,1,6].map((n,i)=>({id:'test-'+i,name:'Длинное имя гостя '.repeat(i===2?4:1),since:'18 сентября',accounts:Array.from({length:n},(_,j)=>({...own,login:j?70000+j:own.login,name:'SONIC '+j,shared:j===0}))}));
+      state.people=structuredClone(__people);render();
+      window.mutate=async(path,data)=>{__guestCalls.push({path,data});};
+      window.api=async(path,...args)=>{if(path==='/people')return structuredClone(__people);const d=await __uxApi(path,...args);if(path==='/bootstrap')d.user.name+=' updated';return d;};
+    }""")
+    assert page.locator('.people-card').count() == 3
+    for i in range(3):
+        card = page.locator('.people-card').nth(i)
+        assert not card.evaluate('el=>el.open')
+        assert not card.locator('.faq-body').is_visible()
+        card.locator('summary').click()
+    page.evaluate("__people.guests[1].accounts.push({...__people.guests[1].accounts[0],login:88888,shared:false,name:'Новый счёт'});refresh(true)")
+    page.wait_for_function('!state.busy')
+    assert page.locator('.people-card[open]').count() == 3
+    assert page.get_by_text('Новый счёт', exact=True).is_visible()
+    fits(page)
+    page.locator('.people-card').nth(1).locator('[data-action="take"]').click()
+    page.locator('#dialog-submit').click()
+    page.wait_for_function('__guestCalls.length===1')
+    assert page.evaluate('__guestCalls[0].data.action') == 'take'
+    page.locator('.people-card').first.locator('[data-action="share-accounts"]').click()
+    page.locator('#dialog input[type="checkbox"]').first.check()
+    page.locator('#dialog-submit').click()
+    page.wait_for_function('__guestCalls.length===2')
+    assert page.evaluate('__guestCalls[1].data.action') == 'share'
+    page.locator('.people-card').first.locator('[data-action="revoke-guest"]').click()
+    page.locator('#dialog-submit').click()
+    page.wait_for_function('__guestCalls.length===3')
+    assert page.evaluate('__guestCalls[2].data.action') == 'revoke'
+    page.locator('.people-card').first.locator('summary').click()
+    page.wait_for_function("!document.querySelector('.people-card').open")
+    fits(page)
+    assert page.locator('.link-card .portal-link').get_attribute('target') == '_blank'
+    page.evaluate('window.api=__uxApi;window.mutate=__uxMutate;void 0')
+    page.goto(url+'#faq', wait_until='domcontentloaded')
+    page.locator('.faq-strategy').first.wait_for()
+    page.locator('.faq-strategy summary').nth(0).click()
+    page.locator('.faq-strategy summary').nth(1).click()
+    question=page.locator('.faq-item').nth(1)
+    question.locator('summary').click()
+    page.wait_for_function("[...document.querySelectorAll('.faq-body')].every(el=>!el.getAnimations().length)")
+    page.evaluate("window.__uxApi=api;window.api=async(...a)=>{const d=await __uxApi(...a);if(a[0]==='/bootstrap')d.user.name+=' refreshed';return d;};scrollTo(0,450)")
+    before=page.evaluate('scrollY')
+    page.evaluate('refresh(true)')
+    page.wait_for_function('!state.busy')
+    assert page.locator('.faq-strategy[open]').count() == 2
+    assert question.evaluate('el=>el.open')
+    assert abs(page.evaluate('scrollY')-before) < 3
+    assert page.evaluate("!document.querySelector('#main').getAnimations({subtree:true}).some(a=>a.playState==='running')")
+    page.evaluate('window.api=__uxApi;void 0')
+    # Every empty period has a real graphical container and no invented deals.
+    for period in ('today','yesterday','week','lastweek','month','lastmonth','all','custom'):
+        markup=page.evaluate("p=>{state.period=p;return chart([], 'USD', false, 'счёта', [{day:'2026-10-01',value:0,balance:10000},{day:'2026-10-02',value:0,balance:10000}]);}",period)
+        assert 'chart-line' in markup and 'Баланс:' in markup
+        assert 'M0,80 H640 V80' in markup
+    unknown=page.evaluate("chart([], 'USD', false, 'счёта', [{day:'2026-10-01',value:0,balance:null}])")
+    assert 'Нет данных о состоянии счёта за этот период' in unknown
+
+
+def modal_scroll_and_deferred_refresh(page, url):
+    page.goto(url+'#overview', wait_until='domcontentloaded')
+    page.locator('.hero').wait_for()
+    page.evaluate("document.querySelector('#main').style.minHeight='2400px';window.__uxApi=api;window.__bootstrapCalls=0;window.api=async(...a)=>{if(a[0]==='/bootstrap')__bootstrapCalls++;return __uxApi(...a)};void 0")
+    cases=['addAccount()', 'projectEditor()', "projectEditor({...state.projects?.[0],id:'modal-project',name:'Private',currency:'USD',rate_percent:1,period:'week',multi:true,accounts:Array.from({length:5},(_,i)=>({id:'m'+i,name:'Аккаунт '+i,amount:1000}))})", 'configureAccount(state.data.accounts[0].login)', "confirm('Удалить проект?', 'Проверка подтверждения', 'Удалить')"]
+    for expression in cases:
+        page.evaluate('scrollTo(0,400)')
+        position=page.evaluate('scrollY')
+        top=page.locator('#main').bounding_box()['y']
+        page.evaluate("void "+expression)
+        page.locator('#dialog[open]').wait_for()
+        assert page.evaluate("document.querySelector('#dialog').contains(document.activeElement)")
+        assert page.evaluate("document.documentElement.classList.contains('modal-open')")
+        assert abs(page.locator('#main').bounding_box()['y']-top) < 2
+        page.mouse.move(2,2)
+        page.mouse.wheel(0,900)
+        page.wait_for_timeout(100)
+        assert abs(page.locator('#main').bounding_box()['y']-top) < 2
+        dialog=page.locator('#dialog')
+        if dialog.evaluate('el=>el.scrollHeight>el.clientHeight'):
+            dialog.evaluate('el=>el.scrollTop=el.scrollHeight')
+            assert dialog.evaluate('el=>el.scrollTop') > 0
+            page.mouse.move(dialog.bounding_box()['x']+20,dialog.bounding_box()['y']+20)
+            page.mouse.wheel(0,1000)
+            page.wait_for_timeout(100)
+            assert abs(page.locator('#main').bounding_box()['y']-top) < 2
+        for _ in range(5):
+            page.keyboard.press('Tab')
+            assert page.evaluate("document.querySelector('#dialog').contains(document.activeElement)||document.activeElement===document.body")
+        page.keyboard.press('Escape')
+        page.wait_for_function("!document.querySelector('#dialog').open&&!document.documentElement.classList.contains('modal-open')")
+        assert abs(page.evaluate('scrollY')-position) < 2
+        page.evaluate('scrollTo(0,450)')
+        assert page.evaluate('scrollY') == 450
+    page.evaluate('void addAccount()')
+    page.locator('#dialog input[name="name"]').fill('Незавершённый ввод')
+    calls=page.evaluate('__bootstrapCalls')
+    page.evaluate('refresh(true)')
+    assert page.locator('#dialog input[name="name"]').input_value() == 'Незавершённый ввод'
+    assert page.evaluate('__bootstrapCalls') == calls
+    if page.viewport_size['width'] == 390:
+        page.wait_for_timeout(page.evaluate('refreshEvery()')+500)
+        assert page.locator('#dialog[open]').count() == 1
+        assert page.locator('#dialog input[name="name"]').input_value() == 'Незавершённый ввод'
+        assert page.evaluate('__bootstrapCalls') == calls
+    close_dialog(page)
+    page.wait_for_function('!state.busy&&!quietPending&&__bootstrapCalls>0')
+    page.evaluate('window.api=__uxApi;void 0')
+    page.goto(url+'#projects', wait_until='domcontentloaded')
+    page.locator('.project-card').first.wait_for()
+    page.locator('a[href="#project/preview-private"]').click()
+    page.locator('.project-account').first.wait_for()
+    page.evaluate("window.__uxApi=api;window.api=async(...a)=>{const d=await __uxApi(...a);if(a[0]==='/projects')d.projects[1].accounts[0].name='Обновлённый аккаунт';return d;};scrollTo(0,200)")
+    route=page.evaluate('[location.hash,state.projectId,state.period]')
+    page.evaluate('refresh(true)')
+    page.wait_for_function('!state.busy')
+    assert page.evaluate('[location.hash,state.projectId,state.period]') == route
+    page.locator('.project-account').filter(has_text='Обновлённый аккаунт').wait_for(state='visible')
+    page.evaluate('window.api=__uxApi;void 0')
+
+
 def close_dialog(page):
     """Закрыть диалог крестиком в шапке: у информационных окон кнопка
-    «Отмена» спрятана, а крестик есть у всех."""
-    page.locator('#dialog .dialog-head button[value="cancel"]').click()
+    «Отмена» спрятана, а крестик есть у всех. Изменённые поля подтверждаем."""
+    dirty = page.evaluate("""() => [...document.querySelectorAll('#dialog input,#dialog select,#dialog textarea')].some(f =>
+        f.type==='file' ? f.files.length>0 : f.type==='checkbox'||f.type==='radio' ? f.checked!==f.defaultChecked :
+        f.tagName==='SELECT' ? f.value!==([...f.options].find(o=>o.defaultSelected)?.value??f.options[0]?.value) : f.value!==f.defaultValue)""")
+    if dirty:
+        page.evaluate("""() => { window.__exitPrompts=[]; window.requestDialogExit=d=>{window.__exitPrompts.push('Выйти без сохранения изменений?');if(d.open)d.close('cancel');return Promise.resolve(true);}; }""")
+        page.locator('#dialog .dialog-head button[value="cancel"]').click()
+        assert page.evaluate("window.__exitPrompts") == ["Выйти без сохранения изменений?"]
+    else:
+        page.locator('#dialog .dialog-head button[value="cancel"]').click()
     page.locator('#dialog[open]').wait_for(state="detached")
 
 
@@ -562,6 +724,7 @@ def main():
                     page.locator(f'{nav} a[href="#people"]').click()
                     page.locator('.people-card').first.wait_for()
                     glider_on_active(page, nav)
+                    page.locator('.people-card summary').first.click()
                     page.locator('[data-action="guest-detail"]').first.click()
                     page.get_by_text('Карточка гостя').wait_for()
                     close_dialog(page)
@@ -600,6 +763,8 @@ def main():
                         page.wait_for_timeout(500)
                         page.screenshot(path=str(screenshots / "tagmarkets-mobile-velvet-smoke.png"), full_page=True)
                     projects_ui(page, nav)
+                    compact_ui_and_quiet_refresh(page, url)
+                    modal_scroll_and_deferred_refresh(page, url)
                     assert not errors, errors
                     page.close()
                 print("UI smoke PASS: 320px, 390px, 768px and 1280px")

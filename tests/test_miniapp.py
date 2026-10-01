@@ -7,11 +7,12 @@ import io
 import json
 import os
 import sys
+import sqlite3
 import tempfile
 import time
 import unittest
 from unittest.mock import AsyncMock, patch
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlencode
 from contextlib import closing
@@ -30,6 +31,7 @@ import agent
 import bot
 import coordination
 import miniapp
+import projects
 import partner
 import store
 import trades
@@ -922,6 +924,126 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.call("DELETE", path + "/accounts/" + foreign_id)).status, 404)
         self.assertEqual((await self.call("PATCH", path, json={"accounts": [{"id": foreign_id, "amount": 1}]})).status, 404)
         self.assertEqual((await (await self.call("GET", path)).json())["total"], 8000)
+
+    async def test_project_account_rate_override_and_inheritance(self):
+        created = await (await self.call("POST", "/api/projects", json={"name":"Mixed rates", "currency":"USD", "rate_percent":2, "period":"month", "multi":True, "accounts":[{"amount":1000},{"amount":1000,"rate_percent":5}]})).json()
+        pid = created["id"]
+        aid = created["accounts"][1]["id"]
+        self.assertEqual(created["expected_income"], 70)
+        self.assertIsNone(created["accounts"][0]["rate_percent"])
+        updated = await (await self.call("PATCH", f"/api/projects/{pid}", json={"rate_percent":3})).json()
+        self.assertEqual(updated["expected_income"], 80)
+        self.assertEqual(updated["accounts"][1]["id"], aid)
+        updated = await (await self.call("PATCH", f"/api/projects/{pid}/accounts/{aid}", json={"rate_percent":0})).json()
+        self.assertEqual(updated["expected_income"], 30)
+        updated = await (await self.call("PATCH", f"/api/projects/{pid}/accounts/{aid}", json={"rate_percent":None})).json()
+        self.assertEqual(updated["expected_income"], 60)
+        for rate in (-1, True, "3", 1001, float("inf"), float("nan"), .00001):
+            response = await self.call("PATCH", f"/api/projects/{pid}/accounts/{aid}", json={"rate_percent":rate})
+            self.assertEqual(response.status, 400)
+        # Old tables migrate in place and preserve the existing accounts.
+        with closing(sqlite3.connect(":memory:")) as db:
+            db.execute("CREATE TABLE project_accounts (id TEXT PRIMARY KEY,project_id TEXT,name TEXT,amount_cents INTEGER,position INTEGER)")
+            db.execute("INSERT INTO project_accounts VALUES ('legacy','legacy-project','',100000,0)")
+            projects.setup(db)
+            self.assertEqual(db.execute("SELECT id,rate_percent FROM project_accounts").fetchone(), ('legacy', None))
+
+    async def test_project_capitalization_compounds_only_complete_periods(self):
+        self.assertEqual(projects.periods_since("2026-10-01", "week", date(2026, 10, 7)), 0)
+        self.assertEqual(projects.periods_since("2026-10-01", "week", date(2026, 10, 8)), 1)
+        self.assertEqual(projects.periods_since("2026-01-31", "month", date(2026, 2, 27)), 0)
+        self.assertEqual(projects.periods_since("2026-01-31", "month", date(2026, 2, 28)), 1)
+        fixed_today = date(2026, 10, 3)
+        with patch.object(projects, "today", return_value=fixed_today):
+            daily = projects.save(self.db, "1", {"name":"Daily", "currency":"USD", "rate_percent":2,
+                "period":"day", "multi":False, "capitalization":True, "capitalization_from":"2026-10-01",
+                "accounts":[{"amount":500}]})
+        self.assertEqual(daily["total"], 500)
+        # Capitalization settings affect projections, never actual balances.
+        self.assertEqual(daily["current_total"], 500)
+        self.assertEqual(daily["accounts"][0]["current_amount"], 500)
+        self.assertEqual(daily["expected_income"], 10)
+        # Account override can turn compounding off even when enabled on project.
+        with patch.object(projects, "today", return_value=fixed_today):
+            changed = projects.account_change(self.db, "1", daily["id"],
+                {"capitalization":False, "capitalization_from":None}, daily["accounts"][0]["id"])
+        self.assertEqual(changed["current_total"], 500)
+        with patch.object(projects, "today", return_value=fixed_today):
+            changed = projects.account_change(self.db, "1", daily["id"],
+                {"capitalization":None, "capitalization_from":None}, daily["accounts"][0]["id"])
+        self.assertEqual(changed["current_total"], 500)
+
+    async def test_project_forecast_uses_compounding_and_discards_expired_bonus(self):
+        async def create(name, capitalization, bonus=None):
+            account = {"amount": 1000}
+            if bonus is not None:
+                account.update(bonus_amount=bonus, bonus_expires_at=(datetime.now(timezone.utc)+timedelta(days=60)).isoformat(timespec="seconds").replace("+00:00", "Z"))
+            response = await self.call("POST", "/api/projects", json={"name":name,"currency":"USD","rate_percent":1,"period":"month","multi":False,"capitalization":capitalization,"accounts":[account]})
+            self.assertEqual(response.status, 201, await response.text())
+            return await response.json()
+
+        simple = await create("Simple", False)
+        compound = await create("Compound", True)
+        until_month = "2026-11-02"
+        simple_result = projects.forecast(self.db, "1", simple["id"], until_month, False)
+        compound_result = projects.forecast(self.db, "1", compound["id"], until_month, False)
+        self.assertAlmostEqual(simple_result["total"], 1010, places=2)
+        self.assertAlmostEqual(compound_result["total"], 1010, places=2)
+        self.assertEqual(simple["current_total"], 1000)
+        until_year = "2027-10-02"
+        compound_year = projects.forecast(self.db, "1", compound["id"], until_year, False)
+        self.assertAlmostEqual(compound_year["total"], 1000*(1.01**12), places=2)
+
+        bonus = await create("Expires", False, 500)
+        active_date = "2026-11-02"
+        until_after_expiry = "2027-03-31"
+        active = projects.forecast(self.db, "1", bonus["id"], active_date, True)
+        self.assertAlmostEqual(active["total"], 1515, places=2)
+        included = projects.forecast(self.db, "1", bonus["id"], until_after_expiry, True)
+        excluded = projects.forecast(self.db, "1", bonus["id"], until_after_expiry, False)
+        self.assertEqual(included["total"], excluded["total"])
+        self.assertEqual(bonus["working_total"], 1500)
+
+    async def test_display_currency_preference_is_saved_and_rates_are_existing_fx(self):
+        response = await self.call("GET", "/api/preferences/display-currency")
+        self.assertEqual((await response.json())["currency"], "USD")
+        response = await self.call("PUT", "/api/preferences/display-currency", json={"currency":"BYN"})
+        self.assertEqual(response.status, 200)
+        with patch.object(miniapp, "myfin_nbrb_rates", new=AsyncMock(return_value={"BYN":1.0,"USD":3.0,"RUB":0.03})):
+            bootstrap = await self.call("GET", "/api/bootstrap")
+        result = await bootstrap.json()
+        self.assertEqual(result["display_currency"], "BYN")
+        self.assertEqual(result["fx"]["byn_per_unit"]["RUB"], 0.03)
+        invalid = await self.call("PUT", "/api/preferences/display-currency", json={"currency":"EUR"})
+        self.assertEqual(invalid.status, 400)
+
+    async def test_chart_timeline_keeps_empty_days_and_unknown_history(self):
+        now = datetime(2026, 10, 2, 15)
+        state = {"balance": 1010, "synced": "2026-10-02T12:00:00"}
+        rows = [{"time": datetime(2026, 9, 28, 12), "net": 20},
+                {"time": datetime(2026, 10, 1, 12), "net": -10}]
+        chart = {"2026-09-28": 20, "2026-10-01": -10}
+        with patch.object(trades, "clock", return_value=now), patch.dict(os.environ, {"HISTORY_FROM": "2026-06-01"}):
+            points = miniapp.report_timeline(chart, datetime(2026, 9, 28), now, state, rows)
+            self.assertEqual([p["value"] for p in points], [20, 0, 0, -10, 0])
+            self.assertEqual([p["balance"] for p in points], [1020, 1020, 1020, 1010, 1010])
+            for start, end in ((now, now), (now-timedelta(days=1), now-timedelta(days=1)),
+                               (datetime(2026, 9, 21), datetime(2026, 9, 27)),
+                               (datetime(2026, 9, 1), datetime(2026, 9, 30))):
+                empty = miniapp.report_timeline({}, start, end, state, [])
+                self.assertEqual(len(empty), (end.date()-start.date()).days+1)
+                self.assertTrue(all(p["value"] == 0 and p["balance"] == 1010 for p in empty))
+            unknown = miniapp.report_timeline(chart, datetime(2026, 9, 28), now, state, rows, date(2026, 10, 1))
+            self.assertEqual([p["balance"] for p in unknown], [None, None, None, 1010, 1010])
+            stale = miniapp.report_timeline({}, now, now, {**state, "synced":"2026-10-01T12:00:00"}, [])
+            self.assertIsNone(stale[0]["balance"])
+        self.assertEqual(len(rows), 2)  # display points never become deals
+        for period in ("today", "yesterday", "week", "lastweek", "month", "lastmonth", "all"):
+            data = await (await self.call("GET", "/api/accounts/123/report?period="+period)).json()
+            self.assertTrue(data["timeline"], period)
+            self.assertEqual(sum(p["value"] for p in data["timeline"]), sum(p["value"] for p in data["chart"]))
+        data = await (await self.call("GET", "/api/overview/report?period=week")).json()
+        self.assertTrue(data["timeline"])
 
     async def test_projects_validation_and_decimal_totals(self):
         payload = {"name": "Valid", "currency": "USD", "rate_percent": 2.5,
