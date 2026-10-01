@@ -749,8 +749,6 @@ def _self_update_and_restart(lock: socket.socket, target_commit: str) -> None:
         log.error("обновление не удалось, остаюсь на текущем коде: %s", e)
         return
 
-    _offer_console_free_setup()
-
     log.info("код обновлён до %s, перезапускаюсь", target_commit[:8])
     try:
         import subprocess
@@ -774,87 +772,6 @@ def _self_update_and_restart(lock: socket.socket, target_commit: str) -> None:
     lock.close()
     log.info("новый процесс запущен и жив, этот завершается")
     sys.exit(0)
-
-
-# Отметка, чтобы предлагать переключение задачи на бесконсольный запуск не
-# при каждом автообновлении, а один раз за всё время жизни этой машины —
-# после первого переключения (или отказа пользователя) файл остаётся как
-# памятка, что вопрос уже решён
-_CONSOLE_FREE_MARKER = os.path.join(ROOT, "data", ".console_free_offered")
-
-
-def _offer_console_free_setup() -> None:
-    """Разово, при первом автообновлении на новом коде, проверяет — не
-    запускает ли эта машина ещё старый run_agent.bat (тот на миг показывает
-    окно cmd.exe) — и если да, предлагает пользователю UAC-запрос на
-    переключение задачи планировщика на run_agent.vbs (без окна вообще).
-
-    Сам агент работает не от администратора, поэтому тихо и незаметно
-    поменять задачу планировщика нельзя — Set-ScheduledTask откажет.
-    Единственный способ не мешать пользователю молчаливым сбоем — честно
-    попросить один раз через системный UAC-диалог, который пользователь
-    либо примет, либо отклонит; в обоих случаях повторно не спрашиваем.
-
-    Осознанный компромисс: механизм автообновления и так означает, что
-    любой, кто может запушить в GIT_REMOTE/GIT_BRANCH, получает выполнение
-    произвольного кода от имени пользователя агента — это не новая дыра.
-    Но именно этот UAC-запрос приучает пользователя воспринимать неожиданное
-    окно с запросом прав администратора как нормальное поведение агента —
-    при компрометации репозитория tools/setup_console_free.ps1 можно
-    подменить, и пользователь, уже привыкший жать «да», молча даст код
-    выполниться от администратора. Защиты от этого сценария на уровне кода
-    нет — только у того, кто имеет доступ на запись в git-репозиторий,
-    и так уже есть выполнение кода от пользователя; повышение до
-    администратора требует его же осознанного клика на реальном экране.
-    """
-    if os.name != "nt" or os.path.exists(_CONSOLE_FREE_MARKER):
-        return
-    setup_script = os.path.join(ROOT, "tools", "setup_console_free.ps1")
-    if not os.path.exists(setup_script):
-        return
-
-    # отметку ставим только когда реально дошли до решения (задачи нет, уже
-    # переключена, или предложение реально показано) — если проверка ниже
-    # оборвётся временной ошибкой (PowerShell не успел стартовать, WMI
-    # запнулся и т.п.), пользователя ничего не спросили, и лучше повторить
-    # попытку при следующем автообновлении, чем молча похоронить её навсегда
-    def _mark_done() -> None:
-        try:
-            os.makedirs(os.path.dirname(_CONSOLE_FREE_MARKER), exist_ok=True)
-            with open(_CONSOLE_FREE_MARKER, "w", encoding="utf-8") as f:
-                f.write(utcnow().isoformat())
-        except Exception as e:
-            log.warning("не создал отметку про предложение бесконсольной настройки: %s", e)
-
-    try:
-        out = _quiet_run(
-            ["powershell", "-NoProfile", "-Command",
-             "(Get-ScheduledTask -TaskName TagMarketsAgent -ErrorAction "
-             "SilentlyContinue).Actions.Execute"],
-            capture_output=True, text=True, timeout=15).stdout.strip().lower()
-        if not out or "wscript" in out:
-            _mark_done()     # задачи нет или уже переключена — предлагать нечего
-            return
-    except Exception as e:
-        log.warning("не проверил конфигурацию задачи планировщика, попробую при "
-                   "следующем обновлении: %s", e)
-        return    # без _mark_done(): это не решение, а сбой проверки
-
-    log.info("задача планировщика ещё использует .bat (мелькает окно консоли) — "
-             "предлагаю пользователю переключить на бесконсольный запуск (UAC)")
-    try:
-        import subprocess
-        # тут окно консоли — не баг, а необходимость: сам setup-скрипт
-        # спрашивает пользователя (y/n) перед запросом UAC, и это единственный
-        # осмысленный случай во всём агенте, где окно должно быть видимым
-        subprocess.Popen(
-            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
-             "-File", setup_script],
-            cwd=ROOT, creationflags=subprocess.CREATE_NEW_CONSOLE)
-        _mark_done()    # предложение показано — больше не спрашиваем, независимо от ответа
-    except Exception as e:
-        log.warning("не запустил предложение бесконсольной настройки, попробую при "
-                   "следующем обновлении: %s", e)
 
 
 def notify_role_change(became: str) -> None:

@@ -103,9 +103,17 @@ def _launch() -> None:
     flags = (getattr(subprocess, "DETACHED_PROCESS", 0) | _NO_WINDOW | _IDLE_PRIORITY)
     proc = subprocess.Popen([TERMINAL], cwd=os.path.dirname(TERMINAL), startupinfo=startup,
                             creationflags=flags)
-    time.sleep(20)      # терминалу нужно время подняться
-    hide_terminal(proc.pid)
     _lower_priority(proc.pid)
+    # MT5 может сам показать окно уже после старта: прячем его сразу и
+    # повторяем на всём запуске вместо 20 секунд ожидания с окном на экране.
+    deadline = time.monotonic() + 20
+    while proc.poll() is None:
+        hide_terminal(proc.pid)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(0.25, remaining))
+    hide_terminal(proc.pid)
 
 
 def _lower_priority(pid: int) -> None:
