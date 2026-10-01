@@ -634,3 +634,5 @@ body.onboarding-only .workspace{padding-bottom:24px}
 .scheme-check svg{width:13px;height:13px;stroke-width:3}
 .scheme.active .scheme-check{opacity:1;transform:scale(1)}
 @media(prefers-reduced-motion:reduce){.scheme,.scheme-check{transition:none}.scheme:hover{transform:none}}
+
+.settings-account-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:12px}.settings-account-info{min-width:0}.settings-account-info p,.settings-account-info small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.settings-balance{font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right}.settings-account-row>.button{justify-self:end}@media(max-width:480px){.settings-account-row{grid-template-columns:minmax(0,1fr) auto;gap:8px 12px}.settings-account-info{grid-column:1/-1}.settings-balance{grid-column:1;grid-row:2}.settings-account-row>.button{grid-column:2;grid-row:2}}
