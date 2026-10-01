@@ -172,11 +172,11 @@ function copySteps(){const code=v=>`<code class="faq-code">${esc(v)}</code>`;ret
    `В поле «HASH/GU-ID» введите ровно шесть нулей ${code('000000')} и нажмите «Submit».`,
    'Отметьте две галочки и нажмите «Copy Now» — стратегия запущена.'];}
 function faqStrategy(name,tag,facts,text,shots,link){
- return `<article class="faq-strategy"><div class="faq-strategy-head"><span class="faq-strategy-mark">${esc(tag)}</span><div><h3>${esc(name)}</h3><small>${esc(facts[0])}</small></div></div><ul class="faq-facts">${facts.slice(1).map(([k,v])=>`<li><small>${esc(k)}</small><b>${esc(v)}</b></li>`).join('')}</ul><p>${esc(text)}</p><div class="faq-shots">${shots.map(([s,a])=>FAQ_IMG(s,a)).join('')}</div>${link||''}</article>`;
+ return `<details class="faq-strategy"><summary class="faq-strategy-head"><span class="faq-strategy-mark">${esc(tag)}</span><span class="faq-strategy-title"><h3>${esc(name)}</h3><small>${esc(facts[0])}</small></span><span class="faq-strategy-toggle"><span class="when-closed">Развернуть</span><span class="when-open">Свернуть</span>${icon('chevron')}</span></summary><div class="faq-body"><ul class="faq-facts">${facts.slice(1).map(([k,v])=>`<li><small>${esc(k)}</small><b>${esc(v)}</b></li>`).join('')}</ul><p>${esc(text)}</p><div class="faq-shots">${shots.map(([s,a])=>FAQ_IMG(s,a)).join('')}</div>${link||''}<p class="faq-note">Цифры — из карточек стратегий у брокера. Прошлые результаты не гарантируют будущих: торговый баланс с плечом можно потерять.</p></div></details>`;
 }
 function faqSteps(steps){return `<ol class="faq-steps">${steps.map(s=>`<li><span>${s}</span></li>`).join('')}</ol>`;}
 function faqItem(q,body,open=false){return `<details class="faq-item"${open?' open':''}><summary><span>${esc(q)}</span>${icon('chevron')}</summary><div class="faq-body">${body}</div></details>`;}
-function faqGroup(eyebrow,title,ico,items){return `<section class="panel faq-card"><div class="faq-card-head"><span class="faq-card-icon">${icon(ico)}</span><div><span class="eyebrow">${esc(eyebrow)}</span><h2>${esc(title)}</h2></div></div>${items}</section>`;}
+function faqGroup(eyebrow,title,ico,items,id='',classes='panel faq-card'){return `<section class="${classes}"${id?` id="${id}"`: ''}><div class="faq-card-head"><span class="faq-card-icon">${icon(ico)}</span><div><span class="eyebrow">${esc(eyebrow)}</span><h2>${esc(title)}</h2></div></div>${items}</section>`;}
 function faqView(){
  const reg=state.data?.onboarding?.registration_url||'';
  const ext=(href,label)=>`<a class="text-link" href="${esc(href)}" target="_blank" rel="noopener">${esc(label)} ${icon('arrow')}</a>`;
@@ -189,7 +189,7 @@ function faqView(){
    'Строго одна сделка в день на 0,5% депозита, с коротким стоп-лоссом и тейк-профитом. В дни без подходящей ситуации на рынке пропускает торговлю. Очень консервативен: сохранность депозита важнее доходности.',
    [['faq-neo-card.jpg','Карточка стратегии NEO.FX в CopyX'],['faq-neo-stats.jpg','Статистика NEO.FX: ROI, винрейт, просадка'],['faq-neo-myfxbook.jpg','Статистика NEO на myfxbook']],
    `<div class="faq-links">${ext('https://www.myfxbook.com/members/WordSmithyFx/neofx/11800152','NEO на myfxbook с октября 2025')}${ext('https://www.myfxbook.com/members/WordSmithyFx/neo-fx/11779491','Тестовый период март–ноябрь 2025')}</div>`)
-  +`<p class="faq-note">Цифры — из карточек стратегий у брокера. Прошлые результаты не гарантируют будущих: торговый баланс с плечом можно потерять.</p>`);
+  ,'','faq-strategies');
  const connect=faqGroup('КАК НАЧАТЬ','Подключение по шагам','plus',
   faqItem('1. Регистрация',faqSteps(REG_STEPS)
    +(reg?`<a class="button primary faq-cta" href="${esc(reg)}" target="_blank" rel="noopener">Открыть регистрацию ${icon('arrow')}</a>`:'<p class="faq-note">Ссылку на регистрацию даст тот, кто вас пригласил.</p>'),true)
@@ -197,7 +197,7 @@ function faqView(){
   +faqItem('3. Пополнение и подключение к копитрейдингу',faqSteps(copySteps())
    +`<div class="faq-shots">${FAQ_IMG('faq-neo-card.jpg','Кнопка Connect в карточке стратегии')}</div>`)
   +faqItem('Можно попробовать без своих денег',`<p>Да — в приложении есть демо-счёт «Копитрейдинг 45k». Он показывает реальную динамику стратегии, но не входит в ваш капитал.</p>`)
-  +faqItem('Как добавить свой счёт в это приложение',`<p>Добавьте счёт в разделе «Счета» с инвесторским паролем MT5 — дальше сделки и баланс обновляются сами.</p><a class="text-link" href="#accounts">Мои счета ${icon('arrow')}</a>`));
+  +faqItem('Как добавить свой счёт в это приложение',`<p>Добавьте счёт в разделе «Счета» с инвесторским паролем MT5 — дальше сделки и баланс обновляются сами.</p><a class="text-link" href="#accounts">Мои счета ${icon('arrow')}</a>`),'faq-connect');
  const money_=faqGroup('ДЕНЬГИ','Вывод и комиссия','accounts',
   faqItem('Как вывести доход',`<p>Через кабинет брокера. Выбирайте сеть USDT BEP-20 — у неё минимальный порог.</p><ul class="faq-chips"><li><b>USDT BEP-20</b><small>от 10 $ · рекомендуем</small></li><li><b>USDT TRC-20</b><small>от 50 $</small></li></ul>${ext('https://portal.tagmarkets.com/','Кабинет Tag Markets')}`)
   +faqItem('Какая комиссия',`<p>30% с прибыли — и только когда стратегия заработала. Списывается автоматически у брокера, в приложении видна отдельной строкой в «Движениях средств».</p>`)
@@ -205,7 +205,7 @@ function faqView(){
   +faqItem('Где физически мои деньги',`<p>На вашем личном счёте MT5 у брокера Tag Markets — не у нас и не в общем пуле. Вывод можно запросить в любой момент через кабинет брокера.</p>`));
  const partner=faqGroup('ПАРТНЁРАМ','Партнёрская программа','people',
   faqItem('Где взять реферальную ссылку',`<p>IB Portal → Profile → Partner Referral Links.</p>${ext('https://exfusion.ibportal.io/profile','Открыть IB Portal')}`)
-  +faqItem('Когда выплачиваются вознаграждения',`<p>Вечером каждого воскресенья. Вывод — через кабинет Tag Markets, условия те же, что для дохода:</p><ul class="faq-chips"><li><b>USDT BEP-20</b><small>от 10 $</small></li><li><b>USDT TRC-20</b><small>от 50 $</small></li></ul>${ext('https://portal.tagmarkets.com/','Кабинет Tag Markets')}`));
+  +faqItem('Когда выплачиваются вознаграждения',`<p>Вечером каждого воскресенья. Вывод — через кабинет Tag Markets; сети и минимальные суммы указаны выше в разделе «Вывод и комиссия».</p>${ext('https://portal.tagmarkets.com/','Кабинет Tag Markets')}`));
  const mt5=faqGroup('СДЕЛКИ','MetaTrader 5','chart',
   faqItem('Где смотреть сделки и статистику счёта',`<div class="faq-split"><div><p>Логин и пароль от MT5 — в личном кабинете Tag Markets. Установите MetaTrader 5 и войдите — там все сделки и история счёта.</p><div class="faq-store"><a class="button secondary" href="https://apps.apple.com/ru/app/metatrader-5/id413251709" target="_blank" rel="noopener">iPhone ${icon('arrow')}</a><a class="button secondary" href="https://play.google.com/store/apps/details?id=net.metaquotes.metatrader5" target="_blank" rel="noopener">Android ${icon('arrow')}</a></div></div>${FAQ_IMG('faq-mt5.jpg','MetaTrader 5 в App Store')}</div>`));
  const license=faqGroup('БРОКЕР','Tag Markets и лицензия','shield',
@@ -219,7 +219,7 @@ document.addEventListener('load',e=>{if(e.target.matches?.('.faq-shot img'))e.ta
 // Плавное раскрытие вопросов в обе стороны: у <details> браузер открывает и
 // закрывает содержимое мгновенно, поэтому высоту анимируем сами
 document.addEventListener('click',event=>{
- const summary=event.target.closest('.faq-item > summary');if(!summary)return;
+ const summary=event.target.closest('.faq-item > summary, .faq-strategy > summary');if(!summary)return;
  const item=summary.parentElement,body=item.querySelector('.faq-body');if(!body||reducedMotion())return;
  event.preventDefault();
  if(item._anim){item._anim.cancel();item._anim=null;}
@@ -758,7 +758,7 @@ async function navigate(){
  if(state.filters[state.view])state.filters[state.view]={period:state.period,from:state.from,to:state.to};
  if(next!==state.view&&state.filters[next])Object.assign(state,state.filters[next]);
  state.view=next;
- if(login){if(next==='project')state.projectId=login;else state.login=Number(login);}
+ if(login){if(next==='project')state.projectId=login;else if(next!=='faq')state.login=Number(login);}
  state.offset=0;state.kind='trades';
  const cached=state.data&&viewCache.get(viewKey());
  const fresh=!!state.data&&(!VIEW_NEEDS_DATA(next)||(!!cached&&Date.now()-cached.at<refreshEvery()));
@@ -779,6 +779,7 @@ async function navigate(){
  }
  if(!state.data)await refresh();
  else if(!fresh)await loadView();
+ if(seq===navSeq&&next==='faq'&&login==='connect')$('#faq-connect')?.scrollIntoView({block:'start'});
  tg?.BackButton?.[['account','project'].includes(state.view)?'show':'hide']();
 }
 // [id, название, цвет шапки Telegram, образцы]. Фон у всех схем один —
@@ -838,7 +839,7 @@ document.addEventListener('change',event=>{if(event.target.matches('.project-for
 async function addAccount(){
  const known=[...new Set(state.data.accounts.filter(a=>!a.demo&&!a.shared).map(a=>a.cabinet).filter(Boolean))];
  const choice=known.length?`<label class="field">Кабинет<select name="cabinet_choice" id="add-cabinet-choice">${known.map(c=>{const owner=state.data.accounts.find(a=>a.cabinet===c)?.holder;return `<option value="${esc(c)}">${esc(owner?`${owner} · ${c}`:c)}</option>`;}).join('')}<option value="new">Другой кабинет…</option></select></label><div id="add-new-cabinet" hidden>${field('Customer Number нового кабинета','cabinet','text','','required disabled maxlength="32" placeholder="Например, CU228816"')}</div>`:field('Customer Number кабинета','cabinet','text','','required maxlength="32" placeholder="Например, CU228816"');
- const form=`<p>Используйте инвесторский пароль MT5: он даёт доступ к просмотру.</p>${choice}${field('Название стратегии','name','text','','required maxlength="48" placeholder="Например, SONIC или NEO"')}${field('Номер счёта MT5','login','number','','required min="1" step="1" placeholder="Например, 10001234"')}${field('Инвесторский пароль','password','password','','required maxlength="128" autocomplete="new-password" placeholder="Пароль инвестора MT5"')}<div class="auto-field"><span>Сервер и владелец</span><b>Определятся автоматически</b><small>После первой синхронизации с MT5</small></div>`;
+ const form=`<p>Используйте инвесторский пароль MT5: он даёт доступ к просмотру.</p>${choice}${field('Название стратегии','name','text','','required maxlength="48" placeholder="Например, SONIC или NEO"')}${field('Номер счёта MT5','login','number','','required min="1" step="1" placeholder="Например, 10001234"')}${field('Инвесторский пароль','password','password','','required maxlength="128" autocomplete="new-password" placeholder="Пароль инвестора MT5"')}<div class="auto-field"><span>Сервер и владелец</span><b>Определятся автоматически</b><small>После первой синхронизации с MT5</small></div><a class="text-link account-help" href="#faq/connect" data-action="account-help">Как открыть счёт ${icon('arrow')}</a>`;
  const data=await dialog('Подключить счёт MT5',form,'Подключить');if(!data)return;
  if(known.length){data.cabinet=data.cabinet_choice==='new'?data.cabinet:data.cabinet_choice;delete data.cabinet_choice;}
  await mutate('/accounts',data);location.hash='accounts';
@@ -864,6 +865,7 @@ document.addEventListener('click',async event=>{const el=event.target.closest('[
  else if(action==='kind'){state.kind=el.dataset.value;state.offset=0;await showCached(el);}
  else if(action==='next'||action==='prev'){state.offset=Math.max(0,state.offset+(action==='next'?50:-50));await showCached();}
  else if(action==='apply-period'){state.from=$('#from-date').value;state.to=$('#to-date').value;if(!state.from||!state.to||state.from>state.to)throw new Error('Укажите корректные даты начала и конца');await showCached();}
+ else if(action==='account-help'){if($('#dialog').open)$('#dialog').close('cancel');location.hash='faq/connect';}
  else if(action==='add')await addAccount();
  else if(action==='onboard-step')await mutate('/onboarding',{step:el.dataset.step,done:true});
  else if(action==='account-settings')await configureAccount(el.dataset.login);

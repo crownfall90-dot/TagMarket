@@ -178,9 +178,55 @@ def faq_opens_smoothly(page, url):
     item.locator("summary").click()
     assert item.evaluate("el => el.querySelector('.faq-body').getAnimations().length") == 1
     page.wait_for_function("el => !el.open", arg=item.element_handle())
-    page.locator(".faq-shot").first.click()
-    page.locator("#dialog[open] .faq-full").wait_for()
-    close_dialog(page)
+    strategies = page.locator('.faq-strategy')
+    assert strategies.count() == 2
+    assert page.locator('.faq-strategies.panel').count() == 0
+    page.evaluate("window.__faqNode=document.querySelector('.faq-page')")
+    for index in range(2):
+        strategy = strategies.nth(index)
+        assert not strategy.evaluate('el=>el.open')
+        assert not strategy.locator('.faq-shots').is_visible()
+        assert strategy.locator('.when-closed').is_visible()
+        before = strategy.bounding_box()['height']
+        strategy.locator('summary').click()
+        page.wait_for_function("el=>el.open&&!el.querySelector('.faq-body').getAnimations().length", arg=strategy.element_handle())
+        assert strategy.bounding_box()['height'] > before + 100
+        assert strategy.locator('.when-open').is_visible()
+        assert strategy.locator('.faq-facts li').count() == 6
+        assert strategy.locator('img').first.get_attribute('loading') == 'lazy'
+        assert strategy.locator('img').first.get_attribute('alt')
+        fits(page)
+        strategy.locator('.faq-shot').first.click()
+        page.locator('#dialog[open] .faq-full').wait_for()
+        fits(page)
+        close_dialog(page)
+        strategy.locator('summary').click()
+        page.wait_for_function('el=>!el.open', arg=strategy.element_handle())
+        assert abs(strategy.bounding_box()['height'] - before) < 2
+    assert page.evaluate("document.querySelector('.faq-page')===window.__faqNode")
+    page.emulate_media(reduced_motion='reduce')
+    strategies.first.locator('summary').click()
+    assert strategies.first.evaluate('el=>el.open&&!el.querySelector(".faq-body").getAnimations().length')
+    strategies.first.locator('summary').click()
+    page.emulate_media(reduced_motion='no-preference')
+    if page.viewport_size['width'] == 390:
+        page.evaluate('scrollTo(0,0)')
+        page.wait_for_function("!document.querySelector('#main').getAnimations({subtree:true}).some(a=>a.playState==='running')")
+        page.screenshot(path=str(Path(tempfile.gettempdir()) / 'tagmarkets-faq-compact-390.png'), full_page=True)
+    page.goto(url + '#accounts', wait_until='domcontentloaded')
+    page.locator('.page-head [data-action="add"]').click()
+    assert page.locator('#dialog-title').inner_text() == 'Подключить счёт MT5'
+    assert page.locator('#dialog-submit').inner_text() == 'Подключить'
+    assert page.locator('#dialog input[name="password"]').get_attribute('type') == 'password'
+    fits(page)
+    page.locator('#dialog .account-help').click()
+    page.wait_for_function("location.hash==='#faq/connect'&&!document.querySelector('#dialog').open")
+    page.locator('#faq-connect').wait_for()
+    page.wait_for_function("document.querySelector('#faq-connect').getBoundingClientRect().top<150")
+    assert page.locator('#faq-connect h2').inner_text() == 'Подключение по шагам'
+    assert page.locator('#faq-connect .faq-item').first.evaluate('el=>el.open')
+    assert not page.locator('#faq-connect .faq-item').nth(1).evaluate('el=>el.open')
+    fits(page)
 
 
 def guest_with_shared_account_sees_home_and_opens_guide_on_demand(page):

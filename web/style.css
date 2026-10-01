@@ -557,7 +557,7 @@ body:not(.is-loading) #refresh svg{animation:refresh-settle .4s cubic-bezier(.3,
 .faq-strategy-head small{color:var(--muted);font-size:11.5px}
 .faq-strategy-mark{width:44px;height:44px;border-radius:13px;display:grid;place-items:center;font-weight:800;font-size:12px;letter-spacing:.04em;color:#111416;background:var(--accent);flex-shrink:0}
 .faq-facts{list-style:none;padding:0;margin:14px 0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
-.faq-facts li{background:var(--raised);border-radius:10px;padding:8px 10px;min-width:0}
+.faq-facts li{padding:8px 0;min-width:0;border-bottom:1px solid var(--line)}
 .faq-facts small{display:block;color:var(--muted);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .faq-facts b{display:block;font-size:13px;margin-top:2px;white-space:nowrap}
 .faq-strategy>p{color:var(--muted);font-size:13px;line-height:1.55;margin:0 0 12px}
@@ -653,3 +653,19 @@ body.onboarding-only .workspace{padding-bottom:24px}
 .project-form-account{margin:14px 0;padding:14px;border:1px solid var(--line);border-radius:12px;background:var(--raised)}.project-form-account-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:12px}.project-form-account-head,.project-account-name,.project-form-add{display:none}.project-form.multi .project-form-account-head{display:flex}.project-form.multi .project-account-name,.project-form.multi .project-form-add{display:block}.project-form-total{margin-top:18px;font-size:12px;color:var(--accent);overflow-wrap:anywhere}.project-remove-confirm{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:8px;flex-wrap:wrap}.project-form .field-row>*,.project-form input,.project-form select{min-width:0}
 @media(max-width:740px){.mobile-nav a{min-width:0;padding-left:2px;padding-right:2px}.project-grid{grid-template-columns:minmax(0,1fr)}}
 @media(max-width:480px){.project-space .page-head{flex-wrap:wrap;align-items:flex-start}.project-space .page-head h1{overflow-wrap:anywhere}.project-total{font-size:25px}.project-summary>div:last-child{text-align:left}.project-account .inline-actions{margin-left:auto}}
+
+/* TM-UX-03: compact strategies reuse the FAQ disclosure animation. */
+.account-help{margin-top:18px;font-size:12px}
+#faq-connect{scroll-margin-top:100px}
+.faq-strategies{min-width:0}
+.faq-strategy>summary{list-style:none;cursor:pointer;flex-wrap:wrap}
+.faq-strategy>summary::-webkit-details-marker{display:none}
+.faq-strategy-title{flex:1;min-width:0}
+.faq-strategy-toggle{display:flex;gap:6px;align-items:center;color:var(--accent);font-size:12px}
+.faq-strategy-toggle svg{width:14px;height:14px;transition:transform .3s}
+.faq-strategy .when-open,.faq-strategy[open]:not(.is-closing) .when-closed{display:none}
+.faq-strategy[open]:not(.is-closing) .when-open{display:inline}
+.faq-strategy[open]:not(.is-closing) .faq-strategy-toggle svg{transform:rotate(90deg)}
+.faq-strategy>.faq-body{padding:0}
+.faq-strategy>.faq-body>:last-child{margin-bottom:0}
+@media(max-width:480px){.faq-strategy-toggle{margin-left:56px}#faq-connect{scroll-margin-top:90px}}
