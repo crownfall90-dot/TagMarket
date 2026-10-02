@@ -751,8 +751,9 @@ def trade_pairs(rows: list[dict]) -> list[dict]:
 
     Связываем по номеру позиции. У сделок, сохранённых до того, как сервер
     начал его хранить, номера нет — там закрытие забирает самую раннюю ещё
-    открытую позицию противоположной стороны (закрывающая сделка BUY-позиции
-    в MT5 — SELL). Вход до начала периода — пара без входа, только выход.
+    открытую позицию той же стороны: и у входа, и у выхода side — направление
+    позиции (см. trades._position_side). Вход до начала периода — пара без
+    входа, только выход.
     """
     queue = {"BUY": [], "SELL": []}
     by_position, pairs = {}, []
@@ -763,12 +764,12 @@ def trade_pairs(rows: list[dict]) -> list[dict]:
                 by_position[r["position"]] = r
             continue
         entry = by_position.pop(r.get("position"), None) if r.get("position") else None
-        waiting = queue.get("SELL" if r["side"] == "BUY" else "BUY", [])
+        waiting = queue.get(r["side"], [])
         if entry is not None and entry in waiting:
             waiting.remove(entry)
         elif entry is None and waiting:
             entry = waiting.pop(0)
-        pairs.append({"side": entry["side"] if entry else ("SELL" if r["side"] == "BUY" else "BUY"),
+        pairs.append({"side": entry["side"] if entry else r["side"],
                       "in_time": entry["time"].isoformat() + "Z" if entry else None,
                       "in_price": entry["price"] if entry else None,
                       "out_time": r["time"].isoformat() + "Z", "out_price": r["price"],

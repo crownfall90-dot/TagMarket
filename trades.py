@@ -685,6 +685,19 @@ def local(when: datetime) -> datetime:
     return when
 
 
+def _position_side(deal) -> str:
+    """Направление позиции: BUY или SELL.
+
+    Входная сделка идёт в ту же сторону, что и позиция — берём её тип как есть.
+    Закрывающая противоположна направлению позиции, поэтому её тип переворачиваем.
+    Раньше переворачивались обе, и вход на графике подписывался обратной стороной.
+    """
+    bought = deal.type == mt5.DEAL_TYPE_BUY
+    if deal.entry == mt5.DEAL_ENTRY_IN:
+        return "BUY" if bought else "SELL"
+    return "SELL" if bought else "BUY"
+
+
 def _convert(deal) -> dict:
     net = deal.profit + deal.swap + deal.commission + getattr(deal, "fee", 0.0)
     is_balance = deal.type in BALANCE_TYPES
@@ -694,8 +707,7 @@ def _convert(deal) -> dict:
         "position": getattr(deal, "position_id", 0),
         "time": clock(deal.time),
         "symbol": deal.symbol,
-        # закрывающая сделка противоположна направлению позиции
-        "side": "" if is_balance else ("SELL" if deal.type == mt5.DEAL_TYPE_BUY else "BUY"),
+        "side": "" if is_balance else _position_side(deal),
         "volume": deal.volume,
         "price": deal.price,
         "profit": deal.profit,
