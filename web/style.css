@@ -656,7 +656,7 @@ body.onboarding-only .workspace{padding-bottom:24px}
 
 /* TM-UX-03: compact strategies reuse the FAQ disclosure animation. */
 .account-help{margin-top:18px;font-size:12px}
-#faq-connect{scroll-margin-top:100px}
+
 .faq-strategies{min-width:0}
 .faq-strategy>summary{list-style:none;cursor:pointer;flex-wrap:wrap}
 .faq-strategy>summary::-webkit-details-marker{display:none}
@@ -668,7 +668,7 @@ body.onboarding-only .workspace{padding-bottom:24px}
 .faq-strategy[open]:not(.is-closing) .faq-strategy-toggle svg{transform:rotate(90deg)}
 .faq-strategy>.faq-body{padding:0}
 .faq-strategy>.faq-body>:last-child{margin-bottom:0}
-@media(max-width:480px){.faq-strategy-toggle{margin-left:56px}#faq-connect{scroll-margin-top:90px}}
+@media(max-width:480px){.faq-strategy-toggle{margin-left:56px}}
 
 /* Compact lists share separators and feedback, keeping each section's identity. */
 .compact-row{width:100%;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--text);text-align:left;border-radius:0;transition:background .18s}
@@ -778,3 +778,10 @@ html.modal-open{overflow:hidden;overscroll-behavior:none;scrollbar-gutter:stable
 .project-space .project-account{border-radius:0}.project-space .project-account:hover{background:none}
 
 .hero .stat-note.warn-text{color:var(--muted);display:block;overflow-wrap:anywhere}.hero-value.hero-partial{font-size:clamp(24px,7vw,34px)}.fx-breakdown{display:flex;flex-wrap:wrap;gap:4px 14px;margin:6px 0 2px;color:var(--muted);font-size:13px;overflow-wrap:anywhere}
+
+/* Закреплённая верхняя панель не должна перекрывать элементы, к которым страница
+   прокручивается сама (фокус, клик, якоря) */
+html{scroll-padding-top:112px}@media(max-width:740px){html{scroll-padding-top:92px}}@media(max-width:480px){html{scroll-padding-top:76px}}
+/* Горизонты прогноза: шесть кнопок раньше прокручивались внутри полосы, и
+   «1 день» уезжал за край на узком экране — теперь они лежат сеткой */
+.forecast-horizons{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));overflow:visible;max-width:100%;width:100%}.forecast-horizons .segmented-thumb{display:none}.forecast-horizons button{white-space:nowrap}.forecast-horizons button.active{background:var(--raised)!important;box-shadow:inset 0 0 0 1px rgb(var(--accent-rgb) / .35)}@media(min-width:560px){.forecast-horizons{grid-template-columns:repeat(6,auto);width:max-content;margin:auto}}

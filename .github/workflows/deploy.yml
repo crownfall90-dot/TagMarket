@@ -8,10 +8,15 @@
 #   VPS_SSH_KEY     — закрытый ключ tagmarkets_vps, тот же, что у пульта;
 #   VPS_KNOWN_HOSTS — строка сервера из known_hosts на ПК: сверка, что это
 #                     наш сервер, а не подмена по дороге.
-# Оба секрета обязательны: без VPS_SSH_KEY выкладка тихо пропускается (CI не
-# краснеет), а вот при заданном ключе, но без VPS_KNOWN_HOSTS — останавливается
-# с ошибкой, иначе root-ключ ушёл бы на непроверенный хост. Вручную: вкладка
-# Actions → Deploy → Run workflow (выложит, даже если код сервера не менялся).
+# Оба секрета обязательны: без любого из них выкладка останавливается с
+# ошибкой (Deploy красный), а не пропускается тихо — иначе при настроенном CI
+# сервер оставался бы на старой версии, а зелёный значок говорил обратное.
+# Нормальный пропуск один: код сервера с прошлой выкладки не менялся (правили
+# документы или агента) — в журнале это строка «Production code unchanged —
+# deployment not required». Выкладывается ровно коммит, прошедший CI
+# (workflow_run.head_sha); --only-latest не даёт устаревшему запуску откатить
+# более новую версию. Вручную: вкладка Actions → Deploy → Run workflow
+# (выложит, даже если код сервера не менялся).
 name: Deploy
 
 on:
@@ -41,34 +46,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          # именно проверенный CI коммит, а не случайно более новый main
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 0
       - name: Ключ сервера
-        id: key
         env:
           KEY: ${{ secrets.VPS_SSH_KEY }}
           KNOWN: ${{ secrets.VPS_KNOWN_HOSTS }}
         run: |
+          # Содержимое секретов в журнал не попадает: проверяем только «задан или нет».
           if [ -z "$KEY" ]; then
-            echo "::notice::Секрет VPS_SSH_KEY не задан — выкладка пропущена"
-            echo "skip=1" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "::error::Production deployment blocked: VPS_SSH_KEY is not configured"
+            exit 1
+          fi
+          # Без сверки ключа хоста не выкладываем: ssh-keyscan принял бы
+          # ключ любого, кто ответит по адресу, и root-ключ от сервера ушёл
+          # бы туда же.
+          if [ -z "$KNOWN" ]; then
+            echo "::error::Production deployment blocked: VPS_KNOWN_HOSTS is not configured"
+            exit 1
           fi
           install -m 700 -d ~/.ssh
           printf '%s\n' "$KEY" > ~/.ssh/tagmarkets_vps
           chmod 600 ~/.ssh/tagmarkets_vps
-          # Без сверки ключа хоста не выкладываем: ssh-keyscan принял бы
-          # ключ любого, кто ответит по адресу, и root-ключ от сервера ушёл
-          # бы туда же. Забытый секрет должен останавливать выкладку, а не
-          # превращаться в предупреждение, которое никто не читает.
-          if [ -z "$KNOWN" ]; then
-            echo "::error::VPS_KNOWN_HOSTS не задан — выкладка остановлена." \
-                 "Добавьте строку сервера из ~/.ssh/known_hosts в секреты."
-            exit 1
-          fi
           printf '%s\n' "$KNOWN" > ~/.ssh/known_hosts
       - name: Выложить
-        if: steps.key.outputs.skip != '1'
         env:
           SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
           FORCE: ${{ github.event_name == 'workflow_dispatch' && '--force' || '' }}

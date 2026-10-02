@@ -384,12 +384,15 @@ def projects_ui(page, nav):
              else page.locator('.forecast-table .forecast-breakdown summary'))
     summary.first.click()
     assert page.locator('.forecast-account-detail').count() >= 1
-    page.locator('[data-action="forecast-horizon"][data-value="1d"]').dispatch_event('click')  # липкая шапка перехватывает указатель
+    # анимация входа и раскрытия деталей должна завершиться: иначе кнопка
+    # ещё едет, и клик попадает в соседний слой
+    page.wait_for_function("!document.querySelector('#main').getAnimations({subtree:true}).some(a=>a.playState==='running')")
+    page.locator('[data-action="forecast-horizon"][data-value="1d"]').click()
     page.wait_for_function("state.forecast.horizon==='1d'")
     custom_date=page.evaluate("()=>{const d=new Date(projectToday()+'T00:00:00Z');d.setUTCDate(d.getUTCDate()+8);return d.toISOString().slice(0,10)}")
     page.locator('#forecast-date').fill(custom_date)
     page.wait_for_function("value=>state.forecast.until===value",arg=custom_date)
-    page.locator('[data-action="forecast-bonus"][data-value="0"]').dispatch_event('click')
+    page.locator('[data-action="forecast-bonus"][data-value="0"]').click()
     page.wait_for_function("state.forecast.bonus===false")
     if page.viewport_size['width'] == 390:
         assert page.locator('.forecast-mobile-card').first.is_visible()

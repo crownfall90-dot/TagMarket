@@ -114,7 +114,8 @@ def main() -> int:
 
     options, host = target()
     if not args.force and server_unchanged(options, host, sha):
-        print(f"Код сервера с прошлой выкладки не менялся — {commit}\nВыкладывать нечего.")
+        print(f"Код сервера с прошлой выкладки не менялся — {commit}\n"
+              "Production code unchanged — deployment not required.")
         return 0
     print(f"\nВыкладываю на сервер версию:\n  {commit}\n")
     if not args.yes:
@@ -149,10 +150,12 @@ def main() -> int:
             subprocess.run(["ssh", *options, host, "rm", "-f", archive_remote, script_remote],
                            capture_output=True)
     if result.returncode:
-        print("\nВыкладка не прошла — сервер вернул прежнюю версию, данные не тронуты.")
+        print("\nDEPLOY FAILED — выкладка не прошла. Если сбой был после остановки служб,"
+              " сервер уже вернул прежнюю версию (в журнале выше строка"
+              " «Deployment rolled back»); данные пользователей не тронуты.")
         return result.returncode
     subprocess.run(["ssh", *options, host, f"echo {sha} > {MARKER}"], capture_output=True)
-    print("\nГотово: сервер на версии", sha[:7])
+    print("\nГотово: сервер на версии", sha[:7], "— проверка здоровья пройдена, откат не понадобился")
     return 0
 
 
