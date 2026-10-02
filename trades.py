@@ -477,8 +477,8 @@ def period_growth(rows: list[dict], flows: list[dict], archived=(), current: flo
 def growth_pct(rows: list[dict], flows: list[dict] = None, current: float = None) -> float:
     """Доходность за период: доходности сделок к капиталу на их момент, сложенные.
 
-    Складываем, а не перемножаем. Прибыль не остаётся на стратегии и не
-    увеличивает базу — она копится отдельно, а торгует всё тот же вложенный
+    Внутри месяца складываем, а не перемножаем (месяцы перемножаются, как в
+    period_growth). Прибыль не остаётся на стратегии и не увеличивает базу — она копится отдельно, а торгует всё тот же вложенный
     капитал. Сложное перемножение давало 19.8% там, где у стратегии в отчёте
     18.20% (455.01 ÷ 2500 — ровно их цифра).
 
@@ -492,12 +492,19 @@ def growth_pct(rows: list[dict], flows: list[dict] = None, current: float = None
         return 0.0
     if current is None:
         current = capital()     # один раз на весь период, а не на каждую сделку
-    total = 0.0
+    # внутри месяца доходности складываются, а месяцы перемножаются — так же,
+    # как у свёрнутых месяцев в period_growth; иначе период, пересекающий
+    # границу месяца, считался бы иначе, чем его же месяцы по отдельности
+    by_month: dict = {}
     for r in closed:
         base = capital_at(r["time"], flows, current)
         if base > 0:
-            total += net_of_fee(mine(r["net"])) / base
-    return total * 100
+            key = (r["time"].year, r["time"].month)
+            by_month[key] = by_month.get(key, 0.0) + net_of_fee(mine(r["net"])) / base
+    g = 1.0
+    for part in by_month.values():
+        g *= 1 + part
+    return (g - 1) * 100
 
 
 def retained() -> float:
@@ -1269,18 +1276,24 @@ def fmt_archive(cur: str, since: datetime = None, until: datetime = None) -> str
     if not rows:
         return ""
 
-    # процент к балансу стратегии — та же мера, что у дней и сделок. От
-    # пополнений месяца считать нельзя: месяц с одним пополнением давал
-    # бессмысленные сотни процентов
+    # процент месяца — та же мера, что в Mini App (period_growth): к капиталу
+    # на момент каждой сделки, у свёрнутого — сохранённый при свёртке. Делить на
+    # сегодняшний capital() нельзя: после пополнений и выводов цифры расходятся
     cap = capital()
     now = clock().strftime("%Y-%m")
+    all_rows = fetch(REPORT_FROM, clock() + timedelta(days=1))
     nets = [net_of_fee(mine((m["gross"] or 0) + (m["platform"] or 0))) for m in rows]
+    pcts = []
+    for m in rows:
+        live = ([r for r in all_rows if f"{r['time']:%Y-%m}" == m["month"]]
+                if m.get("_live") else [])
+        pcts.append(period_growth(live, all_rows, () if m.get("_live") else (m,), cap))
     wv = widest([f"{v:+.2f}" for v in nets])
-    wp = widest([pct(v / cap * 100) for v in nets]) if cap else 0
+    wp = widest([pct(v) for v in pcts])
     lines = []
     today = clock().date()
-    for m, net in zip(rows, nets):
-        share = f" · <i>{col(pct(net / cap * 100), wp)}</i>" if cap else ""
+    for m, net, growth in zip(rows, nets, pcts):
+        share = f" · <i>{col(pct(growth), wp)}</i>"
         name = MONTHS.get(int(m["month"][5:7]), m["month"])
         year = f" {m['month'][:4]}" if m["month"][:4] != now[:4] else ""
         mark = " <i>(идёт)</i>" if m["month"] == now else ""
