@@ -362,18 +362,34 @@ async def bootstrap(request):
         fx_error = "Для полной сводки поддерживаются только USD, RUB и BYN"
     # Personal totals are shown in USD when a current official quote is available.
     totals = {}
+    trading_days = [a["totals"]["last_trade_day"] for a in items
+                    if not a["demo"] and not a.get("shared") and a.get("totals")
+                    and a["totals"].get("last_trade_day")]
+    latest_trading_day = max(trading_days, default=None)
+    trading_day_usd = 0.0
+    trading_day_partial = False
     for a in items:
         t = a["totals"]
         if a["demo"] or a.get("shared") or not t:
             continue
         currency = t["cur"].upper()
         factor = usd_factor(currency, byn_per_unit) if byn_per_unit else (1 if currency == "USD" else None)
+        if t.get("last_trade_day") == latest_trading_day:
+            if factor is None:
+                trading_day_partial = True
+            else:
+                trading_day_usd += (t.get("last_trade_net") or 0) * factor
         if factor is None:
             continue
         bucket = totals.setdefault("USD", {"capital": 0, "pnl": 0, "month": 0, "today": 0, "kept": 0})
         for key, source in (("capital", "now"), ("pnl", "pnl"), ("month", "month_net"),
                             ("today", "today_net"), ("kept", "kept")):
             bucket[key] += t[source] * factor if factor is not None else t[source]
+    if latest_trading_day:
+        bucket = totals.setdefault("USD", {"capital": 0, "pnl": 0, "month": 0, "today": 0, "kept": 0})
+        bucket.update({"trading_day": latest_trading_day,
+                       "trading_day_net": round(trading_day_usd, 2),
+                       "trading_day_partial": trading_day_partial})
     own_accounts = [a for a in items if not a["demo"] and not a.get("shared")]
     inviter = partner.kv_get(db, f"guest_by:{uid}")
     registration_url = (logic.partner_link(db, inviter) if inviter else logic.partner_registration_url())

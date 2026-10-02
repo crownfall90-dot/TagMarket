@@ -384,16 +384,27 @@ def account_totals(acc: dict) -> dict | None:
     # на её момент. Простое «профит ÷ капитал» занижало счёт с пополнением до
     # +2.1% там, где соседние счета с той же стратегией дают +7.1%
     by_day: dict = {}
-    for r in month_rows:
-        if r["is_closing"]:
-            by_day.setdefault(r["time"].date(), 0.0)
-            by_day[r["time"].date()] += r["net"]
+    all_by_day: dict = {}
+    for day_row in rows:
+        if day_row["is_closing"]:
+            all_by_day.setdefault(day_row["time"].date(), 0.0)
+            all_by_day[day_row["time"].date()] += day_row["net"]
+    for row in month_rows:
+        if row["is_closing"]:
+            by_day.setdefault(row["time"].date(), 0.0)
+            by_day[row["time"].date()] += row["net"]
+    # Keep the account's latest actual trading day so Mini App can select one
+    # shared portfolio date (today, otherwise the most recent day with trades).
+    last_trade_day = max(all_by_day, default=None)
 
     return {"now": my, "pnl": earned, "kept": trades.retained(),
             "days": [trades.net_of_fee(trades.mine(by_day[d])) for d in sorted(by_day)],
             "month_pct": trades.growth_pct(month_rows, rows),
             "roi": trades.growth_all(),
             "month_net": month_net, "today_net": today_net, "month_trades": m["count"],
+            "last_trade_day": last_trade_day.isoformat() if last_trade_day else None,
+            "last_trade_net": (trades.net_of_fee(trades.mine(all_by_day[last_trade_day]))
+                               if last_trade_day else None),
             "cur": trades.currency()}
 
 

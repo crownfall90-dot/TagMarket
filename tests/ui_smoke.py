@@ -279,6 +279,7 @@ def projects_ui(page, nav):
     page.locator('.project-card').first.wait_for()
     assert page.locator(f'{nav} a[data-tab]').count() == 5
     assert page.locator('.project-card').count() == 3  # TagMarket плюс два preview-проекта
+    assert 'Плюс за' in page.locator('.project-card.system-project').inner_text()
     glider_on_active(page, nav)
     fits(page)
     page.locator('a[href="#project/preview-home"]').click()
@@ -324,12 +325,14 @@ def projects_ui(page, nav):
     page.locator('.project-form [name="rate_percent"]').fill('2.5')
     page.locator('.project-form-account input[name^="account-amount-"]').fill('10000')
     page.locator('.project-form [name="period"]').select_option('day')
+    assert page.locator('.daily-accrual-setting').is_visible()
+    page.locator('.project-form [name="business_days_only"]').select_option('1')
     page.locator('.project-form [name="capitalization"]').check()
     start = page.locator('.project-form [name="capitalization_from"]').input_value()
     yesterday = page.evaluate("d=>new Date(Date.parse(d+'T00:00:00Z')-86400000).toISOString().slice(0,10)", start)
     page.locator('.project-form [name="capitalization_from"]').fill(yesterday)
-    total_preview = ''.join(page.locator('.project-form-total').inner_text().split()).replace(',', '.')
-    assert '10250.00$' in total_preview, total_preview
+    total_preview = page.locator('.project-form-total').inner_text()
+    assert 'Вложено' in total_preview and '10' in total_preview, total_preview
     fits(page)
     # Только ответы UI-теста: реальная безопасность и расчёты проверяются API-тестами.
     page.evaluate("""() => { window.__projectUiApi=window.api;
@@ -338,7 +341,8 @@ def projects_ui(page, nav):
             if((path==='/projects'||path==='/projects/ui-created')&&['POST','PATCH'].includes(options.method)){
                 const d=JSON.parse(options.body);window.__projectUiSaved=d;
                 const total=d.accounts.reduce((s,a)=>s+a.amount,0);
-                return {...d,id:'ui-created',accounts:d.accounts.map((a,i)=>({...a,id:a.id||'ui-account-'+i,project_id:'ui-created',current_amount:d.capitalization? a.amount*(1+d.rate_percent/100):a.amount})),total,current_total:d.capitalization?total*(1+d.rate_percent/100):total,calculation_limited:false,expected_income:(d.capitalization?total*(1+d.rate_percent/100):total)*d.rate_percent/100};
+                const current_total=d.capitalization?total*(1+d.rate_percent/100):total;
+                return {...d,id:'ui-created',accounts:d.accounts.map((a,i)=>({...a,id:a.id||'ui-account-'+i,project_id:'ui-created',current_amount:d.capitalization?a.amount*(1+d.rate_percent/100):a.amount,bonus_active:false,bonus_status:null,bonus_current_amount:0,working_amount:a.amount,expected_income:a.amount*d.rate_percent/100})),total,current_total,personal_total:current_total,bonus_total:0,expired_bonus_total:0,working_total:current_total,has_capitalization:current_total!==total,calculation_limited:false,expected_income:current_total*d.rate_percent/100};
             }
             if(path==='/projects/ui-created'&&options.method==='DELETE')return {ok:true};
             return window.__projectUiApi(path,options);
@@ -347,13 +351,16 @@ def projects_ui(page, nav):
     page.locator('#dialog-submit').click()
     page.wait_for_function("state.view==='project'&&state.projectId==='ui-created'")
     page.locator('[data-action="project-edit"]').wait_for()
+    assert 'Расчётная сумма сейчас' in page.locator('.project-detail-summary').inner_text()
     saved = page.evaluate('window.__projectUiSaved')
     assert saved['accounts'][0]['amount'] == 10000 and not saved['multi'] and saved['capitalization']
+    assert saved['business_days_only']
     page.locator('[data-action="project-edit"]').click()
     page.locator('.project-form [name="multi"]').check()
     page.locator('[data-action="project-form-add"]').click()
     page.locator('.project-form-account input[name^="account-amount-"]').nth(1).fill('3000')
     page.locator('#dialog-submit').click()
+    page.wait_for_function("window.__projectUiSaved?.multi && window.__projectUiSaved.accounts?.length === 2")
     page.locator('.project-account').first.wait_for()
     saved = page.evaluate('window.__projectUiSaved')
     assert saved['multi'] and saved['accounts'][0]['id'] == 'ui-account-0'
@@ -362,6 +369,39 @@ def projects_ui(page, nav):
     page.locator('[data-action="project-delete"]').click()
     page.locator('#dialog-submit').click()
     page.wait_for_function("state.view==='projects'&&!state.projects.some(p=>p.id==='ui-created')")
+    assert 'Ваши средства' in page.locator('.project-card').filter(has_text='Недвижимость').inner_text()
+    assert 'Рабочий капитал' in page.locator('.project-card').filter(has_text='Private Invest').inner_text()
+    assert 'Бонус активен' in page.locator('.project-card').filter(has_text='Private Invest').inner_text()
+    private_card=page.locator('.project-card').filter(has_text='Private Invest')
+    assert 'Бонус завершён' in private_card.inner_text(), private_card.inner_text()
+    page.locator('a.forecast-link').click()
+    page.locator('.forecast-result').wait_for()
+    assert page.locator('.forecast-summary-values').count() == 1
+    assert all(page.locator('.forecast-table thead th').all_inner_texts()[i] for i in range(7))
+    assert 'Торговый результат не прогнозируется' in page.locator('.forecast-result').inner_text()
+    summary=(page.locator('.forecast-mobile-cards .forecast-breakdown summary')
+             if page.locator('.forecast-mobile-cards').is_visible()
+             else page.locator('.forecast-table .forecast-breakdown summary'))
+    summary.first.click()
+    assert page.locator('.forecast-account-detail').count() >= 1
+    page.locator('[data-action="forecast-horizon"][data-value="1d"]').click()
+    page.wait_for_function("state.forecast.horizon==='1d'")
+    custom_date=page.evaluate("()=>{const d=new Date(projectToday()+'T00:00:00Z');d.setUTCDate(d.getUTCDate()+8);return d.toISOString().slice(0,10)}")
+    page.locator('#forecast-date').fill(custom_date)
+    page.wait_for_function("value=>state.forecast.until===value",arg=custom_date)
+    page.locator('[data-action="forecast-bonus"][data-value="0"]').click()
+    page.wait_for_function("state.forecast.bonus===false")
+    if page.viewport_size['width'] == 390:
+        assert page.locator('.forecast-mobile-card').first.is_visible()
+        assert page.locator('.forecast-table-wrap').is_hidden()
+    fits(page)
+    page.evaluate("state.projects[0].currency='BYN';state.displayCurrency='RUB';state.data.fx=null;state.forecast.selected=null")
+    page.evaluate('recalculateForecast()')
+    page.wait_for_function("document.querySelector('.forecast-result')?.innerText.includes('Частично рассчитан')")
+    assert 'BYN' in page.locator('.forecast-mobile-card').first.inner_text()
+    fits(page)
+    page.locator('[data-action="forecast-back"]').click()
+    page.locator('.project-card').first.wait_for()
     page.evaluate("window.api=window.__projectUiApi;state.projects[0].total=999999999999.99;state.projects[0].currency='BYN';state.projects[0].name='x'.repeat(96);render()")
     assert page.locator('.project-summary b').count() == 3
     fits(page)

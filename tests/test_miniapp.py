@@ -959,10 +959,9 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                 "period":"day", "multi":False, "capitalization":True, "capitalization_from":"2026-10-01",
                 "accounts":[{"amount":500}]})
         self.assertEqual(daily["total"], 500)
-        # Capitalization settings affect projections, never actual balances.
-        self.assertEqual(daily["current_total"], 500)
-        self.assertEqual(daily["accounts"][0]["current_amount"], 500)
-        self.assertEqual(daily["expected_income"], 10)
+        self.assertEqual(daily["current_total"], 520.2)
+        self.assertEqual(daily["accounts"][0]["current_amount"], 520.2)
+        self.assertEqual(daily["expected_income"], 10.404)
         # Account override can turn compounding off even when enabled on project.
         with patch.object(projects, "today", return_value=fixed_today):
             changed = projects.account_change(self.db, "1", daily["id"],
@@ -971,7 +970,95 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(projects, "today", return_value=fixed_today):
             changed = projects.account_change(self.db, "1", daily["id"],
                 {"capitalization":None, "capitalization_from":None}, daily["accounts"][0]["id"])
-        self.assertEqual(changed["current_total"], 500)
+        self.assertEqual(changed["current_total"], 520.2)
+
+    async def test_daily_rate_can_skip_weekends_without_changing_other_periods(self):
+        friday, monday = date(2026, 10, 2), date(2026, 10, 5)
+        self.assertEqual(projects.periods_since(friday.isoformat(), "day", monday), 3)
+        self.assertEqual(projects.periods_since(friday.isoformat(), "day", monday, True), 1)
+        self.assertEqual(projects.periods_since(friday.isoformat(), "week", monday, True), 0)
+        with patch.object(projects, "today", return_value=friday):
+            weekdays = projects.save(self.db, "1", {"name":"Weekdays", "currency":"USD",
+                "rate_percent":2, "period":"day", "business_days_only":True, "multi":False,
+                "capitalization":True, "accounts":[{"amount":500}]})
+            calendar_days = projects.save(self.db, "1", {"name":"Every day", "currency":"USD",
+                "rate_percent":2, "period":"day", "business_days_only":False, "multi":False,
+                "capitalization":True, "accounts":[{"amount":500}]})
+            weekdays_forecast = projects.forecast(self.db, "1", weekdays["id"], monday.isoformat(), False)
+            calendar_forecast = projects.forecast(self.db, "1", calendar_days["id"], monday.isoformat(), False)
+        self.assertTrue(weekdays["business_days_only"])
+        self.assertEqual(weekdays_forecast["total"], 510)
+        self.assertEqual(calendar_forecast["total"], 530.604)
+
+    async def test_project_forecast_has_checkpoints_and_independent_bonus_modes(self):
+        fixed_today = date(2026, 10, 2)
+        expiry = datetime(2026, 10, 5, 12, tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
+        accounts = [
+            {"name":"personal off / bonus off", "amount":1000, "capitalization":False,
+             "bonus_amount":100, "bonus_expires_at":expiry, "bonus_capitalization":False},
+            {"name":"personal on / bonus off", "amount":1000, "capitalization":True,
+             "capitalization_from":"2026-10-01", "bonus_amount":100, "bonus_expires_at":expiry,
+             "bonus_capitalization":False},
+            {"name":"personal off / bonus on", "amount":1000, "capitalization":False,
+             "bonus_amount":100, "bonus_expires_at":expiry, "bonus_capitalization":True},
+            {"name":"personal on / bonus on", "amount":1000, "capitalization":True,
+             "capitalization_from":"2026-10-01", "bonus_amount":100, "bonus_expires_at":expiry,
+             "bonus_capitalization":True},
+        ]
+        with patch.object(projects, "today", return_value=fixed_today):
+            created = projects.save(self.db, "1", {"name":"Mixed forecast", "currency":"BYN",
+                "rate_percent":1, "period":"day", "multi":True, "accounts":accounts})
+            one_day = projects.forecast(self.db, "1", created["id"], "2026-10-03", True)
+            one_week = projects.forecast(self.db, "1", created["id"], "2026-10-09", True)
+            custom = projects.forecast(self.db, "1", created["id"], "2026-10-04", True)
+            no_bonus = projects.forecast(self.db, "1", created["id"], "2026-10-09", False)
+            api_response = await self.call("GET", f"/api/projects/forecast?until=2026-10-09&id={created['id']}")
+            foreign_response = await self.call("GET", f"/api/projects/forecast?until=2026-10-09&id={created['id']}", uid=2)
+        self.assertEqual(set(one_day["checkpoints"]), {"now", "day", "week", "month", "selected"})
+        self.assertEqual(one_day["checkpoints"]["day"]["until"], "2026-10-03")
+        self.assertEqual(one_day["checkpoints"]["month"]["until"], "2026-11-02")
+        self.assertEqual(custom["checkpoints"]["selected"]["until"], "2026-10-04")
+        self.assertEqual(len(custom["accounts"]), 4)
+        self.assertEqual(one_week["until"], "2026-10-09")
+        accounts_day = one_day["checkpoints"]["day"]["accounts"]
+        self.assertEqual(len(accounts_day), 4)
+        self.assertAlmostEqual(accounts_day[0]["personal"], 1010)
+        self.assertAlmostEqual(accounts_day[0]["bonus"], 101)
+        self.assertAlmostEqual(accounts_day[1]["personal"], 1020.1)
+        self.assertAlmostEqual(accounts_day[1]["bonus"], 101)
+        self.assertAlmostEqual(accounts_day[2]["personal"], 1010)
+        self.assertAlmostEqual(accounts_day[2]["bonus"], 101)
+        self.assertAlmostEqual(accounts_day[3]["personal"], 1020.1)
+        self.assertAlmostEqual(accounts_day[3]["bonus"], 101)
+        self.assertEqual(one_week["checkpoints"]["selected"]["bonus"], 0)
+        self.assertEqual(one_week["total"], no_bonus["total"])
+        self.assertEqual(one_week["checkpoints"]["selected"]["accounts"][0]["bonus"], 0)
+        self.assertEqual(no_bonus["current"]["bonus"], 0)
+        self.assertEqual(one_week["currency"], "BYN")
+        self.assertEqual(api_response.status, 200)
+        self.assertEqual(len((await api_response.json())["projects"][0]["checkpoints"]["selected"]["accounts"]), 4)
+        self.assertEqual(foreign_response.status, 404)
+
+    async def test_project_current_capital_and_bonus_expiration_are_backend_values(self):
+        fixed_today = date(2026, 10, 4)
+        future_expiry = (datetime.now(timezone.utc)+timedelta(days=2)).isoformat(timespec="seconds").replace("+00:00", "Z")
+        expired = (datetime.now(timezone.utc)-timedelta(days=1)).isoformat(timespec="seconds").replace("+00:00", "Z")
+        with patch.object(projects, "today", return_value=fixed_today):
+            saved = projects.save(self.db, "1", {"name":"Balances", "currency":"RUB", "rate_percent":2,
+                "period":"day", "multi":True, "capitalization":True, "capitalization_from":"2026-10-02",
+                "accounts":[
+                    {"amount":500, "bonus_amount":50, "bonus_expires_at":future_expiry, "bonus_capitalization":True},
+                    {"amount":500, "bonus_amount":25, "bonus_expires_at":expired},
+                ]})
+        self.assertEqual(saved["total"], 1000)
+        self.assertAlmostEqual(saved["current_total"], 1040.4)
+        self.assertAlmostEqual(saved["bonus_total"], 52.02)
+        self.assertAlmostEqual(saved["working_total"], 1092.42)
+        self.assertAlmostEqual(saved["expected_income"], 21.8484)
+        self.assertTrue(saved["has_capitalization"])
+        self.assertTrue(saved["accounts"][0]["bonus_active"])
+        self.assertFalse(saved["accounts"][1]["bonus_active"])
+        self.assertEqual(saved["accounts"][1]["bonus_status"], "expired")
 
     async def test_project_forecast_uses_compounding_and_discards_expired_bonus(self):
         async def create(name, capitalization, bonus=None):
@@ -1070,9 +1157,12 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                       "currency":"BYN", "multiplier":1})
         store.save_state(self.tdb, 456, 100, 100, "RUB", "Demo", 100)
         store.save_state(self.tdb, 789, 10, 10, "BYN", "Demo", 10)
-        totals = {123: {"cur":"USD", "now":50, "pnl":0, "month_net":0, "today_net":0, "kept":0},
-                  456: {"cur":"RUB", "now":100, "pnl":0, "month_net":0, "today_net":0, "kept":0},
-                  789: {"cur":"BYN", "now":10, "pnl":0, "month_net":0, "today_net":0, "kept":0}}
+        totals = {123: {"cur":"USD", "now":50, "pnl":0, "month_net":0, "today_net":0, "kept":0,
+                        "last_trade_day":"2026-10-02", "last_trade_net":5},
+                  456: {"cur":"RUB", "now":100, "pnl":0, "month_net":0, "today_net":0, "kept":0,
+                        "last_trade_day":"2026-10-01", "last_trade_net":1000},
+                  789: {"cur":"BYN", "now":10, "pnl":0, "month_net":0, "today_net":0, "kept":0,
+                        "last_trade_day":"2026-09-30", "last_trade_net":4}}
         rates = {"USD":2.0, "RUB":0.02, "BYN":1.0}
         with patch.object(miniapp.logic, "account_totals", side_effect=lambda acc: totals[acc["login"]]), \
              patch.object(miniapp, "myfin_nbrb_rates", new=AsyncMock(return_value=rates)):
@@ -1080,6 +1170,16 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(data["totals"]["USD"]["capital"], 56)
         self.assertEqual(set(data["totals"]), {"USD"})
         self.assertEqual(data["fx"]["source"], "MYFIN · НБРБ")
+        self.assertEqual(data["totals"]["USD"]["trading_day"], "2026-10-02")
+        self.assertEqual(data["totals"]["USD"]["trading_day_net"], 5)
+        totals[123]["last_trade_day"], totals[123]["last_trade_net"] = "2026-10-01", 5
+        totals[456]["last_trade_day"], totals[456]["last_trade_net"] = "2026-09-30", 1000
+        totals[789]["last_trade_day"], totals[789]["last_trade_net"] = "2026-10-01", 4
+        with patch.object(miniapp.logic, "account_totals", side_effect=lambda acc: totals[acc["login"]]), \
+             patch.object(miniapp, "myfin_nbrb_rates", new=AsyncMock(return_value=rates)):
+            fallback = await (await self.call("GET", "/api/bootstrap")).json()
+        self.assertEqual(fallback["totals"]["USD"]["trading_day"], "2026-10-01")
+        self.assertEqual(fallback["totals"]["USD"]["trading_day_net"], 7)
 
     async def test_formatted_media_broadcast_and_duplicate_request(self):
         partner.kv_set(self.db, "guest:2", "1")
@@ -1455,6 +1555,8 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(sum(point["value"] for point in data["chart"]), 21)
         home = await (await self.call("GET", "/api/bootstrap")).json()
         self.assertAlmostEqual(home["totals"]["USD"]["today"], 21)
+        self.assertEqual(home["totals"]["USD"]["trading_day"], now.date().isoformat())
+        self.assertAlmostEqual(home["totals"]["USD"]["trading_day_net"], 21)
         self.assertAlmostEqual(data["summary"]["pct_capital"],
                                round(21 / home["totals"]["USD"]["capital"] * 100, 3))
 
