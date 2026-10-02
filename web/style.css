@@ -786,3 +786,37 @@ html{scroll-padding-top:112px}@media(max-width:740px){html{scroll-padding-top:92
    «1 день» уезжал за край на узком экране — теперь они лежат сеткой */
 .forecast-horizons{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));overflow:visible;max-width:100%;width:100%}.forecast-horizons .segmented-thumb{display:none}.forecast-horizons button{white-space:nowrap}.forecast-horizons button.active{background:var(--raised)!important;box-shadow:inset 0 0 0 1px rgb(var(--accent-rgb) / .35)}@media(min-width:560px){.forecast-horizons{grid-template-columns:repeat(6,auto);width:max-content;margin:auto}}
 .forecast-tag>b{font-size:12px}.forecast-tag>span{font-size:14px;font-weight:550;text-align:right}.forecast-tag-grid{grid-column:1/-1;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:6px 0 2px}.forecast-tag-grid div{display:grid;gap:3px;min-width:0}.forecast-tag-grid b{font-size:12px;font-weight:550;overflow-wrap:anywhere}@media(max-width:560px){.forecast-tag-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* Единый стиль: компактные карточки, общие радиусы и ритм во всех разделах */
+:root{--r-card:20px;--r-ctl:12px;--gap:14px}
+.panel{border-radius:var(--r-card);padding:18px 20px}
+.panel:not(.hero):not(.project-summary):not(.project-detail-summary){background-image:linear-gradient(180deg,rgb(255 255 255 / .028),transparent 55%);box-shadow:0 1px 0 rgb(255 255 255 / .03) inset}
+.page-head{margin-bottom:18px}
+.page-head h1,.project-space>.page-head h1{font-size:28px;letter-spacing:-.04em;line-height:1.15}
+.dashboard-grid,.side-stack{gap:var(--gap)}
+.dashboard-grid>div{display:grid;gap:var(--gap);align-content:start}
+.panel-head h2,.panel>h2{font-size:15px;font-weight:600;letter-spacing:-.02em}
+.eyebrow{letter-spacing:.14em}
+.hero{padding:22px 24px;min-height:0;border-radius:24px}
+.hero-value{font-size:42px;margin:10px 0 16px}
+.hero-bottom{row-gap:10px}
+.account-card{padding:13px 16px;border-radius:16px;gap:12px}
+.account-list{gap:8px}
+.stat{padding:14px 16px;border-radius:16px}
+.badge{border-radius:999px;padding:3px 9px}
+.button{border-radius:var(--r-ctl);min-height:40px;padding:9px 16px}
+.segmented{border-radius:var(--r-ctl)}.segmented button,.segmented-thumb{border-radius:9px}
+.icon-btn{border-radius:12px}
+dialog{border-radius:22px}
+@media(max-width:740px){
+.panel{padding:16px;border-radius:18px}
+.page-head{margin-bottom:14px}
+.page-head h1,.project-space>.page-head h1{font-size:24px}
+.hero{padding:18px 18px;border-radius:22px}
+.hero-value{font-size:36px;margin:8px 0 14px}
+.account-card{padding:12px 14px}
+.dashboard-grid>div,.side-stack{gap:12px}
+.side-stack{margin-top:12px}
+.project-space .project-card,.project-space .project-summary,.project-space .project-detail-summary{padding:16px;border-radius:18px}
+.project-grid{gap:12px}
+}
