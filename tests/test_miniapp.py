@@ -954,6 +954,23 @@ class GrowthAndRollupTests(unittest.TestCase):
         self.assertIn("+5%", text)
         self.assertNotIn("+0.0", text)      # 35 ÷ 100000 — от сегодняшнего капитала
 
+    def test_client_deposit_counter_commits_atomically_with_seen(self):
+        db = partner.open_db(str(Path(self.tmp.name) / "state.db"))
+        row = {"amount": "10", "currency": "USD", "customer_no": "CU9", "tx_id": "t1"}
+
+        def boom(fresh, first_run):
+            partner.fmt_deposit(db, row)
+            raise RuntimeError("очередь не записалась")
+
+        with self.assertRaises(RuntimeError):
+            partner.unseen(db, "deposit", [row], on_fresh=boom)
+        self.assertIsNone(partner.kv_get(db, "client_deposits:CU9"))
+        self.assertEqual(db.execute("SELECT COUNT(*) FROM seen").fetchone()[0], 0)
+        partner.unseen(db, "deposit", [row],
+                       on_fresh=lambda fresh, first_run: partner.fmt_deposit(db, row))
+        self.assertEqual(partner.kv_get(db, "client_deposits:CU9"), "10.00")
+        db.close()
+
     def test_rollup_locks_before_reading_and_deletes_only_what_it_read(self):
         store.save_state(self.db, 5, 100, 100, "USD", "Demo")
         store.save_deals(self.db, 5, [self.closing(1, datetime(2026, 7, 3))])
@@ -1040,18 +1057,29 @@ class BroadcastFormatTests(unittest.TestCase):
         deal = lambda ticket, mins, side, price, opening, pos=None, net=0: {
             "ticket": ticket, "time": t + timedelta(minutes=mins), "side": side, "price": price,
             "is_opening": opening, "is_closing": not opening, "position": pos, "net": net, "volume": .02}
+        # side у входа и выхода — направление позиции (BUY-позицию закрывает BUY-строка)
         # по номеру позиции: вторая BUY закрыта раньше первой
         pairs = miniapp.trade_pairs([deal(1, 0, "BUY", 100, True, 7), deal(2, 1, "BUY", 101, True, 8),
-                                     deal(3, 2, "SELL", 105, False, 8, 4), deal(4, 3, "SELL", 99, False, 7, -1)])
+                                     deal(3, 2, "BUY", 105, False, 8, 4), deal(4, 3, "BUY", 99, False, 7, -1)])
         self.assertEqual([(p["in_price"], p["out_price"]) for p in pairs], [(101, 105), (100, 99)])
         # без номеров: закрытие забирает самую раннюю открытую BUY
         pairs = miniapp.trade_pairs([deal(1, 0, "BUY", 100, True), deal(2, 1, "SELL", 103, True),
-                                     deal(3, 2, "SELL", 102, False, net=2), deal(4, 3, "BUY", 101, False, net=2)])
+                                     deal(3, 2, "BUY", 102, False, net=2), deal(4, 3, "SELL", 101, False, net=2)])
         self.assertEqual([(p["side"], p["in_price"], p["out_price"]) for p in pairs],
                          [("BUY", 100, 102), ("SELL", 103, 101)])
         # вход до начала периода — выход без пары, направление по закрытию
-        lone = miniapp.trade_pairs([deal(5, 0, "SELL", 110, False, 9, 3)])
+        lone = miniapp.trade_pairs([deal(5, 0, "BUY", 110, False, 9, 3)])
         self.assertEqual((lone[0]["side"], lone[0]["in_price"]), ("BUY", None))
+
+    def test_entry_deal_side_is_taken_as_is_and_exit_is_flipped(self):
+        mt5 = type("Mt5", (), {"DEAL_TYPE_BUY": 0, "DEAL_TYPE_SELL": 1, "DEAL_ENTRY_IN": 0,
+                               "DEAL_ENTRY_OUT": 1})
+        deal = lambda kind, entry: type("Deal", (), {"type": kind, "entry": entry})()
+        with patch.object(trades, "mt5", mt5):
+            self.assertEqual(trades._position_side(deal(0, 0)), "BUY")      # вход покупкой
+            self.assertEqual(trades._position_side(deal(1, 0)), "SELL")     # вход продажей
+            self.assertEqual(trades._position_side(deal(1, 1)), "BUY")      # выход из BUY-позиции
+            self.assertEqual(trades._position_side(deal(0, 1)), "SELL")
 
     def test_agent_position_reaches_database(self):
         # номер позиции от агента сохраняется — по нему график связывает

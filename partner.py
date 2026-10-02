@@ -357,14 +357,17 @@ def fmt_deposit(db, row):
                       "на балансе Tag Markets — можно вывести "
                       "или вернуть в стратегию", sign="+")
     cabinet = str(pick(row, "customer_no", "customer", "client_no") or "").strip()
-    total = client_deposits_add(db, cabinet, row) if cabinet else None
+    # fmt_deposit вызывается из unseen() внутри его транзакции: коммитить здесь
+    # нельзя, иначе отметка seen и очередь доставки фиксируются не вместе
+    total = client_deposits_add(db, cabinet, row, commit=False) if cabinet else None
     import trades
     extra = (f"📈 Пополнений от этого клиента: <b>{total[0]}</b>, всего "
              f"<b>{trades.amount(total[1], 'USD')}</b>" if total else "")
     return _event("💰 <b>Депозит клиента</b>", row, name, extra=extra)
 
 
-def client_deposits_add(db, cabinet: str, row: dict) -> tuple[int, float] | None:
+def client_deposits_add(db, cabinet: str, row: dict,
+                        commit: bool = True) -> tuple[int, float] | None:
     """Копит счётчик и сумму депозитов чужого клиента — портал не отдаёт его
     историю, поэтому это единственный способ ответить «сколько от него всего
     пришло», не только «сколько сейчас». Отдельно от wallet_*: там речь о
@@ -377,8 +380,10 @@ def client_deposits_add(db, cabinet: str, row: dict) -> tuple[int, float] | None
     count_key = f"client_deposits_count:{cabinet}"
     total = float(kv_get(db, key, 0) or 0) + amount
     count = int(kv_get(db, count_key, 0) or 0) + 1
-    kv_set(db, key, f"{total:.2f}")
-    kv_set(db, count_key, str(count))
+    kv_set(db, key, f"{total:.2f}", commit=False)
+    kv_set(db, count_key, str(count), commit=False)
+    if commit:
+        db.commit()
     return count, total
 
 
