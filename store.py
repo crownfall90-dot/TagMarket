@@ -322,11 +322,28 @@ def rollup(db, keep_from: str, is_transfer, is_perf_fee=None, growth_of=None,
     в день, когда такой месяц наконец сворачивается, _profit_on_account()
     скачком менялся бы на его PnL без единой сделки на счёте.
     """
+    # блокировка записи берётся ДО чтения: сделка, которую агент досылает между
+    # SELECT и DELETE, иначе удалялась бы, не попав в итоги месяца
+    if db.in_transaction:
+        db.commit()
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        return _rollup_locked(db, keep_from, is_transfer, is_perf_fee, growth_of,
+                              is_profit_side, report_from)
+    except BaseException:
+        db.rollback()
+        raise
+
+
+def _rollup_locked(db, keep_from, is_transfer, is_perf_fee, growth_of,
+                   is_profit_side, report_from) -> int:
     totals: dict = {}
     months_rows: dict = {}      # сделки месяца — по ним считается доходность
     profit_delta: dict = {}     # login -> сколько профита добавила эта свёртка
+    taken: list = []            # (login, ticket) прочитанных строк — удаляем ровно их
     for r in db.execute("SELECT * FROM deals WHERE time < ?", (keep_from,)).fetchall():
         row = dict(r)
+        taken.append((row["login"], row["ticket"]))
         months_rows.setdefault((row["login"], row["time"][:7]), []).append(row)
         key = (row["login"], row["time"][:7])
         acc = totals.setdefault(key, {"trades": 0, "gross": 0.0, "platform": 0.0,
@@ -402,7 +419,10 @@ def rollup(db, keep_from: str, is_transfer, is_perf_fee=None, growth_of=None,
     # тикеты запоминаем до удаления, иначе агент зальёт историю заново
     db.execute("UPDATE state SET max_ticket = MAX(COALESCE(max_ticket, 0), "
                "COALESCE((SELECT MAX(ticket) FROM deals d WHERE d.login = state.login), 0))")
-    removed = db.execute("DELETE FROM deals WHERE time < ?", (keep_from,)).rowcount
+    removed = 0
+    for login, ticket in taken:
+        removed += db.execute("DELETE FROM deals WHERE login = ? AND ticket = ?",
+                              (login, ticket)).rowcount
     db.commit()
     return removed
 

@@ -919,6 +919,68 @@ class RollupCarryTests(unittest.TestCase):
         self.assertAlmostEqual(partner.wallet_balance(self.db, "CU1")[0], 80.0)
 
 
+class GrowthAndRollupTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = str(Path(self.tmp.name) / "trades.db")
+        self.db = store.open_db(self.path)
+
+    def tearDown(self):
+        self.db.close()
+        self.tmp.cleanup()
+
+    @staticmethod
+    def closing(ticket, moment, net=10.0):
+        return {"ticket": ticket, "time": moment, "symbol": "X", "side": "buy", "volume": 1,
+                "price": 1, "profit": net, "swap": 0, "commission": 0, "net": net,
+                "is_balance": False, "is_closing": True, "is_opening": False, "comment": ""}
+
+    def test_growth_compounds_months_and_adds_within_a_month(self):
+        one = trades.growth_pct([self.closing(1, datetime(2026, 8, 3))], current=100.0)
+        same = trades.growth_pct([self.closing(1, datetime(2026, 8, 3)),
+                                  self.closing(2, datetime(2026, 8, 9))], current=100.0)
+        two = trades.growth_pct([self.closing(1, datetime(2026, 8, 3)),
+                                 self.closing(2, datetime(2026, 9, 9))], current=100.0)
+        self.assertAlmostEqual(same, 2 * one)
+        self.assertAlmostEqual(two, ((1 + one / 100) ** 2 - 1) * 100)
+        self.assertGreater(two, 2 * one)
+
+    def test_archive_percent_uses_stored_month_growth_not_current_capital(self):
+        month = {"month": "2026-08", "trades": 3, "gross": 50.0, "platform": 0.0, "growth": 5.0}
+        with patch.object(trades, "monthly", return_value=[month]), \
+             patch.object(trades, "fetch", return_value=[]), \
+             patch.object(trades, "capital", return_value=100000.0):
+            text = trades.fmt_archive("USD")
+        self.assertIn("+5%", text)
+        self.assertNotIn("+0.0", text)      # 35 ÷ 100000 — от сегодняшнего капитала
+
+    def test_rollup_locks_before_reading_and_deletes_only_what_it_read(self):
+        store.save_state(self.db, 5, 100, 100, "USD", "Demo")
+        store.save_deals(self.db, 5, [self.closing(1, datetime(2026, 7, 3))])
+        seen = {}
+
+        def growth_of(login, rows):
+            # агент досылает старую сделку уже после чтения: её не должно удалить
+            self.db.execute(
+                "INSERT INTO deals (login, ticket, time, net, is_balance, is_closing, "
+                "is_opening, comment) VALUES (5, 99, '2026-07-04T00:00:00', 1, 0, 1, 0, '')")
+            other = sqlite3.connect(self.path, timeout=0)
+            try:
+                other.execute("INSERT INTO deals (login, ticket, time) VALUES (5, 100, 'x')")
+            except sqlite3.OperationalError as e:
+                seen["locked"] = str(e)
+            finally:
+                other.close()
+            return 1.0
+
+        removed = store.rollup(self.db, "2026-09-01", trades.is_transfer, trades.is_perf_fee,
+                               growth_of, trades.is_profit_side)
+        self.assertEqual(removed, 1)
+        self.assertIn("locked", seen.get("locked", ""), "запись заблокирована до чтения")
+        left = [r["ticket"] for r in self.db.execute("SELECT ticket FROM deals")]
+        self.assertEqual(left, [99], "досланная сделка не удалена вслепую")
+
+
 class AuthTests(unittest.TestCase):
     def test_authentication_and_tamper(self):
         self.assertEqual(miniapp.validate_init_data(signed(42), "test-token")["id"], 42)
