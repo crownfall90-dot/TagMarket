@@ -294,6 +294,21 @@ ENV_SYNC_EVERY = int(os.getenv("ENV_SYNC_EVERY", 600))     # раз в 10 мин
 CANDLE_SYNC_EVERY = int(os.getenv("CANDLE_SYNC_EVERY", 300))  # раз в 5 минут — бар M15 живёт 15
 
 
+def _write_env_atomic(path: str, text: str) -> None:
+    """Записать файл целиком или не трогать вовсе: обрыв посреди записи
+    оставлял пустой или обрезанный .env, и агент терял токен и настройки."""
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())
+    try:
+        os.chmod(tmp, os.stat(path).st_mode & 0o777)    # права прежнего файла
+    except OSError:
+        pass
+    os.replace(tmp, path)
+
+
 def sync_env() -> None:
     """Подтягивает общие настройки (токены, доли) с сервера в локальный .env.
 
@@ -322,8 +337,7 @@ def sync_env() -> None:
     changed = [f"{k}={v}" for k, v in remote.items() if k not in _LOCAL_ENV_KEYS]
     new_lines = kept + changed
     if new_lines != lines:
-        with open(ENV_FILE, "w", encoding="utf-8") as f:
-            f.write("\n".join(new_lines) + "\n")
+        _write_env_atomic(ENV_FILE, "\n".join(new_lines) + "\n")
         log.info("общие настройки обновлены с сервера (%d ключей)", len(changed))
         load_dotenv(ENV_FILE, override=True)
         _reload_config()
@@ -460,6 +474,16 @@ def _local_commit() -> str | None:
 LAST_GOOD_COMMIT_FILE = os.path.join(ROOT, "data", "last_good_commit")
 PENDING_COMMIT_FILE = os.path.join(ROOT, "data", "pending_commit")
 MIN_CONFIRM_GRACE = float(os.getenv("MIN_CONFIRM_GRACE_SECONDS", 30))
+# коммит, с которого откатились: на него не обновляемся, пока origin не сдвинется
+BAD_COMMIT_FILE = os.path.join(ROOT, "data", "bad_commit")
+# если ни один счёт не прошёл collect+push (сеть, брокер, резерв без опроса),
+# обновление подтверждаем по явному таймауту без падений, а не сразу
+CONFIRM_TIMEOUT = float(os.getenv("CONFIRM_TIMEOUT_SECONDS", 600))
+
+
+def _confirm_due(started: float, worked: bool) -> bool:
+    """Подтверждать обновление: хоть один счёт собран и отправлен, либо вышел таймаут."""
+    return worked or time.monotonic() - started >= CONFIRM_TIMEOUT
 
 
 def _read_marker(path: str) -> str | None:
@@ -538,6 +562,7 @@ def _check_and_rollback_bad_update(lock: socket.socket) -> bool:
         log.error("откат не удался: %s — остаюсь на текущем (плохом) коде", e)
         return False
 
+    _write_marker(BAD_COMMIT_FILE, current)     # не обновляться на него снова
     try:
         _write_marker(PENDING_COMMIT_FILE, "")   # больше не «в процессе обновления»
         import subprocess
@@ -669,6 +694,9 @@ def check_for_update(lock: socket.socket, holding_terminal: bool = False) -> Non
     local = _local_commit()
     if not local or local == remote:
         return      # уже на актуальном коде — или git недоступен, не рискуем
+    if remote == _read_marker(BAD_COMMIT_FILE):
+        log.info("коммит %s уже откатывали — жду нового коммита в origin", remote[:8])
+        return
 
     if _remote_commit_host(remote) == socket.gethostname():
         log.info("это моя машина запушила %s -> %s — обновляюсь сразу, без задержки",
@@ -743,7 +771,12 @@ def _self_update_and_restart(lock: socket.socket, target_commit: str) -> None:
             _write_marker(LAST_GOOD_COMMIT_FILE, current)
         # fetch уже свежий (см. проверку ahead выше) — второй раз дёргать
         # сеть незачем, это просто лишний риск нового таймаута
-        _run_git("reset", "--hard", f"{GIT_REMOTE}/{GIT_BRANCH}", timeout=30)
+        # именно тот коммит, что прошёл канарейку: origin/<branch> мог уехать
+        # дальше, и мы поставили бы необкатанный код под видом обкатанного
+        _run_git("reset", "--hard", target_commit, timeout=30)
+        head = _run_git("rev-parse", "HEAD")        # не _local_commit: тот помнит запущенный
+        if head != target_commit:
+            raise RuntimeError(f"после reset HEAD={head!r}, ожидался {target_commit}")
         _write_pending(target_commit)
     except Exception as e:
         log.error("обновление не удалось, остаюсь на текущем коде: %s", e)
@@ -998,6 +1031,7 @@ def main():
     standing_by = None
     took_over = False   # держит право опроса — важен для безопасного автообновления
     update_confirmed = False   # первый успешный круг на этом коде уже подтверждён
+    started_at = time.monotonic()
     last_env_sync = 0.0
     last_update_check = 0.0
     last_canary_report = 0.0
@@ -1041,7 +1075,7 @@ def main():
             send_heartbeat()
             took_over = False
             _touch_beat()       # цикл жив и осознанно молчит — не зависание
-            if AUTO_UPDATE and not update_confirmed:
+            if AUTO_UPDATE and not update_confirmed and _confirm_due(started_at, False):
                 # дошли досюда без падений — этот код рабочий, даже если он
                 # просто ждёт в резерве и терминал ещё не трогал
                 _confirm_update_ok()
@@ -1065,7 +1099,7 @@ def main():
             # дольше MIN_CONFIRM_GRACE, откатил бы совершенно исправный код
             # на следующем случайном перезапуске (реальный сценарий, не
             # теоретический — из красной команды)
-            if AUTO_UPDATE and not update_confirmed:
+            if AUTO_UPDATE and not update_confirmed and _confirm_due(started_at, False):
                 _confirm_update_ok()
                 update_confirmed = True
             time.sleep(INTERVAL)
@@ -1110,7 +1144,7 @@ def main():
 
         # подтверждаем по факту «дожили до конца цикла без краха», не по
         # успеху MT5/сети конкретно в этом круге — см. комментарий выше
-        if AUTO_UPDATE and not update_confirmed:
+        if AUTO_UPDATE and not update_confirmed and _confirm_due(started_at, ok):
             _confirm_update_ok()
             update_confirmed = True
 

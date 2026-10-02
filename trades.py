@@ -258,7 +258,7 @@ def use(acc: dict) -> None:
     _current = acc["name"]
 
 
-def _capital_moves(since: datetime) -> float:
+def _capital_moves(since: datetime, until: datetime = None) -> float:
     """Движение капитала после даты, ÷ плечо. Прибыль (Profit) — не капитал.
 
     Историю берём целиком (all_history): отсечка REPORT_FROM касается отчётов,
@@ -266,10 +266,28 @@ def _capital_moves(since: datetime) -> float:
     в минус.
     """
     total = 0.0
-    for r in fetch(since, clock() + timedelta(days=1), all_history=True):
+    for r in fetch(since, until or clock() + timedelta(days=1), all_history=True):
         if r["is_balance"] and is_transfer(r) and not is_profit_side(r):
             total += r["net"]
     return total / _multiplier if _multiplier else total
+
+
+def rolled_base(acc: dict, boundary: datetime):
+    """Опора капитала (base) с датой, сдвинутой на границу свёртки.
+
+    capital() = base + движения после base_at, а свёртка удаляет сделки старше
+    boundary: пополнения и выводы свёрнутых месяцев пропадали из капитала. Перед
+    свёрткой переносим их в base, а base_at ставим на границу — повторный вызов
+    ничего не меняет. None — сдвигать нечего.
+    """
+    if acc.get("base") is None:
+        return None
+    use(acc)
+    since = _base_at or datetime(2000, 1, 1)
+    if since >= boundary:
+        return None
+    moves = _capital_moves(since, boundary - timedelta(microseconds=1))
+    return float(acc["base"]) + moves, boundary.isoformat()
 
 
 def _profit_on_account() -> float:
