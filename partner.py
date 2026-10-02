@@ -240,8 +240,57 @@ def wallet_reset(db, cabinet: str) -> None:
     if not cabinet:
         return
     kv_set(db, f"wallet_in:{cabinet}", "0")
+    kv_set(db, f"wallet_out:{cabinet}", "0")
     import trades
     kv_set(db, f"wallet_since:{cabinet}", trades.clock().isoformat())
+
+
+def _wallet_out(cabinet: str, start, until=None) -> float:
+    """Сколько вернулось с кошелька в стратегию за период (по сделкам в базе)."""
+    went_out = 0.0
+    try:
+        import accounts
+        import trades
+        seen = set()
+        for acc in accounts.load():
+            if str(acc.get("cabinet") or "").strip() != cabinet:
+                continue
+            if int(acc["login"]) in seen:
+                continue
+            seen.add(int(acc["login"]))
+            trades.use(acc)
+            for r in trades.fetch(start, until or trades.clock() + timedelta(days=1)):
+                # деньги вернулись с кошелька в стратегию: для кошелька это расход
+                if (r["is_balance"] and trades.is_transfer(r)
+                        and not trades.is_profit_side(r)):
+                    own = trades.own_amount(r)
+                    if own > 0:
+                        went_out += own
+    except Exception:
+        pass        # счета недоступны — покажем хотя бы приход
+    return went_out
+
+
+def wallet_rollup(db, boundary) -> None:
+    """Перед свёрткой сделок переносим их расход кошелька в wallet_out.
+
+    Повторный вызов с той же границей ничего не добавляет.
+    """
+    import accounts
+    for cabinet in {str(a.get("cabinet") or "").strip() for a in accounts.load()} - {""}:
+        since = kv_get(db, f"wallet_since:{cabinet}")
+        if not since:
+            continue
+        start = datetime.fromisoformat(since)
+        rolled_to = kv_get(db, f"wallet_out_at:{cabinet}")
+        if rolled_to:
+            start = max(start, datetime.fromisoformat(rolled_to))
+        if start >= boundary:
+            continue
+        out = _wallet_out(cabinet, start, boundary - timedelta(microseconds=1))
+        carried = float(kv_get(db, f"wallet_out:{cabinet}", 0) or 0)
+        kv_set(db, f"wallet_out:{cabinet}", repr(carried + out))
+        kv_set(db, f"wallet_out_at:{cabinet}", boundary.isoformat())
 
 
 def wallet_balance(db, cabinet: str) -> tuple[float, str]:
@@ -257,29 +306,14 @@ def wallet_balance(db, cabinet: str) -> tuple[float, str]:
         return 0.0, ""
     came_in = float(kv_get(db, f"wallet_in:{cabinet}", 0) or 0)
 
-    went_out = 0.0
-    try:
-        import accounts
-        import trades
-        from datetime import datetime, timedelta
-        start = datetime.fromisoformat(since)
-        seen = set()
-        for acc in accounts.load():
-            if str(acc.get("cabinet") or "").strip() != cabinet:
-                continue
-            if int(acc["login"]) in seen:
-                continue
-            seen.add(int(acc["login"]))
-            trades.use(acc)
-            for r in trades.fetch(start, trades.clock() + timedelta(days=1)):
-                # деньги вернулись с кошелька в стратегию: для кошелька это расход
-                if (r["is_balance"] and trades.is_transfer(r)
-                        and not trades.is_profit_side(r)):
-                    own = trades.own_amount(r)
-                    if own > 0:
-                        went_out += own
-    except Exception:
-        pass        # счета недоступны — покажем хотя бы приход
+    # расход свёрнутых месяцев лежит в wallet_out (сами сделки уже удалены),
+    # живые сделки считаем с границы последней свёртки
+    start = datetime.fromisoformat(since)
+    carried = float(kv_get(db, f"wallet_out:{cabinet}", 0) or 0)
+    rolled_to = kv_get(db, f"wallet_out_at:{cabinet}")
+    if rolled_to:
+        start = max(start, datetime.fromisoformat(rolled_to))
+    went_out = carried + _wallet_out(cabinet, start)
     return max(came_in - went_out, 0.0), since
 
 

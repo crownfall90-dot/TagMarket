@@ -1350,6 +1350,21 @@ def connect(acc: dict) -> bool:
         return False
 
 
+def carry_before_rollup(db, keep: str) -> None:
+    """Перенести капитал и расход кошелька свёрнутых месяцев вперёд.
+
+    Свёртка удаляет сделки старше keep, а капитал с опорой (base) и баланс
+    кошелька считаются из сделок после даты — без переноса они теряли
+    пополнения и выводы этих месяцев. Вызывать ДО store.rollup.
+    """
+    boundary = datetime.strptime(keep, "%Y-%m-%d")
+    for acc in accounts.load():
+        moved = trades.rolled_base(acc, boundary)
+        if moved:
+            accounts.update(acc["name"], acc["owner"], base=moved[0], base_at=moved[1])
+    partner.wallet_rollup(db, boundary)
+
+
 def no_mt5(acc: dict) -> str:
     # terminal есть только у счетов, заведённых через бот на машине с MT5:
     # на сервере и у счетов из Mini App его нет, и acc['terminal'] падал KeyError
@@ -1777,6 +1792,9 @@ async def poll_mt5(bot: Bot, db) -> int:
             if operator and str(owner) == operator else ""
         skip_ticket = None      # вторая половина реинвеста, уже показанная с первой
         for i, row in enumerate(rows):
+            # контекст trades общий на процесс и переключается любым корутином
+            # во время await: возвращаем свой счёт перед расчётами строки
+            trades.use(acc)
             if row["ticket"] == skip_ticket:
                 kv_set(db, key, row["ticket"])
                 continue
@@ -1826,6 +1844,7 @@ async def poll_mt5(bot: Bot, db) -> int:
                 kv_set(db, key, row["ticket"])
                 continue
 
+            trades.use(acc)         # выше был await — контекст мог уйти на чужой счёт
             day_net = day_count = total_net = None
             if row["is_closing"]:
                 # день берём у самой сделки, а не текущий: уведомления приходят
@@ -1944,7 +1963,7 @@ async def finish_add(bot: Bot, chat_id, owner, data: dict) -> str:
         return f"❌ {html.escape(str(e))}"
 
     await bot.send_message(chat_id, "🔑 Проверяю вход в счёт…")
-    ok = await asyncio.to_thread(connect, acc)
+    ok = connect(acc)   # не в потоке: connect меняет общий контекст trades
     if not ok:
         accounts.remove(acc["name"], owner)
         return ("❌ Войти не удалось — счёт удалён из настроек.\n"
@@ -3055,6 +3074,7 @@ async def main():
                         # сделки, а не только итог. Сворачиваем то, что старше
                         first = trades.clock().replace(day=1)
                         keep = (first - timedelta(days=1)).strftime("%Y-%m-01")
+                        carry_before_rollup(db, keep)
                         removed = store.rollup(store.open_db(), keep, trades.is_transfer,
                                                trades.is_perf_fee, month_growth,
                                                trades.is_profit_side,

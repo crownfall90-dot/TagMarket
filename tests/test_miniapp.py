@@ -170,6 +170,82 @@ class AgentCommandTests(unittest.TestCase):
         self.assertIsNone(payload["command_id"])
 
 
+class AgentSelfUpdateTests(unittest.TestCase):
+    def update(self, head):
+        calls = []
+
+        def git(*args, **kwargs):
+            calls.append(args)
+            return head if args[:2] == ("rev-parse", "HEAD") else ""
+
+        marks = []
+        with patch.object(agent, "_run_git", git), \
+             patch.object(agent, "_local_commit", return_value="old"), \
+             patch.object(agent, "_write_marker"), \
+             patch.object(agent, "_write_pending", side_effect=marks.append), \
+             patch.object(agent, "_quiet_popen", side_effect=OSError("stop")):
+            agent._self_update_and_restart(None, "canary1")
+        return calls, marks
+
+    def test_update_resets_to_the_canary_commit_not_origin_branch(self):
+        calls, marks = self.update("canary1")
+        resets = [c for c in calls if c[0] == "reset"]
+        self.assertEqual(resets, [("reset", "--hard", "canary1")])
+        self.assertEqual(marks, ["canary1"])
+
+    def test_pending_is_not_written_when_head_differs_from_target(self):
+        _calls, marks = self.update("newer")
+        self.assertEqual(marks, [])
+
+    def test_rolled_back_commit_is_not_installed_until_origin_moves(self):
+        with patch.object(agent, "_remote_commit", return_value="bad1"), \
+             patch.object(agent, "_local_commit", return_value="good"), \
+             patch.object(agent, "_remote_commit_host", return_value=agent.socket.gethostname()), \
+             patch.object(agent, "_read_marker", return_value="bad1"), \
+             patch.object(agent, "_self_update_and_restart") as restart:
+            agent.check_for_update(None)
+            restart.assert_not_called()
+        with patch.object(agent, "_remote_commit", return_value="bad2"), \
+             patch.object(agent, "_local_commit", return_value="good"), \
+             patch.object(agent, "_remote_commit_host", return_value=agent.socket.gethostname()), \
+             patch.object(agent, "_read_marker", return_value="bad1"), \
+             patch.object(agent, "_self_update_and_restart") as restart:
+            agent.check_for_update(None)
+            restart.assert_called_once()
+
+    def test_rollback_remembers_the_bad_commit(self):
+        written = {}
+        markers = {agent.LAST_GOOD_COMMIT_FILE: "good1"}
+        with patch.object(agent, "_read_pending", return_value=("bad1", 999.0)), \
+             patch.object(agent, "_local_commit", return_value="bad1"), \
+             patch.object(agent, "_read_marker", side_effect=markers.get), \
+             patch.object(agent, "_run_git"), \
+             patch.object(agent, "_write_marker", side_effect=written.__setitem__), \
+             patch.object(agent, "_quiet_popen"), \
+             patch.object(agent, "_report_rollback"):
+            with self.assertRaises(SystemExit):
+                agent._check_and_rollback_bad_update(type("L", (), {"close": lambda s: None})())
+        self.assertEqual(written[agent.BAD_COMMIT_FILE], "bad1")
+
+    def test_update_is_confirmed_only_after_real_work_or_timeout(self):
+        now = agent.time.monotonic()
+        self.assertFalse(agent._confirm_due(now, False))
+        self.assertTrue(agent._confirm_due(now, True))
+        self.assertTrue(agent._confirm_due(now - agent.CONFIRM_TIMEOUT - 1, False))
+
+    def test_env_file_is_replaced_atomically(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / ".env")
+            Path(path).write_text("TOKEN=old\n", encoding="utf-8")
+            with patch.object(agent.os, "replace", side_effect=OSError("crash")):
+                with self.assertRaises(OSError):
+                    agent._write_env_atomic(path, "TOKEN=new\n")
+            self.assertEqual(Path(path).read_text(encoding="utf-8"), "TOKEN=old\n")
+            agent._write_env_atomic(path, "TOKEN=new\n")
+            self.assertEqual(Path(path).read_text(encoding="utf-8"), "TOKEN=new\n")
+            self.assertEqual([p.name for p in Path(tmp).iterdir()], [".env"])
+
+
 class BuildAllCurrencyTests(unittest.TestCase):
     def test_archived_months_are_kept_separate_by_currency(self):
         accs = [
@@ -595,6 +671,32 @@ class OneEventOneMessageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((items[0]["title"], items[0]["kind"]), ("SONIC · Вывод", "withdrawals"))
         self.assertEqual(partner.kv_get(self.db, "mt5_last_ticket:1:123"), "10")
 
+    async def test_poll_restores_account_context_after_await(self):
+        # общий контекст trades уводит на чужой счёт любой другой корутин
+        # во время await; расчёт следующей сделки должен идти по своему счёту
+        for ticket in (10, 11):
+            store.save_deals(self.tdb, 123, [{
+                "ticket": ticket, "time": trades.clock(), "symbol": "EURUSD", "side": "buy",
+                "volume": 1, "price": 1, "profit": 5, "swap": 0, "commission": 0, "net": 5,
+                "is_balance": False, "is_closing": True, "is_opening": False, "comment": ""}])
+        seen = []
+        real = trades.fmt_account_event
+
+        def spy(*args, **kwargs):
+            seen.append((trades._login, trades._multiplier))
+            return real(*args, **kwargs)
+
+        send = self.fake_bot.send_message
+
+        async def hijack(*args, **kwargs):
+            trades._login, trades._multiplier = 999, 1.0      # «чужой» счёт
+            return await send(*args, **kwargs)
+
+        self.fake_bot.send_message = hijack
+        with patch.object(trades, "fmt_account_event", spy):
+            await self.bot.poll_mt5(self.fake_bot, self.db)
+        self.assertEqual(seen, [(123, 24.0)] * 2)
+
     async def test_mt5_first_then_hook_stays_silent(self):
         self.deal(10, -12.74, "Profit Withdrawal")
         await self.bot.poll_mt5(self.fake_bot, self.db)
@@ -752,6 +854,69 @@ class OneEventOneMessageTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("в тот же момент добавлено в капитал", self.chat[0][1])
         self.assertIn("-6.00$", self.chat[0][1])
         self.assertEqual(partner.kv_get(self.db, "mt5_last_ticket:1:123"), "31")
+
+
+class RollupCarryTests(unittest.TestCase):
+    """Свёртка месяцев не должна терять пополнения и выводы в капитале и кошельке."""
+
+    def setUp(self):
+        import bot
+        self.bot = bot
+        self.tmp = tempfile.TemporaryDirectory()
+        self.saved_path, accounts.PATH = accounts.PATH, str(Path(self.tmp.name) / "accounts.json")
+        self.db = partner.open_db(str(Path(self.tmp.name) / "state.db"))
+        self.tdb = store.open_db(str(Path(self.tmp.name) / "trades.db"))
+        trades._db = self.tdb
+        self.acc = {"owner": "1", "name": "SONIC", "strategy": "SONIC", "login": 123,
+                    "password": "x", "server": "Demo", "multiplier": 24, "cabinet": "CU1",
+                    "base": 100.0, "base_at": "2026-07-05T00:00:00"}
+        accounts.add(self.acc)
+        store.save_state(self.tdb, 123, 60000, 60000, "USD", "Demo")
+
+    def tearDown(self):
+        trades._db = None
+        accounts.PATH = self.saved_path
+        self.db.close()
+        self.tdb.close()
+        self.tmp.cleanup()
+
+    def deal(self, ticket, net, comment, moment):
+        store.save_deals(self.tdb, 123, [{
+            "ticket": ticket, "time": moment, "symbol": "", "side": "", "volume": 0,
+            "price": 0, "profit": net, "swap": 0, "commission": 0, "net": net,
+            "is_balance": True, "is_closing": False, "is_opening": False, "comment": comment}])
+
+    def roll(self, keep="2026-09-01"):
+        self.bot.carry_before_rollup(self.db, keep)
+        store.rollup(self.tdb, keep, trades.is_transfer, trades.is_perf_fee, None,
+                     trades.is_profit_side, trades.REPORT_FROM.isoformat())
+
+    def capital(self):
+        trades.use(accounts.load()[0])
+        return trades.capital()
+
+    def test_base_capital_survives_rollup(self):
+        self.deal(1, 2400.0, "Deposit", datetime(2026, 8, 10, 12))      # +100 своих денег
+        self.deal(2, -1200.0, "Withdraw", datetime(2026, 8, 20, 12))    # −50
+        self.deal(3, 480.0, "Deposit", datetime(2026, 9, 5, 12))        # +20, живая
+        self.assertAlmostEqual(self.capital(), 170.0)
+        self.roll()
+        self.assertEqual(len(store.fetch(self.tdb, 123, datetime(2000, 1, 1),
+                                         datetime(2100, 1, 1))), 1, "август свёрнут")
+        self.assertAlmostEqual(self.capital(), 170.0)
+        self.roll()                                                       # повтор безвреден
+        self.assertAlmostEqual(self.capital(), 170.0)
+
+    def test_wallet_balance_survives_rollup(self):
+        partner.wallet_add(self.db, "CU1", 200.0)
+        partner.kv_set(self.db, "wallet_since:CU1", "2026-07-05T00:00:00")
+        self.deal(1, 2400.0, "Deposit", datetime(2026, 8, 10, 12))      # 100 вернулось в стратегию
+        self.deal(2, 480.0, "Deposit", datetime(2026, 9, 5, 12))        # ещё 20
+        self.assertAlmostEqual(partner.wallet_balance(self.db, "CU1")[0], 80.0)
+        self.roll()
+        self.assertAlmostEqual(partner.wallet_balance(self.db, "CU1")[0], 80.0)
+        self.roll()
+        self.assertAlmostEqual(partner.wallet_balance(self.db, "CU1")[0], 80.0)
 
 
 class AuthTests(unittest.TestCase):
