@@ -3,13 +3,10 @@
 Handlers do not yield while using the legacy trades calculation context.
 Only signed Telegram initData is accepted; no browser/demo authentication bypass.
 """
-import asyncio
 import hashlib
 import hmac
 import html
 from html.parser import HTMLParser
-import re
-import aiohttp
 import json
 import math
 import os
@@ -33,6 +30,7 @@ os.environ["TRADES_SOURCE"] = "store"
 import accounts
 import bot as logic
 import coordination
+import fx
 import partner
 import projects
 import store
@@ -41,65 +39,12 @@ import trades
 STATIC = Path(__file__).parent / "web"
 MAX_AUTH_AGE = 86400
 _rates = OrderedDict()
-_myfin_rates = {"fetched_at": 0, "updated_at": None, "byn_per_unit": None}
 _broadcast_active = set()
 
 
-class _MyfinRateTable(HTMLParser):
-    """Read current BYN-per-unit quotes from MYFIN's NBRB table."""
-    def __init__(self):
-        super().__init__()
-        self.rows = []
-        self.row = None
-        self.cell = None
-
-    def handle_starttag(self, tag, attrs):
-        if tag == "tr": self.row = []
-        elif tag == "td" and self.row is not None: self.cell = []
-
-    def handle_data(self, data):
-        if self.cell is not None: self.cell.append(data.strip())
-
-    def handle_endtag(self, tag):
-        if tag == "td" and self.cell is not None:
-            self.row.append(" ".join(filter(None, self.cell)))
-            self.cell = None
-        elif tag == "tr" and self.row is not None:
-            self.rows.append(self.row)
-            self.row = None
-
-
-def parse_myfin_nbrb_rates(markup):
-    parser = _MyfinRateTable()
-    parser.feed(markup)
-    rates = {"BYN": 1.0}
-    for row in parser.rows:
-        if len(row) < 5 or not re.fullmatch(r"[A-Z]{3}", row[-2]):
-            continue
-        try:
-            quote = float(row[1].replace(",", "."))
-            units = float(row[-1].replace(",", "."))
-        except ValueError:
-            continue
-        if quote > 0 and units > 0:
-            rates[row[-2]] = quote / units
-    if rates.get("USD", 0) <= 0 or rates.get("RUB", 0) <= 0:
-        raise ValueError("MYFIN NBRB table is missing USD or RUB")
-    return rates
-
-
-async def myfin_nbrb_rates():
-    now = time.monotonic()
-    if _myfin_rates["byn_per_unit"] and now - _myfin_rates["fetched_at"] < 3600:
-        return _myfin_rates["byn_per_unit"]
-    timeout = aiohttp.ClientTimeout(total=10)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.get("https://myfin.by/bank/kursy_valjut_nbrb") as response:
-            response.raise_for_status()
-            rates = parse_myfin_nbrb_rates(await response.text())
-    _myfin_rates.update(fetched_at=now, updated_at=datetime.now(timezone.utc).isoformat(),
-                         byn_per_unit=rates)
-    return rates
+async def fx_snapshot(db=None):
+    """Единый снимок курсов (MYFIN -> НБРБ -> последний сохранённый)."""
+    return await fx.service.get(db)
 
 
 def usd_factor(currency, byn_per_unit):
@@ -350,14 +295,14 @@ async def bootstrap(request):
     project_currencies = {p[0] for p in db.execute("SELECT currency FROM projects WHERE owner_id=?", (str(uid),))}
     display_currency = partner.kv_get(db, f"display_currency:{uid}", "USD")
     unsupported = currencies - {"USD", "RUB", "BYN"}
-    byn_per_unit = None
+    byn_per_unit = fx_info = None
     fx_error = ""
     if currencies - {"USD"} or project_currencies - {"USD"} or display_currency != "USD":
         try:
-            byn_per_unit = await myfin_nbrb_rates()
-        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
-            logging.warning("MYFIN NBRB rates unavailable: %s", type(exc).__name__)
-            fx_error = "Не удалось обновить курс НБРБ на MYFIN"
+            fx_info = await fx_snapshot(db)
+            byn_per_unit = fx_info["rates"]
+        except fx.FxUnavailable:
+            fx_error = "Курс валют временно недоступен"
     if unsupported:
         fx_error = "Для полной сводки поддерживаются только USD, RUB и BYN"
     # Personal totals are shown in USD when a current official quote is available.
@@ -395,9 +340,10 @@ async def bootstrap(request):
     registration_url = (logic.partner_link(db, inviter) if inviter else logic.partner_registration_url())
     return web.json_response({"user": {"id": user["id"], "name": user.get("first_name", "Инвестор")},
         "accounts": items, "totals": totals,
-        "fx": ({"source": "MYFIN · НБРБ", "currency": "USD", "byn_per_unit": byn_per_unit,
+        "fx": ({"source": fx.LABELS[fx_info["provider"]], "provider": fx_info["provider"],
+                "stale": fx_info["stale"], "currency": "USD", "byn_per_unit": byn_per_unit,
                 "byn_per_usd": byn_per_unit["USD"], "byn_per_100_rub": byn_per_unit["RUB"] * 100,
-                "updated_at": _myfin_rates["updated_at"]}
+                "updated_at": fx_info["updated_at"]}
                if byn_per_unit else None), "fx_error": fx_error,
         "display_currency": display_currency,
         "onboarding": {"needed": not own_accounts,
@@ -545,10 +491,9 @@ async def overview_report(request):
     byn_per_unit = None
     if currencies - {"USD"}:
         try:
-            byn_per_unit = await myfin_nbrb_rates()
-        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
-            logging.warning("MYFIN NBRB rates unavailable: %s", type(exc).__name__)
-            raise web.HTTPServiceUnavailable(text="Не удалось обновить курс НБРБ на MYFIN") from exc
+            byn_per_unit = (await fx_snapshot(request.app["db"]))["rates"]
+        except fx.FxUnavailable as exc:
+            raise web.HTTPServiceUnavailable(text="Курс валют временно недоступен") from exc
     chart = {}
     total = count = account_count = archived_count = pending_count = 0
     current_capital = weighted = 0

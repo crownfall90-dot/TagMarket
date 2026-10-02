@@ -28,6 +28,7 @@ from aiohttp import FormData, web
 from aiohttp.test_utils import TestClient, TestServer
 import accounts
 import agent
+import fx
 import bot
 import coordination
 import miniapp
@@ -211,12 +212,124 @@ class BuildAllCurrencyTests(unittest.TestCase):
         self.assertIn("+0.00" + trades.NBSP + "₽", text)
 
 
+def SNAP(rates, provider="myfin", stale=False):
+    return {"rates": rates, "provider": provider, "stale": stale, "rate_date": None,
+            "updated_at": "2026-10-02T11:20:00+00:00"}
+
+
+MYFIN_HTML = ("<table><tbody><tr><td>Доллар США</td><td>3.0000</td><td>3.0</td><td>USD</td><td>1</td></tr>"
+              "<tr><td>Российский рубль</td><td>3.6000</td><td>3.6</td><td>RUB</td><td>100</td></tr></tbody></table>")
+NBRB_JSON = [{"Cur_Abbreviation": "USD", "Cur_Scale": 1, "Cur_OfficialRate": 3.0,
+              "Date": "2026-10-02T00:00:00"},
+             {"Cur_Abbreviation": "RUB", "Cur_Scale": 100, "Cur_OfficialRate": 3.6,
+              "Date": "2026-10-02T00:00:00"}, {"Cur_Abbreviation": "EUR", "Cur_Scale": 1,
+              "Cur_OfficialRate": 3.5, "Date": "2026-10-02T00:00:00"}]
+GOOD = {"BYN": 1.0, "USD": 3.0, "RUB": 0.036}
+
+
+def make_fx(myfin, nbrb, clock=None):
+    calls = {"myfin": 0, "nbrb": 0}
+    def wrap(name, behaviour):
+        async def fetch(session):
+            calls[name] += 1
+            if isinstance(behaviour, Exception): raise behaviour
+            if callable(behaviour): return await behaviour()
+            return behaviour
+        return fetch
+    service = fx.FxService(providers=(("myfin", wrap("myfin", myfin)), ("nbrb", wrap("nbrb", nbrb))),
+                           timeout=0.05, clock=clock or time.monotonic)
+    return service, calls
+
+
+class FxServiceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_myfin_works_and_is_cached(self):
+        service, calls = make_fx((GOOD, None), (GOOD, None))
+        snap = await service.get()
+        self.assertEqual((snap["provider"], snap["stale"]), ("myfin", False))
+        await service.get()
+        self.assertEqual(calls, {"myfin": 1, "nbrb": 0})
+
+    async def test_myfin_failures_switch_to_fallback(self):
+        import aiohttp
+        async def hang(): await asyncio.sleep(5)
+        broken = {"timeout": hang, "http error": aiohttp.ClientResponseError(None, (), status=503),
+                  "bad json": ValueError("not json"), "nan": ({**GOOD, "USD": float("nan")}, None),
+                  "zero": ({**GOOD, "RUB": 0}, None), "missing": ({"BYN": 1.0, "USD": 3.0}, None),
+                  "inf": ({**GOOD, "USD": float("inf")}, None), "old date": (GOOD, "2020-01-01")}
+        for name, behaviour in broken.items():
+            with self.subTest(name):
+                service, calls = make_fx(behaviour, (GOOD, None))
+                started = time.monotonic()
+                snap = await service.get()
+                self.assertLess(time.monotonic() - started, 2)
+                self.assertEqual((snap["provider"], snap["stale"]), ("nbrb", False))
+                self.assertEqual(snap["rates"], GOOD)
+
+    async def test_both_down_uses_last_known_good_marked_stale_then_recovers(self):
+        now = [0.0]
+        state = {"myfin": (GOOD, None)}
+        async def myfin(): return state["myfin"] if not isinstance(state["myfin"], Exception) else (_ for _ in ()).throw(state["myfin"])
+        service, calls = make_fx(myfin, ValueError("down"), clock=lambda: now[0])
+        first = await service.get()
+        self.assertEqual(first["provider"], "myfin")
+        state["myfin"] = ValueError("down")
+        now[0] += fx.FRESH_TTL + 1
+        stale = await service.get()
+        self.assertEqual((stale["provider"], stale["stale"]), ("cache", True))
+        self.assertEqual(stale["rates"], GOOD)
+        self.assertEqual(stale["updated_at"], first["updated_at"])  # не выдаётся за свежий
+        before = dict(calls)
+        await service.get()                                          # не долбим упавшие источники
+        self.assertEqual(calls, before)
+        state["myfin"] = ({**GOOD, "USD": 3.1}, None)
+        now[0] += fx.FAILURE_TTL + 1
+        back = await service.get()                                   # авто-возврат на MYFIN
+        self.assertEqual((back["provider"], back["stale"], back["rates"]["USD"]), ("myfin", False, 3.1))
+
+    async def test_fallback_is_retried_on_myfin_soon(self):
+        now = [0.0]
+        state = {"ok": False}
+        async def myfin():
+            if not state["ok"]: raise ValueError("down")
+            return GOOD, None
+        service, calls = make_fx(myfin, (GOOD, None), clock=lambda: now[0])
+        self.assertEqual((await service.get())["provider"], "nbrb")
+        state["ok"] = True
+        now[0] += fx.FALLBACK_TTL + 1
+        self.assertEqual((await service.get())["provider"], "myfin")
+
+    async def test_last_good_survives_restart_and_without_it_service_raises(self):
+        db = partner.open_db(":memory:")
+        service, _ = make_fx((GOOD, None), (GOOD, None))
+        first = await service.get(db)
+        restarted, _ = make_fx(ValueError("x"), ValueError("y"))
+        snap = await restarted.get(db)
+        self.assertEqual((snap["provider"], snap["stale"], snap["updated_at"]), ("cache", True, first["updated_at"]))
+        empty, _ = make_fx(ValueError("x"), ValueError("y"))
+        with self.assertRaises(fx.FxUnavailable):
+            await empty.get(partner.open_db(":memory:"))
+        partner.kv_set(db, fx.STORE_KEY, '{"rates": {"USD": 0, "RUB": 1}, "updated_at": "2026-10-02T00:00:00+00:00"}')
+        with self.assertRaises(fx.FxUnavailable):                    # повреждённый кеш не принимаем
+            await make_fx(ValueError("x"), ValueError("y"))[0].get(db)
+
+    def test_usd_byn_rub_convert_the_same_through_both_providers(self):
+        a = fx.parse_myfin_nbrb_rates(MYFIN_HTML)
+        b = fx.parse_nbrb_json(NBRB_JSON)
+        for code in ("USD", "BYN", "RUB"):
+            self.assertAlmostEqual(miniapp.usd_factor(code, a), miniapp.usd_factor(code, b))
+        self.assertAlmostEqual(miniapp.usd_factor("RUB", b) * 1000, 0.036 / 3.0 * 1000)
+        for bad in ("<html>captcha</html>", "", MYFIN_HTML.replace("RUB", "XXX")):
+            with self.assertRaises(ValueError): fx.parse_myfin_nbrb_rates(bad)
+        for bad in ("oops", [], [{"Cur_Abbreviation": "USD", "Cur_Scale": 1, "Cur_OfficialRate": 0}], NBRB_JSON[:1]):
+            with self.assertRaises(ValueError): fx.parse_nbrb_json(bad)
+
+
 class MyfinRateTests(unittest.TestCase):
     def test_parses_official_rates_with_non_unit_scales(self):
         html = ("<table><tbody><tr><td>Доллар США</td><td>3.0207</td><td>3.0051</td>"
                 "<td>USD</td><td>1</td></tr><tr><td>Российский рубль</td><td>3.5962</td>"
                 "<td>3.6121</td><td>RUB</td><td>100</td></tr></tbody></table>")
-        rates = miniapp.parse_myfin_nbrb_rates(html)
+        rates = fx.parse_myfin_nbrb_rates(html)
         self.assertAlmostEqual(miniapp.usd_factor("RUB", rates), (3.5962 / 100) / 3.0207)
         self.assertEqual(miniapp.usd_factor("BYN", rates), 1 / 3.0207)
         self.assertIsNone(miniapp.usd_factor("EUR", rates))
@@ -1096,13 +1209,54 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await response.json())["currency"], "USD")
         response = await self.call("PUT", "/api/preferences/display-currency", json={"currency":"BYN"})
         self.assertEqual(response.status, 200)
-        with patch.object(miniapp, "myfin_nbrb_rates", new=AsyncMock(return_value={"BYN":1.0,"USD":3.0,"RUB":0.03})):
+        with patch.object(miniapp, "fx_snapshot", new=AsyncMock(return_value=SNAP({"BYN":1.0,"USD":3.0,"RUB":0.03}))):
             bootstrap = await self.call("GET", "/api/bootstrap")
         result = await bootstrap.json()
         self.assertEqual(result["display_currency"], "BYN")
         self.assertEqual(result["fx"]["byn_per_unit"]["RUB"], 0.03)
         invalid = await self.call("PUT", "/api/preferences/display-currency", json={"currency":"EUR"})
         self.assertEqual(invalid.status, 400)
+
+    async def test_provider_switch_is_invisible_to_clients_and_one_snapshot_serves_all_views(self):
+        accounts.add({**self.acc, "login": 456, "name": "RUB", "strategy": "RUB", "currency": "RUB", "multiplier": 1})
+        store.save_state(self.tdb, 456, 100, 100, "RUB", "Demo", 100)
+        state = {"myfin": (GOOD, None)}
+        async def myfin():
+            if isinstance(state["myfin"], Exception): raise state["myfin"]
+            return state["myfin"]
+        service, calls = make_fx(myfin, (GOOD, None))
+        with patch.object(fx, "service", service):
+            self.assertEqual((await self.call("PUT", "/api/preferences/display-currency", json={"currency": "RUB"})).status, 200)
+            home = await (await self.call("GET", "/api/bootstrap")).json()
+            overview = await self.call("GET", "/api/overview/report?period=month&currency=USD")
+            self.assertEqual(overview.status, 200)
+            self.assertEqual(calls, {"myfin": 1, "nbrb": 0})        # Обзор, Проекты, Прогноз: один снимок
+            self.assertEqual((home["fx"]["provider"], home["fx"]["stale"]), ("myfin", False))
+            service.valid_until = 0
+            state["myfin"] = ValueError("down")
+            fallback = await (await self.call("GET", "/api/bootstrap")).json()
+            self.assertEqual((fallback["fx"]["provider"], fallback["fx"]["stale"], fallback["fx_error"]), ("nbrb", False, ""))
+            self.assertEqual(fallback["totals"], home["totals"])
+            self.assertEqual(fallback["display_currency"], "RUB")    # выбор пользователя не сброшен
+            service.valid_until = 0
+            service.providers = (service.providers[0], ("nbrb", AsyncMock(side_effect=ValueError("down"))))
+            cached = await (await self.call("GET", "/api/bootstrap")).json()
+            self.assertEqual((cached["fx"]["provider"], cached["fx"]["stale"]), ("cache", True))
+            self.assertEqual(cached["totals"], home["totals"])
+            self.assertEqual(cached["fx"]["updated_at"], fallback["fx"]["updated_at"])
+
+    async def test_no_rates_ever_keeps_source_currency_with_one_warning(self):
+        accounts.add({**self.acc, "login": 456, "name": "RUB", "strategy": "RUB", "currency": "RUB", "multiplier": 1})
+        store.save_state(self.tdb, 456, 100, 100, "RUB", "Demo", 100)
+        service, _ = make_fx(ValueError("down"), ValueError("down"))
+        with patch.object(fx, "service", service):
+            response = await self.call("GET", "/api/bootstrap")
+            data = await response.json()
+            self.assertEqual(response.status, 200)
+            self.assertIsNone(data["fx"])
+            self.assertTrue(data["fx_error"])
+            self.assertEqual(data["totals"]["USD"]["capital"], 100)  # только USD-счёт, RUB без курса не конвертируется
+            self.assertEqual((await self.call("GET", "/api/overview/report?period=month&currency=USD")).status, 503)
 
     async def test_chart_timeline_keeps_empty_days_and_unknown_history(self):
         now = datetime(2026, 10, 2, 15)
@@ -1165,18 +1319,19 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                         "last_trade_day":"2026-09-30", "last_trade_net":4}}
         rates = {"USD":2.0, "RUB":0.02, "BYN":1.0}
         with patch.object(miniapp.logic, "account_totals", side_effect=lambda acc: totals[acc["login"]]), \
-             patch.object(miniapp, "myfin_nbrb_rates", new=AsyncMock(return_value=rates)):
+             patch.object(miniapp, "fx_snapshot", new=AsyncMock(return_value=SNAP(rates))):
             data = await (await self.call("GET", "/api/bootstrap")).json()
         self.assertAlmostEqual(data["totals"]["USD"]["capital"], 56)
         self.assertEqual(set(data["totals"]), {"USD"})
         self.assertEqual(data["fx"]["source"], "MYFIN · НБРБ")
+        self.assertFalse(data["fx"]["stale"])
         self.assertEqual(data["totals"]["USD"]["trading_day"], "2026-10-02")
         self.assertEqual(data["totals"]["USD"]["trading_day_net"], 5)
         totals[123]["last_trade_day"], totals[123]["last_trade_net"] = "2026-10-01", 5
         totals[456]["last_trade_day"], totals[456]["last_trade_net"] = "2026-09-30", 1000
         totals[789]["last_trade_day"], totals[789]["last_trade_net"] = "2026-10-01", 4
         with patch.object(miniapp.logic, "account_totals", side_effect=lambda acc: totals[acc["login"]]), \
-             patch.object(miniapp, "myfin_nbrb_rates", new=AsyncMock(return_value=rates)):
+             patch.object(miniapp, "fx_snapshot", new=AsyncMock(return_value=SNAP(rates))):
             fallback = await (await self.call("GET", "/api/bootstrap")).json()
         self.assertEqual(fallback["totals"]["USD"]["trading_day"], "2026-10-01")
         self.assertEqual(fallback["totals"]["USD"]["trading_day_net"], 7)
