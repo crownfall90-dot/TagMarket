@@ -278,6 +278,55 @@ def fractional_periods(start, end, period, business_days_only=False):
     return completed + (end - anchor).days / max(1, (next_anchor - anchor).days)
 
 
+TAG_MIN_DAYS = 5
+TAG_WINDOW_DAYS = 30
+
+
+def weekdays_between(start, end):
+    """Будние дни в (start, end]: сегодняшний день ещё не завершён и не считается."""
+    days = max(0, (end - start).days)
+    weeks, remainder = divmod(days, 7)
+    first = start + timedelta(days=1 + weeks * 7)
+    return weeks * 5 + sum((first + timedelta(days=i)).weekday() < 5 for i in range(remainder))
+
+
+def tag_return_stats(days):
+    """Средняя историческая доходность TagMarket по завершённым торговым дням.
+
+    days — [{"day", "net", "base"}]: чистый результат дня и капитал на его начало
+    (сумма по собственным счетам, в одной валюте). День без положительной базы
+    не входит в выборку. Берутся последние TAG_WINDOW_DAYS таких дней; меньше
+    TAG_MIN_DAYS — прогноз не строится. Нулевые дни не добавляются: в выборке
+    только дни, когда счета реально торговали.
+    """
+    valid = sorted((d for d in days if d["base"] > 0 and math.isfinite(d["net"])), key=lambda d: d["day"])
+    window = valid[-TAG_WINDOW_DAYS:]
+    returns = [d["net"] / d["base"] for d in window]
+    average = sum(returns) / len(returns) if returns else None
+    sufficient = len(returns) >= TAG_MIN_DAYS and average is not None and average > -1
+    return {
+        "sufficient": sufficient, "days_used": len(returns), "min_days": TAG_MIN_DAYS,
+        "window_days": TAG_WINDOW_DAYS,
+        "average_daily_return": average if sufficient else None,
+        "average_daily_profit": sum(d["net"] for d in window) / len(window) if window else None,
+        "from": window[0]["day"] if window else None, "to": window[-1]["day"] if window else None,
+    }
+
+
+def tag_forecast(days, start, target):
+    """Множители капитала TagMarket: (1 + средняя дневная доходность) ^ торговые дни."""
+    stats = tag_return_stats(days)
+    dates = {"day": start + timedelta(days=1), "week": start + timedelta(days=7),
+             "month": _month_after(start), "selected": target}
+    counts = {key: weekdays_between(start, when) for key, when in dates.items()}
+    multipliers = {}
+    for key, count in counts.items():
+        value = (1 + stats["average_daily_return"]) ** count if stats["sufficient"] else None
+        multipliers[key] = value if value is not None and math.isfinite(value) else None
+    return {**stats, "until": target.isoformat(), "trading_days": counts, "multipliers": multipliers,
+            "model": "compound_average_daily_return"}
+
+
 def text(value, required=False):
     if not isinstance(value, str) or "\x00" in value or len(value.strip()) > 96 or (required and not value.strip()):
         raise ValueError("Укажите название длиной до 96 символов")

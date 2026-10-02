@@ -378,7 +378,22 @@ def projects_ui(page, nav):
     page.locator('.forecast-result').wait_for()
     assert page.locator('.forecast-summary-values').count() == 1
     assert all(page.locator('.forecast-table thead th').all_inner_texts()[i] for i in range(7))
-    assert 'Торговый результат не прогнозируется' in page.locator('.forecast-result').inner_text()
+    result_text = page.locator('.forecast-result').inner_text()
+    assert 'Среднее рассчитано по 23 торговым дням' in result_text, result_text
+    assert 'статистика, а не обещание' in result_text
+    assert page.locator('.forecast-tag-grid > div').count() == 4
+    assert all('≈' in t for t in page.locator('.forecast-tag-grid b').all_inner_texts())
+    fits(page)
+    # мало истории: прогноз не строится, текущий капитал остаётся, сообщение понятное
+    page.evaluate("state.forecast.tag={sufficient:false,days_used:3,min_days:5,multipliers:{}};render(true)")
+    result_text = page.locator('.forecast-result').inner_text()
+    assert 'Недостаточно истории для статистического прогноза TagMarket' in result_text
+    assert page.locator('.forecast-tag-grid b').first.inner_text().strip()
+    assert '≈' not in page.locator('.forecast-tag-grid').inner_text()
+    page.evaluate("state.forecast.tag={error:'x'};render(true)")
+    assert 'Прогноз TagMarket временно недоступен' in page.locator('.forecast-result').inner_text()
+    page.evaluate('recalculateForecast()')
+    page.wait_for_function("state.forecast.tag?.sufficient===true")
     summary=(page.locator('.forecast-mobile-cards .forecast-breakdown summary')
              if page.locator('.forecast-mobile-cards').is_visible()
              else page.locator('.forecast-table .forecast-breakdown summary'))

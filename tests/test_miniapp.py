@@ -1970,6 +1970,81 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(data["summary"]["pct_capital"],
                                round(21 / home["totals"]["USD"]["capital"] * 100, 3))
 
+    def test_tag_forecast_uses_percent_returns_over_trading_days_only(self):
+        # пятница 2026-10-02: день, неделя (5 будней), месяц и выходные считаются по будням
+        friday = date(2026, 10, 2)
+        self.assertEqual(projects.weekdays_between(friday, date(2026, 10, 3)), 0)
+        self.assertEqual(projects.weekdays_between(friday, date(2026, 10, 5)), 1)
+        self.assertEqual(projects.weekdays_between(friday, date(2026, 10, 9)), 5)
+        self.assertEqual(projects.weekdays_between(friday, friday), 0)
+        history = [{"day": f"2026-09-{day:02d}", "net": 10 * (1 + day % 2), "base": 1000 + day * 10}
+                   for day in range(1, 26)]
+        result = projects.tag_forecast(history, friday, date(2026, 10, 16))
+        expected = sum(d["net"] / d["base"] for d in history) / len(history)
+        self.assertTrue(result["sufficient"])
+        self.assertEqual(result["days_used"], 25)
+        self.assertAlmostEqual(result["average_daily_return"], expected)
+        self.assertEqual(result["trading_days"]["week"], 5)
+        self.assertEqual(result["trading_days"]["selected"], 10)
+        self.assertAlmostEqual(result["multipliers"]["selected"], (1 + expected) ** 10)
+        self.assertAlmostEqual(result["multipliers"]["day"], (1 + expected) ** 0)  # завтра — суббота
+
+    def test_tag_forecast_window_threshold_negative_and_zero_average(self):
+        friday = date(2026, 10, 2)
+        few = [{"day": f"2026-09-{d:02d}", "net": 5, "base": 100} for d in range(1, 5)]
+        short = projects.tag_forecast(few, friday, date(2026, 10, 9))
+        self.assertFalse(short["sufficient"])
+        self.assertEqual(short["days_used"], 4)
+        self.assertIsNone(short["average_daily_return"])
+        self.assertEqual(short["multipliers"], {k: None for k in ("day", "week", "month", "selected")})
+        # дни без капитала на начало в выборку не входят и нулями не подменяются
+        broken = few + [{"day": "2026-09-10", "net": 5, "base": 0}]
+        self.assertEqual(projects.tag_forecast(broken, friday, friday)["days_used"], 4)
+        # берутся последние 30 торговых дней
+        long = [{"day": f"2026-08-{d:02d}", "net": 1, "base": 100} for d in range(1, 29)] + \
+               [{"day": f"2026-09-{d:02d}", "net": -1, "base": 100} for d in range(1, 11)]
+        window = projects.tag_forecast(long, friday, date(2026, 10, 9))
+        self.assertEqual((window["days_used"], window["from"]), (30, "2026-08-09"))
+        losing = [{"day": f"2026-09-{d:02d}", "net": -2, "base": 100} for d in range(1, 8)]
+        down = projects.tag_forecast(losing, friday, date(2026, 10, 9))
+        self.assertAlmostEqual(down["multipliers"]["week"], 0.98 ** 5)
+        self.assertLess(down["multipliers"]["week"], 1)
+        flat = [{"day": f"2026-09-{d:02d}", "net": 0, "base": 100} for d in range(1, 8)]
+        self.assertEqual(projects.tag_forecast(flat, friday, date(2026, 10, 9))["multipliers"]["week"], 1)
+
+    async def test_tagmarket_forecast_endpoint_averages_own_account_returns(self):
+        accounts.add({**self.acc, "login": 789, "name": "Demo", "strategy": "Demo", "demo": True})
+        store.save_state(self.tdb, 789, 240000, 240000, "USD", "Demo", 10000)
+        today = trades.clock().date()
+        target = (projects.today() + timedelta(days=14)).isoformat()
+        await_path = "/api/tagmarket/forecast?until=" + target
+        early = await (await self.call("GET", await_path)).json()
+        self.assertFalse(early["sufficient"])
+        self.assertEqual(early["days_used"], 0)
+        results = (10, 20, 30, 10, 20, 30)
+        for index, amount in enumerate(results, start=1):
+            when = datetime.combine(today - timedelta(days=index), datetime.min.time()).replace(hour=12)
+            for login, value in ((123, amount), (789, 1000)):    # демо-счёт в расчёт не входит
+                store.save_deals(self.tdb, login, [{"ticket": index * 1000 + login, "time": when,
+                    "symbol": "XAUUSD", "side": "buy", "net": value, "profit": value,
+                    "swap": 0, "commission": 0, "volume": .1, "is_closing": True,
+                    "is_opening": False, "is_balance": False}])
+        r = await self.call("GET", await_path)
+        self.assertEqual(r.status, 200, await r.text())
+        data = await r.json()
+        self.assertTrue(data["sufficient"])
+        self.assertEqual(data["days_used"], 6)
+        trades.use(accounts.load(1)[0])     # капитал уже учитывает прибыль этих сделок
+        returns = [trades.net_of_fee(trades.mine(v)) / trades.capital() for v in results]
+        self.assertAlmostEqual(data["average_daily_return"], sum(returns) / 6)
+        self.assertAlmostEqual(data["multipliers"]["selected"],
+                               (1 + sum(returns) / 6) ** data["trading_days"]["selected"])
+        # чужой пользователь без своих счетов: истории нет
+        other = await (await self.call("GET", await_path, uid=2)).json()
+        self.assertFalse(other["sufficient"])
+        for bad in ("", "?until=garbage", "?until=2000-01-01"):
+            self.assertEqual((await self.call("GET", "/api/tagmarket/forecast" + bad)).status, 400)
+
     async def test_shared_observation_does_not_count_as_guests_capital(self):
         accounts.share([123], 1, 2)
         home = await (await self.call("GET", "/api/bootstrap", uid=2)).json()

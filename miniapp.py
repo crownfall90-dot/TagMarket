@@ -1306,6 +1306,62 @@ async def project_forecast(request):
     return web.json_response({"projects": results})
 
 
+async def tagmarket_forecast(request):
+    """Статистический прогноз TagMarket по средней доходности собственных счетов."""
+    uid, _ = authorize(request)
+    try:
+        target = date.fromisoformat(request.query.get("until", ""))
+    except ValueError:
+        raise web.HTTPBadRequest(text="Укажите корректную дату прогноза")
+    start = projects.today()
+    if target < start or target > start + timedelta(days=3660):
+        raise web.HTTPBadRequest(text="Дата прогноза должна быть в пределах 10 лет")
+    db = request.app["trades"]
+    personal = [a for a in accounts.dedup(accounts.load(uid))
+                if not a.get("demo") and not a.get("shared_by")]
+    states = {a["login"]: store.get_state(db, a["login"]) for a in personal}
+    currencies = {(s["currency"] or "USD").upper() for s in states.values() if s}
+    byn_per_unit = None
+    if currencies - {"USD"}:
+        try:
+            byn_per_unit = (await fx_snapshot(request.app["db"]))["rates"]
+        except fx.FxUnavailable as exc:
+            raise web.HTTPServiceUnavailable(text="Курс валют временно недоступен") from exc
+    today = trades.clock().date()
+    per_account = []
+    for acc in personal:
+        state = states[acc["login"]]
+        if not state:
+            continue
+        factor = usd_factor(state["currency"], byn_per_unit) if byn_per_unit else (
+            1 if state["currency"].upper() == "USD" else None)
+        if factor is None:
+            continue
+        trades.use(acc)
+        rows = trades.fetch(datetime(2000, 1, 1), logic.utcnow() + timedelta(days=1))
+        results = {}
+        for row in rows:
+            if row["is_closing"] and row["time"].date() < today:
+                day = row["time"].date()
+                results[day] = results.get(day, 0) + trades.net_of_fee(trades.mine(row["net"]))
+        per_account.append((acc, rows, results, factor,
+                            min((r["time"] for r in rows), default=None)))
+    # торговый день — день, когда хотя бы на одном счёте закрывались сделки
+    candidates = sorted({day for _, _, results, _, _ in per_account for day in results})[-90:]
+    series = {day: {"day": day.isoformat(), "net": 0.0, "base": 0.0} for day in candidates}
+    for acc, rows, results, factor, first in per_account:
+        trades.use(acc)     # плечо и доля счёта — глобальное состояние trades
+        current = trades.capital()
+        for day in candidates:
+            if first is None or first > datetime.combine(day, datetime.max.time()):
+                continue    # счёта ещё не было — его капитал в базу дня не входит
+            capital_then = trades.capital_at(datetime.combine(day, datetime.min.time()), rows, current)
+            if capital_then > 0:
+                series[day]["net"] += results.get(day, 0) * factor
+                series[day]["base"] += capital_then * factor
+    return web.json_response(projects.tag_forecast(list(series.values()), start, target))
+
+
 async def display_preference(request):
     uid, _ = authorize(request)
     key = f"display_currency:{uid}"
@@ -1345,6 +1401,7 @@ def setup(app):
     app.router.add_get("/api/bootstrap", bootstrap)
     app.router.add_get("/api/projects", project_api)
     app.router.add_get("/api/projects/forecast", project_forecast)
+    app.router.add_get("/api/tagmarket/forecast", tagmarket_forecast)
     app.router.add_get("/api/preferences/display-currency", display_preference)
     app.router.add_put("/api/preferences/display-currency", display_preference)
     app.router.add_post("/api/projects", project_api)
