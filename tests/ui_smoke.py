@@ -143,14 +143,13 @@ def rapid_period_taps_load_once(page):
     """Быстрые нажатия фильтров динамики: одна перерисовка и одна загрузка
     последнего выбора. Раньше каждое нажатие давало две перерисовки (каркас,
     потом данные) и свой запрос — динамика мигала много раз подряд."""
-    page.evaluate("""() => { viewCache.clear();
+    page.evaluate("""() => { clearTimeout(choiceTimer); cancelLoads(); viewCache.clear();
         window.__realRender = window.render; window.__renders = 0;
         window.render = (...a) => { window.__renders++; return window.__realRender(...a); };
         window.__calls = []; window.__origApi = window.__origApi || window.api; const real = window.__origApi;
         window.api = (...a) => { window.__calls.push(a[0]); return real(...a); }; }""")
-    for value in ("week", "yesterday", "month"):
-        page.locator(f'.segmented button[data-value="{value}"]').first.click()
-        page.wait_for_timeout(60)
+    page.evaluate("""() => { for(const value of ['week','yesterday','month'])
+        document.querySelector(`.chart-panel .segmented button[data-value="${value}"]`).click(); }""")
     page.wait_for_function("!document.body.classList.contains('is-loading')")
     page.wait_for_timeout(300)
     renders, calls, period = page.evaluate("[window.__renders, window.__calls, state.period]")
