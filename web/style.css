@@ -776,3 +776,5 @@ html.modal-open{overflow:hidden;overscroll-behavior:none;scrollbar-gutter:stable
 .project-space .project-account-info>.account-rate{font-size:11px;margin:0}
 .project-space .project-account-info>.project-account-income{margin-top:3px;font-size:13px;color:var(--accent)}
 .project-space .project-account{border-radius:0}.project-space .project-account:hover{background:none}
+
+.hero .stat-note.warn-text{color:var(--muted);display:block;overflow-wrap:anywhere}.hero-value.hero-partial{font-size:clamp(24px,7vw,34px)}.fx-breakdown{display:flex;flex-wrap:wrap;gap:4px 14px;margin:6px 0 2px;color:var(--muted);font-size:13px;overflow-wrap:anywhere}

@@ -302,7 +302,7 @@ async def bootstrap(request):
             fx_info = await fx_snapshot(db)
             byn_per_unit = fx_info["rates"]
         except fx.FxUnavailable:
-            fx_error = "Курс валют временно недоступен"
+            fx_error = "Не удалось обновить курс НБРБ на MYFIN"
     if unsupported:
         fx_error = "Для полной сводки поддерживаются только USD, RUB и BYN"
     # Personal totals are shown in USD when a current official quote is available.

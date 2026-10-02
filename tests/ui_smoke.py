@@ -415,6 +415,37 @@ def projects_ui(page, nav):
 
 
 
+def fx_unavailable_ui(page):
+    """Курс недоступен: суммы в исходной валюте, одно предупреждение, откат без reload."""
+    page.evaluate("""()=>{window.__fxBackup=JSON.stringify({fx:state.data.fx,e:state.data.fx_error,d:state.displayCurrency,m:state.assetMode,p:state.projects});
+      state.displayCurrency='RUB';state.assetMode='tag';state.data.fx=null;state.data.fx_error='Не удалось обновить курс НБРБ на MYFIN';render();}""")
+    page.locator('.hero .fx-warning').wait_for()
+    text = page.locator('#main').inner_text()
+    assert 'курс недоступен' not in text, 'приписка внутри суммы'
+    assert page.locator('.fx-warning').count() == 1, 'предупреждение дублируется'
+    assert 'USD' in page.locator('.hero-value').inner_text() and '₽' not in page.locator('.hero-value').inner_text()
+    assert 'Суммы без доступной конвертации показаны в исходной валюте' in page.locator('.fx-warning').inner_text()
+    assert page.locator('.fx-warning').evaluate("el=>getComputedStyle(el).color") != 'rgb(242, 153, 153)'
+    fits(page)
+    # несколько валют: не складываем USD и BYN
+    page.evaluate("""()=>{state.assetMode='all';state.projects=[{id:'p',name:'P',currency:'BYN',total:3200,current_total:3200,bonus_total:0}];render();}""")
+    hero = page.locator('.hero').inner_text()
+    assert 'Частично рассчитан' in hero and 'BYN · 3' in hero and 'USD ·' in hero, hero
+    assert page.locator('.fx-warning').count() == 1
+    fits(page)
+    # восстановление курса без перезагрузки и смены экрана
+    page.evaluate("""()=>{const b=JSON.parse(window.__fxBackup);state.data.fx={source:'MYFIN · НБРБ',provider:'myfin',stale:false,byn_per_unit:{BYN:1,USD:3,RUB:0.03}};
+      state.data.fx_error='';state.assetMode='tag';state.projects=b.p;render();}""")
+    assert page.locator('.fx-warning').count() == 0
+    assert '₽' in page.locator('.hero-value').inner_text()
+    assert page.evaluate("location.hash") == '#overview'
+    # сохранённый курс — тихое предупреждение, суммы по курсу
+    page.evaluate("state.data.fx={...state.data.fx,provider:'cache',stale:true,updated_at:'2026-10-02T11:20:00Z'};render()")
+    assert 'последний доступный курс' in page.locator('.fx-stale').inner_text()
+    fits(page)
+    page.evaluate("""()=>{const b=JSON.parse(window.__fxBackup);state.data.fx=b.fx;state.data.fx_error=b.e;state.displayCurrency=b.d;state.assetMode=b.m;state.projects=b.p;render();}""")
+
+
 def compact_ui_and_quiet_refresh(page, url):
     page.goto(url+'#settings', wait_until='domcontentloaded')
     page.locator('.settings-account-row').first.wait_for()
@@ -594,6 +625,7 @@ def main():
                     page.locator(".hero").wait_for()
                     page.locator('#toast').evaluate("el => el.classList.remove('visible')")
                     assert page.locator(".hero .hero-value").inner_text().strip()
+                    fx_unavailable_ui(page)
                     # лента: четыре события предпросмотра, два из них не прочитаны
                     page.locator('#notifications').click()
                     assert page.locator('.notification-item').count() == 4
