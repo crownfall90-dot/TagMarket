@@ -280,6 +280,15 @@ def projects_ui(page, nav):
     assert page.locator(f'{nav} a[data-tab]').count() == 5
     assert page.locator('.project-card').count() == 3  # TagMarket плюс два preview-проекта
     assert 'Плюс за' in page.locator('.project-card.system-project').inner_text()
+    # доходность проекта: процент или фиксированная сумма
+    page.locator('[data-action="project-create"]').first.click()
+    page.locator('.project-form [name="income_mode"]').wait_for()
+    assert page.locator('.project-form .income-percent').is_visible()
+    assert not page.locator('.project-form .income-fixed').is_visible()
+    page.locator('.project-form [name="income_mode"]').select_option('fixed')
+    assert page.locator('.project-form .income-fixed').is_visible()
+    assert not page.locator('.project-form .income-percent').is_visible()
+    close_dialog(page)
     glider_on_active(page, nav)
     fits(page)
     page.locator('a[href="#project/preview-home"]').click()
@@ -643,6 +652,10 @@ def main():
                     page.locator(".hero").wait_for()
                     page.locator('#toast').evaluate("el => el.classList.remove('visible')")
                     assert page.locator(".hero .hero-value").inner_text().strip()
+                    # тепловая карта дней вместо графика динамики
+                    assert page.locator('.chart-panel .heatmap .hm-cell').count() >= 1
+                    assert page.locator('.chart-panel .hm-legend').count() == 1
+                    assert 'MYFIN' not in page.locator('.hero').inner_text()
                     fx_unavailable_ui(page)
                     # лента: четыре события предпросмотра, два из них не прочитаны
                     page.locator('#notifications').click()

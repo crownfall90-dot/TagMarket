@@ -1358,6 +1358,30 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(weekdays_forecast["total"], 510)
         self.assertEqual(calendar_forecast["total"], 530.604)
 
+    async def test_project_fixed_income_instead_of_percent(self):
+        fixed_today = date(2026, 10, 2)
+        with patch.object(projects, "today", return_value=fixed_today):
+            created = projects.save(self.db, "1", {"name":"Fixed", "currency":"USD", "income_mode":"fixed", "fixed_income":50,
+                "period":"month", "capitalization":True, "multi":True, "accounts":[{"amount":1000, "rate_percent":9}, {"amount":1000}]})
+            self.assertEqual(created["income_mode"], "fixed")
+            self.assertEqual(created["fixed_income"], 50)
+            self.assertAlmostEqual(created["rate_percent"], 2.5)
+            self.assertEqual(created["expected_income"], 50)
+            self.assertFalse(created["capitalization"])
+            self.assertIsNone(created["accounts"][0]["rate_percent"])
+            month = projects.forecast(self.db, "1", created["id"], "2026-11-02", True)["checkpoints"]["month"]
+            self.assertAlmostEqual(month["total"], 2050)  # прибавка без капитализации: ровно сумма за период
+            changed = projects.save(self.db, "1", {"accounts":[{"id":created["accounts"][0]["id"], "amount":3000}, {"id":created["accounts"][1]["id"], "amount":1000}]}, created["id"])
+            self.assertEqual(changed["expected_income"], 50)  # сумма остаётся прежней, ставка пересчитана
+            self.assertAlmostEqual(changed["rate_percent"], 1.25)
+            back = projects.save(self.db, "1", {"income_mode":"percent", "rate_percent":2}, created["id"])
+            self.assertEqual(back["income_mode"], "percent")
+            self.assertIsNone(back["fixed_income"])
+            self.assertEqual(back["expected_income"], 80)
+        for bad in ({"fixed_income":0}, {"fixed_income":-1}, {"fixed_income":None}, {"fixed_income":"5"}, {"fixed_income":100000}, {"income_mode":"both"}):
+            payload = {"name":"Bad", "currency":"USD", "income_mode":"fixed", "period":"month", "multi":False, "accounts":[{"amount":1000}], **bad}
+            self.assertEqual((await self.call("POST", "/api/projects", json=payload)).status, 400, bad)
+
     async def test_project_forecast_has_checkpoints_and_independent_bonus_modes(self):
         fixed_today = date(2026, 10, 2)
         expiry = datetime(2026, 10, 5, 12, tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
@@ -1415,7 +1439,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             saved = projects.save(self.db, "1", {"name":"Balances", "currency":"RUB", "rate_percent":2,
                 "period":"day", "multi":True, "capitalization":True, "capitalization_from":"2026-10-02",
                 "accounts":[
-                    {"amount":500, "bonus_amount":50, "bonus_expires_at":future_expiry, "bonus_capitalization":True},
+                    {"amount":500, "bonus_amount":50, "bonus_expires_at":future_expiry, "bonus_activated_at":"2026-10-02T00:00:00Z", "bonus_capitalization":True},
                     {"amount":500, "bonus_amount":25, "bonus_expires_at":expired},
                 ]})
         self.assertEqual(saved["total"], 1000)
@@ -1429,35 +1453,36 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved["accounts"][1]["bonus_status"], "expired")
 
     async def test_project_forecast_uses_compounding_and_discards_expired_bonus(self):
-        async def create(name, capitalization, bonus=None):
-            account = {"amount": 1000}
-            if bonus is not None:
-                account.update(bonus_amount=bonus, bonus_expires_at=(datetime.now(timezone.utc)+timedelta(days=60)).isoformat(timespec="seconds").replace("+00:00", "Z"))
-            response = await self.call("POST", "/api/projects", json={"name":name,"currency":"USD","rate_percent":1,"period":"month","multi":False,"capitalization":capitalization,"accounts":[account]})
-            self.assertEqual(response.status, 201, await response.text())
-            return await response.json()
+        with patch.object(projects, "today", return_value=date(2026, 10, 2)):
+            async def create(name, capitalization, bonus=None):
+                account = {"amount": 1000}
+                if bonus is not None:
+                    account.update(bonus_amount=bonus, bonus_expires_at=(datetime.now(timezone.utc)+timedelta(days=60)).isoformat(timespec="seconds").replace("+00:00", "Z"))
+                response = await self.call("POST", "/api/projects", json={"name":name,"currency":"USD","rate_percent":1,"period":"month","multi":False,"capitalization":capitalization,"accounts":[account]})
+                self.assertEqual(response.status, 201, await response.text())
+                return await response.json()
 
-        simple = await create("Simple", False)
-        compound = await create("Compound", True)
-        until_month = "2026-11-02"
-        simple_result = projects.forecast(self.db, "1", simple["id"], until_month, False)
-        compound_result = projects.forecast(self.db, "1", compound["id"], until_month, False)
-        self.assertAlmostEqual(simple_result["total"], 1010, places=2)
-        self.assertAlmostEqual(compound_result["total"], 1010, places=2)
-        self.assertEqual(simple["current_total"], 1000)
-        until_year = "2027-10-02"
-        compound_year = projects.forecast(self.db, "1", compound["id"], until_year, False)
-        self.assertAlmostEqual(compound_year["total"], 1000*(1.01**12), places=2)
+            simple = await create("Simple", False)
+            compound = await create("Compound", True)
+            until_month = "2026-11-02"
+            simple_result = projects.forecast(self.db, "1", simple["id"], until_month, False)
+            compound_result = projects.forecast(self.db, "1", compound["id"], until_month, False)
+            self.assertAlmostEqual(simple_result["total"], 1010, places=2)
+            self.assertAlmostEqual(compound_result["total"], 1010, places=2)
+            self.assertEqual(simple["current_total"], 1000)
+            until_year = "2027-10-02"
+            compound_year = projects.forecast(self.db, "1", compound["id"], until_year, False)
+            self.assertAlmostEqual(compound_year["total"], 1000*(1.01**12), places=2)
 
-        bonus = await create("Expires", False, 500)
-        active_date = "2026-11-02"
-        until_after_expiry = "2027-03-31"
-        active = projects.forecast(self.db, "1", bonus["id"], active_date, True)
-        self.assertAlmostEqual(active["total"], 1515, places=2)
-        included = projects.forecast(self.db, "1", bonus["id"], until_after_expiry, True)
-        excluded = projects.forecast(self.db, "1", bonus["id"], until_after_expiry, False)
-        self.assertEqual(included["total"], excluded["total"])
-        self.assertEqual(bonus["working_total"], 1500)
+            bonus = await create("Expires", False, 500)
+            active_date = "2026-11-02"
+            until_after_expiry = "2027-03-31"
+            active = projects.forecast(self.db, "1", bonus["id"], active_date, True)
+            self.assertAlmostEqual(active["total"], 1515, places=2)
+            included = projects.forecast(self.db, "1", bonus["id"], until_after_expiry, True)
+            excluded = projects.forecast(self.db, "1", bonus["id"], until_after_expiry, False)
+            self.assertEqual(included["total"], excluded["total"])
+            self.assertEqual(bonus["working_total"], 1500)
 
     async def test_display_currency_preference_is_saved_and_rates_are_existing_fx(self):
         response = await self.call("GET", "/api/preferences/display-currency")

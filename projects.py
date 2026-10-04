@@ -45,7 +45,7 @@ def setup(db):
         CREATE INDEX IF NOT EXISTS project_accounts_project ON project_accounts(project_id, position);
     """)
     for table, fields in {
-        "projects": {"business_days_only":"INTEGER NOT NULL DEFAULT 0 CHECK(business_days_only IN (0,1))", "capitalization":"INTEGER NOT NULL DEFAULT 0 CHECK(capitalization IN (0,1))", "capitalization_from":"TEXT"},
+        "projects": {"business_days_only":"INTEGER NOT NULL DEFAULT 0 CHECK(business_days_only IN (0,1))", "capitalization":"INTEGER NOT NULL DEFAULT 0 CHECK(capitalization IN (0,1))", "capitalization_from":"TEXT", "income_fixed_cents":"INTEGER CHECK(income_fixed_cents IS NULL OR income_fixed_cents > 0)"},
         "project_accounts": {"rate_percent":"REAL CHECK(rate_percent IS NULL OR rate_percent BETWEEN 0 AND 1000)", "capitalization":"INTEGER CHECK(capitalization IS NULL OR capitalization IN (0,1))", "capitalization_from":"TEXT", "bonus_cents":"INTEGER", "bonus_activated_at":"TEXT", "bonus_expires_at":"TEXT", "bonus_capitalization":"INTEGER NOT NULL DEFAULT 0 CHECK(bonus_capitalization IN (0,1))"},
     }.items():
         existing = {r[1] for r in db.execute(f"PRAGMA table_info({table})")}
@@ -347,11 +347,14 @@ def numeric(value, maximum, *, amount=False):
 
 
 def get(db, owner, project_id):
-    row = db.execute("SELECT id,name,currency,rate_percent,period,multi,business_days_only,capitalization,capitalization_from FROM projects WHERE id=? AND owner_id=?",
+    row = db.execute("SELECT id,name,currency,rate_percent,period,multi,business_days_only,capitalization,capitalization_from,income_fixed_cents FROM projects WHERE id=? AND owner_id=?",
                      (project_id, str(owner))).fetchone()
     if row is None:
         raise LookupError("Проект не найден")
-    result = dict(zip(("id", "name", "currency", "rate_percent", "period", "multi", "business_days_only", "capitalization", "capitalization_from"), row))
+    result = dict(zip(("id", "name", "currency", "rate_percent", "period", "multi", "business_days_only", "capitalization", "capitalization_from", "income_fixed_cents"), row))
+    fixed_cents = result.pop("income_fixed_cents")
+    result["income_mode"] = "fixed" if fixed_cents else "percent"
+    result["fixed_income"] = fixed_cents / 100 if fixed_cents else None
     result["multi"] = bool(result["multi"])
     result["business_days_only"] = bool(result["business_days_only"])
     result["capitalization"] = bool(result["capitalization"])
@@ -386,6 +389,8 @@ def get(db, owner, project_id):
     result["calculation_limited"] = current_total > MAX_AMOUNT or current_total + bonus_total > MAX_AMOUNT or income > MAX_AMOUNT
     result["total"] = _bounded(cents and Decimal(cents) / 100 or Decimal(0))
     result["current_total"] = _bounded(current_total)
+    if fixed_cents and not result["calculation_limited"]:
+        income = Decimal(fixed_cents) / 100  # доход задан суммой за период, а не процентом
     result["expected_income"] = _bounded(income)
     result["personal_total"] = result["current_total"]
     result["bonus_total"] = _bounded(bonus_total)
@@ -407,11 +412,17 @@ def save(db, owner, data, project_id=None):
         currency, period, multi = merged.get("currency"), merged.get("period"), merged.get("multi", False)
         if not isinstance(currency, str) or currency not in CURRENCIES or not isinstance(period, str) or period not in PERIODS or type(multi) is not bool:
             raise ValueError("Проверьте валюту, период и режим аккаунтов")
-        rate = numeric(merged.get("rate_percent"), MAX_RATE)
+        income_mode = merged.get("income_mode", "percent")
+        if income_mode not in ("percent", "fixed"):
+            raise ValueError("Доходность задаётся процентом или фиксированной суммой")
+        fixed_cents = numeric(merged.get("fixed_income"), MAX_AMOUNT, amount=True) if income_mode == "fixed" else None
+        rate = 0.0 if fixed_cents else numeric(merged.get("rate_percent"), MAX_RATE)
         capitalization = merged.get("capitalization", False)
         business_days_only = merged.get("business_days_only", False)
         if type(capitalization) is not bool or type(business_days_only) is not bool:
             raise ValueError("Некорректный режим капитализации")
+        if fixed_cents:
+            capitalization = False  # фиксированная сумма начисляется без капитализации
         capitalization_from = start_date(merged.get("capitalization_from", today().isoformat()))
         if old and currency != old["currency"]:
             raise ValueError("Валюту проекта с вложениями менять нельзя. Создайте отдельный проект")
@@ -444,13 +455,19 @@ def save(db, owner, data, project_id=None):
                 prepared[-1] = (*prepared[-1][:6], None, None, None, False)
         if sum(row[2] for row in prepared) > MAX_AMOUNT * 100:
             raise ValueError("Общая сумма проекта превышает допустимый предел")
+        if fixed_cents:
+            base = sum(row[2] + (row[6] or 0) for row in prepared)
+            rate = fixed_cents / base * 100  # ставка, при которой доход за период равен заданной сумме
+            if rate > MAX_RATE:
+                raise ValueError("Фиксированная сумма слишком велика для вложений проекта")
+            prepared = [(*row[:3], None, None, None, *row[6:]) for row in prepared]
         project_id = project_id or uuid.uuid4().hex
         if old:
-            db.execute("UPDATE projects SET name=?,currency=?,rate_percent=?,period=?,multi=?,business_days_only=?,capitalization=?,capitalization_from=? WHERE id=? AND owner_id=?",
-                       (name, currency, rate, period, int(multi), int(business_days_only), int(capitalization), capitalization_from, project_id, str(owner)))
+            db.execute("UPDATE projects SET name=?,currency=?,rate_percent=?,period=?,multi=?,business_days_only=?,capitalization=?,capitalization_from=?,income_fixed_cents=? WHERE id=? AND owner_id=?",
+                       (name, currency, rate, period, int(multi), int(business_days_only), int(capitalization), capitalization_from, fixed_cents, project_id, str(owner)))
             db.execute("DELETE FROM project_accounts WHERE project_id=?", (project_id,))
         else:
-            db.execute("INSERT INTO projects (id,owner_id,name,currency,rate_percent,period,multi,business_days_only,capitalization,capitalization_from) VALUES (?,?,?,?,?,?,?,?,?,?)", (project_id, str(owner), name, currency, rate, period, int(multi), int(business_days_only), int(capitalization), capitalization_from))
+            db.execute("INSERT INTO projects (id,owner_id,name,currency,rate_percent,period,multi,business_days_only,capitalization,capitalization_from,income_fixed_cents) VALUES (?,?,?,?,?,?,?,?,?,?,?)", (project_id, str(owner), name, currency, rate, period, int(multi), int(business_days_only), int(capitalization), capitalization_from, fixed_cents))
         db.executemany("INSERT INTO project_accounts (id,project_id,name,amount_cents,position,rate_percent,capitalization,capitalization_from,bonus_cents,bonus_activated_at,bonus_expires_at,bonus_capitalization) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                        [(aid, project_id, title, cents, i, rate, cap, start, bonus, activated or datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z") if bonus else None, expires, int(bonus_cap)) for i, (aid, title, cents, rate, cap, start, bonus, activated, expires, bonus_cap) in enumerate(prepared)])
         return get(db, owner, project_id)
