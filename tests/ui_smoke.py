@@ -173,6 +173,10 @@ def faq_opens_smoothly(page, url):
     высоты, скриншот открывается на весь экран."""
     page.goto(url + "#faq", wait_until="domcontentloaded")
     page.locator(".faq-page").wait_for()
+    # раздел называется коротко, без мелкой «справки»; вопросы при входе закрыты (регистрация тоже)
+    assert page.locator('.page-head h1').inner_text() == 'Вопросы и ответы'
+    assert page.locator('.page-head .eyebrow').count() == 0 and page.locator('.page-head p').count() == 0
+    assert page.locator('.faq-item[open]').count() == 0
     fits(page)
     item = page.locator(".faq-item").nth(1)          # «2. Верификация», закрыт
     assert not item.evaluate("el => el.open")
@@ -229,6 +233,7 @@ def faq_opens_smoothly(page, url):
     page.locator('#dialog .account-help').click()
     page.wait_for_function("location.hash==='#faq/connect'&&!document.querySelector('#dialog').open")
     page.locator('#faq-connect').wait_for()
+    assert page.locator('.faq-item[open]').count() == 1      # по ссылке «как подключить» регистрация раскрыта
     page.wait_for_function("document.querySelector('#faq-connect').getBoundingClientRect().top<150")
     assert page.locator('#faq-connect h2').inner_text() == 'Подключение по шагам'
     assert page.locator('#faq-connect .faq-item').first.evaluate('el=>el.open')

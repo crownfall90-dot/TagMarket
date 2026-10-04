@@ -87,7 +87,7 @@ function nav(){
   root.querySelectorAll('a[data-tab]').forEach(link=>{const on=link.dataset.tab===active;link.classList.toggle('active',on);if(on)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');});
   moveGlider(root);
  }
- const crumb=$('#crumb'),title=state.view==='project'?'Проекты / Проект':state.view==='account'?'Счета / Счёт':state.view==='faq'?'Частые вопросы':state.view==='onboarding'?'Как добавить свой счёт':tabs.find(([id])=>id===state.view)?.[1]||'Счёт';
+ const crumb=$('#crumb'),title=state.view==='project'?'Проекты / Проект':state.view==='account'?'Счета / Счёт':state.view==='faq'?'Вопросы и ответы':state.view==='onboarding'?'Как добавить свой счёт':tabs.find(([id])=>id===state.view)?.[1]||'Счёт';
  // анимируем только настоящую смену: render() идёт и на фоновом обновлении,
  // где заголовок тот же и мигать ему незачем
  if(crumb.textContent!==title){
@@ -192,9 +192,9 @@ function countLabel(n,forms){const v=Math.abs(Number(n))%100;const n10=v%10;retu
 function strategyFamily(a){const name=String(a.strategy||a.name||'').trim();return /sonic|sonik/i.test(name)?'SONIC':/neo/i.test(name)?'NEO':name;}
 function sonicStrategyCard(){
  const heading=`<div class="strategy-card-head"><div><span class="eyebrow">НАША СТРАТЕГИЯ</span><h3>SONIC</h3></div><span class="strategy-chip">XAUUSD · золото</span></div>`;
- return `<section class="panel strategy-card strategy-full">${heading}<div class="strategy-facts"><span><b>1–2</b><small>сделки в день</small></span><span><b>0,2–0,5%</b><small>депозита на вход</small></span><span><b>30%</b><small>комиссия с прибыли</small></span></div><div class="risk-line">${icon('shield')}<p>Торговый баланс с плечом можно потерять полностью. Прошлые результаты не гарантируют будущих.</p></div><a href="#faq" class="button secondary wide faq-link">${icon('chevron')}<span class="button-label">Частые вопросы</span></a></section>`;
+ return `<section class="panel strategy-card strategy-full">${heading}<div class="strategy-facts"><span><b>1–2</b><small>сделки в день</small></span><span><b>0,2–0,5%</b><small>депозита на вход</small></span><span><b>30%</b><small>комиссия с прибыли</small></span></div><div class="risk-line">${icon('shield')}<p>Торговый баланс с плечом можно потерять полностью. Прошлые результаты не гарантируют будущих.</p></div><a href="#faq" class="button secondary wide faq-link">${icon('chevron')}<span class="button-label">Вопросы и ответы</span></a></section>`;
 }
-// Раздел «Частые вопросы»: стратегии, подключение по шагам, вывод, партнёрка,
+// Раздел «Вопросы и ответы»: стратегии, подключение по шагам, вывод, партнёрка,
 // MetaTrader 5, лицензия. Источник — инструкции канала (t.me/pro_procent1/523);
 // чужая реферальная ссылка и личные контакты оттуда не берутся — регистрация
 // идёт по партнёрской ссылке владельца этого кабинета
@@ -237,7 +237,7 @@ function faqView(){
   ,'','faq-strategies');
  const connect=faqGroup('КАК НАЧАТЬ','Подключение по шагам','plus',
   faqItem('1. Регистрация',faqSteps(REG_STEPS)
-   +(reg?`<a class="button primary faq-cta" href="${esc(reg)}" target="_blank" rel="noopener">Открыть регистрацию ${icon('arrow')}</a>`:'<p class="faq-note">Ссылку на регистрацию даст тот, кто вас пригласил.</p>'),true)
+   +(reg?`<a class="button primary faq-cta" href="${esc(reg)}" target="_blank" rel="noopener">Открыть регистрацию ${icon('arrow')}</a>`:'<p class="faq-note">Ссылку на регистрацию даст тот, кто вас пригласил.</p>'),!!state.faqDeep)
   +faqItem('2. Верификация',`<p>После регистрации пройдите верификацию личности в кабинете Tag Markets — без неё недоступны пополнение и вывод.</p>`)
   +faqItem('3. Пополнение и подключение к копитрейдингу',faqSteps(copySteps())
    +`<div class="faq-shots">${FAQ_IMG('faq-neo-card.jpg','Кнопка Connect в карточке стратегии')}</div>`)
@@ -254,7 +254,7 @@ function faqView(){
  const license=faqGroup('БРОКЕР','Tag Markets и лицензия','shield',
   faqItem('Кто такой брокер Tag Markets',`<p>Tag Markets (tagmarkets.com) принадлежит T.M. Financials Ltd — компании, зарегистрированной на Маврикии (рег. № C185265). Регулируется Комиссией по финансовым услугам Маврикия (FSC) как инвестиционный дилер, лицензия № GB21026474. На рынке 3 года, около 700 000 клиентов.</p><div class="faq-shots">${FAQ_IMG('faq-license.jpg','Лицензия FSC Маврикия')}</div><div class="faq-links">${ext('https://opr.fscmauritius.org/ords/opr/r/fsc-opr/fsc-online-public-register-opr','Реестр лицензий FSC')}${ext('https://www.tagmarkets.com/','Сайт брокера')}</div>`)
   +faqItem('При чём тут TM Financials SA',`<p>TM FINANCIALS SA (PTY) LTD (рег. № 2024/508189/07) — авторизованный поставщик финансовых услуг (FSP № 55237), регулируется FSCA. Оказывает только маркетинговые услуги; торговые счета и ликвидность — у T.M. Financials Ltd.</p>`));
- return `<a href="#overview" class="text-link back">${icon('back')} Обзор</a><div class="page-head"><div><span class="eyebrow">СПРАВКА</span><h1>Частые вопросы</h1><p>Стратегии, подключение, вывод денег и лицензия брокера</p></div></div><div class="faq-page">${strategies}${connect}${money_}${partner}${license}</div>`;
+ return `<a href="#overview" class="text-link back">${icon('back')} Обзор</a><div class="page-head"><div><h1>Вопросы и ответы</h1></div></div><div class="faq-page">${strategies}${connect}${money_}${partner}${license}</div>`;
 }
 // скриншот проявляется, когда загрузился: до этого — тёмная заглушка в тон
 // карточки. Inline onload запрещён политикой безопасности — слушаем здесь
@@ -934,7 +934,7 @@ async function navigate(){
  clearTimeout(choiceTimer);if(state.data)cancelLoads();
  if(state.filters[state.view])state.filters[state.view]={period:state.period,from:state.from,to:state.to};
  if(next!==state.view&&state.filters[next])Object.assign(state,state.filters[next]);
- state.view=next;
+ state.view=next;state.faqDeep=next==='faq'&&login==='connect';   // «Как подключить» открывает регистрацию, обычный вход в раздел — нет
  if(login){if(next==='project')state.projectId=login;else if(next!=='faq')state.login=Number(login);}
  state.offset=0;state.kind='trades';
  const cached=state.data&&viewCache.get(viewKey());
