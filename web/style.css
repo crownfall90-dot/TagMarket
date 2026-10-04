@@ -881,3 +881,30 @@ dialog{border-radius:22px}
 @media(max-width:740px){.dyn-plot{height:160px}.dyn-meta{gap:6px}.dyn-meta span{padding:9px 10px}.dyn-meta b{font-size:12px}}
 .feed{list-style:none;margin:16px 0 0;padding:0;display:grid;gap:2px}.feed-day{display:grid;grid-template-columns:64px minmax(0,1fr) auto;align-items:center;gap:14px;padding:11px 12px;border-radius:12px;transition:background .15s}.feed-day:hover{background:rgb(var(--bg-rgb) / .55)}.feed-date{display:grid;gap:1px}.feed-date b{font-size:12px;font-weight:550}.feed-date small{font-size:10px;color:var(--muted)}.feed-bar{height:8px;border-radius:6px;background:rgb(var(--bg-rgb) / .7);overflow:hidden}.feed-bar i{display:block;height:100%;width:var(--w);border-radius:6px;background:linear-gradient(90deg,rgb(var(--accent-rgb) / .35),var(--accent));box-shadow:0 0 12px rgb(var(--accent-rgb) / .35)}.feed-day.down .feed-bar i{background:linear-gradient(90deg,rgb(242 153 153 / .35),var(--negative));box-shadow:0 0 12px rgb(242 153 153 / .3)}.feed-sum{display:grid;justify-items:end;gap:2px;text-align:right}.feed-sum b{font-size:14px;font-weight:550;font-variant-numeric:tabular-nums;white-space:nowrap}.feed-sum small{font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}.feed-more{margin-top:4px}.feed-more>summary{list-style:none;cursor:pointer;padding:10px 12px;font-size:11px;color:var(--muted);border-radius:10px;width:max-content}.feed-more>summary::-webkit-details-marker{display:none}.feed-more>summary:hover{color:var(--text)}.feed-more>summary:after{content:" ↓"}.feed-more[open]>summary:after{content:" ↑"}.feed-more .feed{margin-top:0}.feed-note{font-size:10px;color:var(--muted);padding:6px 12px}.feed-meta{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:14px}.feed-meta span{display:grid;gap:4px;padding:11px 13px;border-radius:12px;background:rgb(var(--bg-rgb) / .6);border:1px solid var(--line);min-width:0}.feed-meta small{font-size:10px;color:var(--muted)}.feed-meta b{font-size:13px;font-weight:550;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
 @media(max-width:740px){.feed-day{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"date sum" "bar bar";gap:8px 10px;padding:11px 6px}.feed-date{grid-area:date;display:flex;align-items:baseline;gap:6px}.feed-sum{grid-area:sum}.feed-bar{grid-area:bar;height:6px}.feed-sum b{font-size:13px}.feed-meta{gap:6px}.feed-meta span{padding:9px 10px}.feed-meta b{font-size:12px}}
+/* Плавность: единая кривая, вход диалогов и ленты, отклик на нажатие, меньше работы GPU.
+   Все анимации конечные и гаснут в prefers-reduced-motion и при тихом обновлении (#main.quiet-paint). */
+:root{--ease-out:cubic-bezier(.16,1,.3,1);--ease-soft:cubic-bezier(.4,0,.2,1)}
+.account-card,.stat,.panel,.fade-swap,.filterbar,.report-controls,.custom-period,.deal-day,.archive-panel{animation-timing-function:var(--ease)}
+button,.button,.icon-btn,.segmented button,nav a,.account-card,.shortcut-hint,.feed-day,.extreme{-webkit-tap-highlight-color:transparent;transition-timing-function:var(--ease)}
+.account-card:active,.shortcut-hint:active{transform:scale(.985)}
+.feed-day:active{background:rgb(var(--bg-rgb) / .8)}
+.segmented button{transition:background .22s var(--ease),color .22s var(--ease),transform .15s var(--ease),box-shadow .22s var(--ease)}
+.switch,.switch:after{transition:background .22s var(--ease),transform .26s var(--ease-out)}
+dialog[open]{animation:dialog-in .34s var(--ease-out) both}
+dialog[open]::backdrop{animation:backdrop-in .28s var(--ease-soft) both}
+@keyframes dialog-in{from{opacity:0;transform:translateY(14px) scale(.97)}to{opacity:1;transform:none}}
+@keyframes backdrop-in{from{opacity:0}to{opacity:1}}
+#offline-bar{animation:bar-drop .35s var(--ease-out) both}
+@keyframes bar-drop{from{opacity:0;transform:translateY(-100%)}to{opacity:1;transform:none}}
+.feed-day{animation:tm-rise .45s var(--ease) both;animation-delay:calc(var(--n,0) * 38ms)}
+.feed-day:nth-child(1){--n:0}.feed-day:nth-child(2){--n:1}.feed-day:nth-child(3){--n:2}.feed-day:nth-child(4){--n:3}.feed-day:nth-child(5){--n:4}.feed-day:nth-child(6){--n:5}.feed-day:nth-child(7){--n:6}
+.feed-bar i{transform-origin:left center;animation:feed-grow .7s var(--ease-out) both;animation-delay:calc(var(--n,0) * 38ms + 120ms)}
+@keyframes feed-grow{from{transform:scaleX(0)}to{transform:none}}
+.feed-more[open] .feed{animation:fade-swap .3s var(--ease) both}
+.feed-more .feed-day{content-visibility:auto;contain-intrinsic-size:auto 64px}
+@media(hover:none){.feed-day:hover,.account-card:hover,.shortcut-hint:hover,.icon-btn:hover{transform:none;background:revert-layer}.icon-btn:hover svg,.button:hover svg{transform:none}}
+@media(max-width:740px){dialog[open]{animation-name:dialog-in-mobile}@keyframes dialog-in-mobile{from{opacity:0;transform:translateY(28px)}to{opacity:1;transform:none}}}
+dialog,.notification-list,.report-text,.table-wrap,.pc-scroll,.segmented{overscroll-behavior:contain}
+.mobile-nav,#toast,#offline-bar{will-change:transform}
+@media(prefers-reduced-motion:reduce){dialog[open],dialog[open]::backdrop,#offline-bar,.feed-day,.feed-bar i,.feed-more[open] .feed{animation:none!important}}
+#main.quiet-paint .feed-day,#main.quiet-paint .feed-bar i{animation:none!important}
