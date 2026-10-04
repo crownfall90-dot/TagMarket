@@ -317,6 +317,9 @@ def projects_ui(page, nav):
     close_dialog(page)
     page.locator('[data-action="project-account-edit"]').nth(1).click()
     assert page.locator('#dialog input[name="amount"]').input_value() == '3000'
+    # фиксированная доплата аккаунту: поле в окне и метка в карточке
+    assert page.locator('#dialog input[name="fixed_income"]').input_value() == '60'
+    assert page.locator('.pa-card .pa-tags i.fix').count() == 1
     # порядок аккаунтов: номер в списке и выбор позиции в окне редактирования
     assert page.locator('.project-account-number').count() == 3
     assert page.locator('#dialog select[name="position"] option').count() == 3

@@ -966,3 +966,43 @@ dialog::backdrop{backdrop-filter:none;background:#000b}
 .forecast-result,.forecast-projects{gap:var(--gap-in)}
 .forecast-result>*{margin:0}
 .forecast-mobile-cards{display:grid;gap:var(--gap-in)}
+/* Аккаунты проекта: карточки вместо строк */
+.project-space .project-accounts-head{margin-bottom:var(--gap-in)}
+.project-space .pa-card{display:grid;gap:12px;width:100%;margin:0;padding:16px;text-align:left;color:inherit;border:1px solid var(--line);border-radius:16px;background:rgb(var(--bg-rgb) / .5);transition:border-color .2s var(--ease),background .2s var(--ease),transform .15s var(--ease)}
+.project-space .pa-card+.pa-card{margin-top:var(--gap-in)}
+.project-space .pa-card:hover{border-color:rgb(var(--accent-rgb) / .3);background:rgb(var(--bg-rgb) / .7)}
+.project-space .pa-card:active{transform:scale(.99)}
+.pa-top{display:flex;align-items:center;gap:12px;min-width:0}
+.pa-top .project-account-number{margin:0;flex:none}
+.pa-title{display:grid;gap:3px;min-width:0;flex:1}
+.pa-title b{font-size:15px;font-weight:600;overflow-wrap:anywhere}
+.pa-title small{font-size:11px;color:var(--muted);line-height:1.4}
+.pa-work{display:grid;gap:2px;justify-items:end;text-align:right;flex:none}
+.pa-work b{font-size:16px;font-weight:550;font-variant-numeric:tabular-nums;white-space:nowrap}
+.pa-work small{font-size:10px;color:var(--muted)}
+.pa-top>svg{flex:none;width:16px;height:16px;color:var(--muted)}
+.pa-bar{display:block;height:5px;border-radius:5px;background:rgb(var(--bg-rgb) / .8);overflow:hidden}
+.pa-bar i{display:block;height:100%;width:var(--w);border-radius:5px;background:linear-gradient(90deg,rgb(var(--accent-rgb) / .3),var(--accent))}
+.pa-tags{display:flex;flex-wrap:wrap;gap:6px}
+.pa-tags i{font-style:normal;font-size:10px;padding:3px 9px;border-radius:999px;background:var(--raised);color:var(--muted);border:1px solid var(--line);white-space:nowrap}
+.pa-tags i.own{color:var(--purple);background:rgb(var(--purple-rgb) / .07);border-color:rgb(var(--purple-rgb) / .2)}
+.pa-tags i.cap{color:var(--accent);background:rgb(var(--accent-rgb) / .06);border-color:rgb(var(--accent-rgb) / .18)}
+.pa-tags i.bonus{color:var(--accent);background:rgb(var(--accent-rgb) / .1);border-color:rgb(var(--accent-rgb) / .28)}
+.pa-tags i.expired{color:#e4bf7a;background:#e4bf7a12;border-color:#e4bf7a33}
+.pa-income{display:block;font-size:13px;font-weight:550;color:var(--accent);font-variant-numeric:tabular-nums}
+@media(max-width:740px){.project-space .pa-card{padding:14px}.pa-work b{font-size:15px}}
+.project-space .pa-card{grid-template-columns:minmax(0,1fr);align-items:stretch;justify-items:stretch;border-radius:16px}
+.project-space .pa-card span,.project-space .pa-card i{max-width:none}
+.project-space .pa-card>.pa-income{justify-self:start}
+.project-space .pa-card .pa-work{justify-items:end}
+/* Карточка аккаунта проекта: перекрываем старые правила для span внутри .project-account */
+.project-account.pa-card .pa-top{display:flex;align-items:center;gap:12px;margin:0;text-align:left;max-width:none;color:inherit;font-size:inherit}
+.project-account.pa-card .pa-title{display:grid;gap:3px;min-width:0;flex:1;margin:0;text-align:left;max-width:none;color:inherit;font-size:inherit}
+.project-account.pa-card .pa-title small{display:block;margin:0;font-size:11px;color:var(--muted);text-align:left;max-width:none}
+.project-account.pa-card .pa-work{display:grid;gap:2px;justify-items:end;margin:0;text-align:right;max-width:none;color:inherit;font-size:inherit;flex:none}
+.project-account.pa-card .pa-work small{display:block;margin:0;font-size:10px;color:var(--muted)}
+.project-account.pa-card .pa-bar{display:block;margin:0;max-width:none}
+.project-account.pa-card .pa-tags{display:flex;flex-wrap:wrap;gap:6px;margin:0;text-align:left;max-width:none}
+.project-account.pa-card .pa-income{display:block;margin:0;text-align:left;max-width:none;font-size:13px;font-weight:550;color:var(--accent)}
+.pa-tags i.fix{color:var(--purple);background:rgb(var(--purple-rgb) / .09);border-color:rgb(var(--purple-rgb) / .26)}
+.project-form-account .project-account-fixed{margin-top:10px}

@@ -1311,6 +1311,63 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.call("POST", path, json={"account_id": created["accounts"][4]["id"], "position": 6})).status, 400)
         self.assertEqual((await self.call("POST", path, json={"account_id": created["accounts"][4]["id"], "position": "1"})).status, 400)
 
+    async def test_account_fixed_income_is_paid_on_top_of_the_percent_rate(self):
+        with patch.object(projects, "today", return_value=date(2026, 10, 2)):
+            saved = projects.save(self.db, "1", {"name": "Mixed", "currency": "USD", "rate_percent": 2,
+                "period": "month", "multi": True,
+                "accounts": [{"name": "A", "amount": 1000, "fixed_income": 50}, {"name": "B", "amount": 1000}]})
+        first, second = saved["accounts"]
+        self.assertEqual(first["fixed_income"], 50)
+        self.assertIsNone(second["fixed_income"])
+        self.assertAlmostEqual(first["expected_income"], 70)       # 2% от 1000 + 50
+        self.assertAlmostEqual(second["expected_income"], 20)
+        self.assertAlmostEqual(saved["expected_income"], 90)
+        self.assertEqual(saved["fixed_extra_total"], 50)
+        self.assertAlmostEqual(first["daily_income"], 70 / projects.period_days("month"))
+        # правка другого поля аккаунта не сбрасывает доплату, а явный 0/пусто её убирает
+        edited = projects.account_change(self.db, "1", saved["id"], {"rate_percent": 3}, first["id"])
+        self.assertEqual(edited["accounts"][0]["fixed_income"], 50)
+        self.assertAlmostEqual(edited["accounts"][0]["expected_income"], 80)
+        cleared = projects.account_change(self.db, "1", saved["id"], {"fixed_income": ""}, first["id"])
+        self.assertIsNone(cleared["accounts"][0]["fixed_income"])
+        added = projects.account_change(self.db, "1", saved["id"], {"name": "C", "amount": 500, "fixed_income": 12.5})
+        self.assertEqual(added["accounts"][2]["fixed_income"], 12.5)
+
+    async def test_account_fixed_income_validation(self):
+        base = {"name": "Bad", "currency": "USD", "rate_percent": 1, "period": "month", "multi": False}
+        for bad in (-1, 1.234, "5", True, float("inf"), 10 ** 13):
+            with self.subTest(value=bad), self.assertRaises(ValueError):
+                projects.save(self.db, "1", {**base, "accounts": [{"amount": 100, "fixed_income": bad}]})
+        for empty in (None, "", 0):
+            with self.subTest(value=empty):
+                saved = projects.save(self.db, "1", {**base, "accounts": [{"amount": 100, "fixed_income": empty}]})
+                self.assertIsNone(saved["accounts"][0]["fixed_income"])
+        response = await self.call("POST", "/api/projects", json={**base, "accounts": [{"amount": 100, "fixed_income": -5}]})
+        self.assertEqual(response.status, 400)
+
+    async def test_account_fixed_income_accrues_linearly_in_forecast_without_compounding(self):
+        today = date(2026, 10, 2)
+        with patch.object(projects, "today", return_value=today):
+            project = projects.save(self.db, "1", {"name": "Plan", "currency": "USD", "rate_percent": 1,
+                "period": "month", "multi": False, "capitalization": True, "capitalization_from": "2026-10-02",
+                "accounts": [{"amount": 1000, "fixed_income": 30}]})
+            one = projects.forecast(self.db, "1", project["id"], "2026-11-02", False)
+            two = projects.forecast(self.db, "1", project["id"], "2026-12-02", False)
+        self.assertAlmostEqual(one["checkpoints"]["selected"]["fixed"], 30)
+        self.assertAlmostEqual(one["total"], 1000 * 1.01 + 30)             # процент капитализируется, доплата — нет
+        self.assertAlmostEqual(one["income"], 1000 * 0.01 + 30)
+        self.assertAlmostEqual(two["checkpoints"]["selected"]["fixed"], 60)
+        self.assertAlmostEqual(two["total"], 1000 * 1.01 ** 2 + 60)
+        self.assertEqual(one["checkpoints"]["now"]["fixed"], 0)
+
+    async def test_account_fixed_income_adds_to_project_level_fixed_income(self):
+        with patch.object(projects, "today", return_value=date(2026, 10, 2)):
+            saved = projects.save(self.db, "1", {"name": "Both", "currency": "USD", "income_mode": "fixed",
+                "fixed_income": 100, "period": "month", "multi": True,
+                "accounts": [{"amount": 1000, "fixed_income": 20}, {"amount": 1000}]})
+        self.assertAlmostEqual(saved["expected_income"], 120)
+        self.assertEqual(saved["accounts"][0]["fixed_income"], 20)
+
     async def test_project_account_rate_override_and_inheritance(self):
         created = await (await self.call("POST", "/api/projects", json={"name":"Mixed rates", "currency":"USD", "rate_percent":2, "period":"month", "multi":True, "accounts":[{"amount":1000},{"amount":1000,"rate_percent":5}]})).json()
         pid = created["id"]
