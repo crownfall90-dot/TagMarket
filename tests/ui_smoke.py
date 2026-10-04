@@ -71,7 +71,9 @@ def topbar_sticks(page):
     page.evaluate("scrollTo(0, 400)")
     page.wait_for_function("document.body.classList.contains('is-scrolled')")
     box = page.locator(".topbar").bounding_box()
-    assert box and box["y"] <= 1.5, f"панель уехала при прокрутке: {box}"
+    assert box and box["y"] <= 12, f"панель уехала при прокрутке: {box}"   # плавающая «таблетка» с отступом 8 px сверху
+    radius = page.evaluate("parseFloat(getComputedStyle(document.querySelector('.topbar')).borderTopLeftRadius)")
+    assert radius >= 20, f"верхняя панель должна быть скруглённой, как нижняя: {radius}"
     page.evaluate("scrollTo(0, 0)")
     page.wait_for_function("!document.body.classList.contains('is-scrolled')")
 
@@ -726,6 +728,21 @@ def main():
                     page.locator(".hero").wait_for()
                     page.locator('#toast').evaluate("el => el.classList.remove('visible')")
                     assert page.locator(".hero .hero-value").inner_text().strip()
+                    # выбор валюты: кнопка и меню вместо системного списка, значение берёт скрытый select
+                    assert page.locator('#currency-menu').is_hidden()
+                    page.locator('#currency-btn').click()
+                    assert page.locator('#currency-menu [data-currency]').count() == 3
+                    page.locator('#currency-menu [data-currency="BYN"]').click()
+                    page.wait_for_function("state.displayCurrency==='BYN'")
+                    assert page.locator('#currency-code').inner_text() == 'BYN'
+                    assert page.locator('#currency-menu').is_hidden()
+                    page.locator('#currency-btn').click()
+                    page.keyboard.press('Escape')
+                    assert page.locator('#currency-menu').is_hidden()
+                    page.locator('#currency-btn').click()
+                    page.locator('#currency-menu [data-currency="USD"]').click()
+                    page.wait_for_function("state.displayCurrency==='USD'")
+                    fits(page)
                     # динамика доходности лентой дней: строки с результатом и сводка
                     assert page.locator('.chart-panel .feed .feed-day').count() >= 1
                     assert page.locator('.chart-panel .feed-meta span').count() in (2, 4)
@@ -877,6 +894,21 @@ def main():
                     page.locator('[data-action="broadcast"]').click()
                     area = page.locator('#dialog textarea[name="text"]')
                     area.wait_for()
+                    # получатели: «Всем» по умолчанию, «Одному» открывает выбор пользователя
+                    assert page.locator('#dialog select[name="target"]').input_value() == 'all'
+                    assert page.locator('.cmp-one').is_hidden()
+                    page.locator('[data-cmp-target="one"]').click()
+                    assert page.locator('.cmp-one').is_visible()
+                    assert page.locator('#dialog select[name="target"]').input_value() != 'all'
+                    page.locator('[data-cmp-target="all"]').click()
+                    assert page.locator('#dialog select[name="target"]').input_value() == 'all'
+                    # шаблон подставляет текст и форматирование, «Очистить» возвращает пустой редактор
+                    page.locator('[data-template="maintenance"]').click()
+                    assert 'Технические работы' in page.locator('#compose-live').inner_text()
+                    assert page.locator('#compose-live b').count() == 1
+                    page.locator('[data-cmp-clear]').click()
+                    assert area.input_value() == ''
+                    assert page.locator('#compose-live').inner_text() == 'Сообщение появится здесь'
                     area.fill('Обновление для пользователей')
                     assert page.locator('#compose-live').inner_text() == 'Обновление для пользователей'
                     assert page.locator('#compose-count').inner_text().startswith(
@@ -889,6 +921,14 @@ def main():
                         "buffer": base64.b64decode(
                             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9YbZT5cAAAAASUVORK5CYII=")})
                     assert "photo.png" in page.locator('#compose-file-name').inner_text()
+                    assert page.locator('.cmp-drop.has-file').count() == 1
+                    page.locator('[data-cmp-file-clear]').click()
+                    assert page.locator('.cmp-drop.has-file').count() == 0
+                    assert 'photo.png' not in page.locator('#compose-file-name').inner_text()
+                    page.locator('#dialog input[name="media"]').set_input_files({
+                        "name": "photo.png", "mimeType": "image/png",
+                        "buffer": base64.b64decode(
+                            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9YbZT5cAAAAASUVORK5CYII=")})
                     page.locator('#dialog-submit').click()
                     page.get_by_text('Проверка рассылки').wait_for()
                     assert page.locator('.compose-preview-media img').count() == 1

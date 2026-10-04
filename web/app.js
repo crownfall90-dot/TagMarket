@@ -845,7 +845,7 @@ async function refresh(quiet=false){
  if(quiet)quietPending=false;
  state.busy=true;document.body.classList.add('is-loading');const gen=++generation;
  try{
- const data=await api('/bootstrap');if(gen!==generation)return;state.data=data;lastOkAt=Date.now();setOffline(false);state.displayCurrency=data.display_currency||state.displayCurrency;$('#display-currency').value=state.displayCurrency;scheduleRefresh();
+ const data=await api('/bootstrap');if(gen!==generation)return;state.data=data;lastOkAt=Date.now();setOffline(false);state.displayCurrency=data.display_currency||state.displayCurrency;$('#display-currency').value=state.displayCurrency;syncCurrencyUi();scheduleRefresh();
   const parts=await viewParts();
   const notifications=await api('/notifications').catch(()=>state.notifications);
   if(gen!==generation)return;
@@ -1093,7 +1093,16 @@ document.addEventListener('click',async event=>{const el=event.target.closest('[
  else if(action==='broadcast'){
   const users=state.admin?.users||[];
   if(!users.length)throw new Error('Пока нет приглашённых пользователей для рассылки');
-  const d=await dialog('Сообщение пользователям',`<div class="composer"><div class="composer-intro"><span class="eyebrow">РАССЫЛКА</span><p>Подготовьте сообщение и проверьте его перед отправкой.</p></div><label class="field">Кому<select name="target"><option value="all">Все приглашённые · ${users.length}</option>${users.map(u=>`<option value="${esc(u.id)}">${esc(u.name)}</option>`).join('')}</select></label><div class="composer-editor"><div class="composer-editor-head"><b>Текст</b><span id="compose-count">0 / 4096</span></div><div class="compose-tools"><button type="button" class="format-btn" data-format="bold" aria-label="Жирный" title="Жирный"><b>Ж</b></button><button type="button" class="format-btn" data-format="italic" aria-label="Курсив" title="Курсив"><i>К</i></button><button type="button" class="format-btn" data-format="mono" aria-label="Моноширинный" title="Моноширинный"><code>М</code></button><button type="button" class="format-btn" data-format="quote" aria-label="Цитата" title="Цитата">❝</button><span>Выделите текст для оформления</span></div><textarea name="text" maxlength="4096" aria-label="Текст сообщения" placeholder="Напишите, что важно сообщить пользователям…"></textarea></div><label class="field composer-media">Фото или видео<input type="file" name="media" accept="image/jpeg,image/png,video/mp4"><small id="compose-file-name">JPG/PNG до 10 МБ · MP4 до 20 МБ</small></label><div class="composer-live"><span class="eyebrow">ПРЕДПРОСМОТР ТЕКСТА</span><div id="compose-live" class="compose-preview-text"><span class="muted">Сообщение появится здесь</span></div></div></div>`,'Проверить');
+  const d=await dialog('Сообщение пользователям',`<div class="composer">
+   <div class="composer-intro"><span class="eyebrow">РАССЫЛКА</span><p>Напишите сообщение, посмотрите, как оно выглядит у получателя, и проверьте перед отправкой.</p></div>
+   <div class="cmp-block"><span class="cmp-label">Кому</span><div class="segmented cmp-seg" role="group" aria-label="Получатели"><button type="button" class="active" data-cmp-target="all">Всем · ${users.length}</button><button type="button" data-cmp-target="one">Одному</button></div>
+    <label class="field cmp-one" hidden>Пользователь<select name="target"><option value="all" selected>Все приглашённые · ${users.length}</option>${users.map(u=>`<option value="${esc(u.id)}">${esc(u.name)}</option>`).join('')}</select></label></div>
+   <div class="cmp-block"><span class="cmp-label">Быстрый старт</span><div class="cmp-chips">${[['maintenance','Технические работы'],['feature','Новая функция'],['reminder','Напоминание'],['thanks','Благодарность']].map(([id,label])=>`<button type="button" class="cmp-chip" data-template="${id}">${label}</button>`).join('')}</div></div>
+   <div class="composer-editor"><div class="composer-editor-head"><b>Текст</b><span id="compose-count">0 / 4096</span></div><div class="cmp-meter" aria-hidden="true"><i id="compose-meter"></i></div>
+    <div class="compose-tools"><button type="button" class="format-btn" data-format="bold" aria-label="Жирный" title="Жирный"><b>Ж</b></button><button type="button" class="format-btn" data-format="italic" aria-label="Курсив" title="Курсив"><i>К</i></button><button type="button" class="format-btn" data-format="mono" aria-label="Моноширинный" title="Моноширинный"><code>М</code></button><button type="button" class="format-btn" data-format="quote" aria-label="Цитата" title="Цитата">❝</button><span>Выделите текст для оформления</span><button type="button" class="cmp-clear" data-cmp-clear hidden>Очистить</button></div>
+    <textarea name="text" maxlength="4096" aria-label="Текст сообщения" placeholder="Напишите, что важно сообщить пользователям…"></textarea></div>
+   <label class="cmp-drop"><input type="file" name="media" accept="image/jpeg,image/png,video/mp4"><span class="cmp-drop-ico">${icon('plus')}</span><span class="cmp-drop-text"><b>Фото или видео</b><small id="compose-file-name">JPG/PNG до 10 МБ · MP4 до 20 МБ</small></span><button type="button" class="cmp-drop-clear" data-cmp-file-clear hidden>Убрать</button></label>
+   <div class="composer-live"><span class="eyebrow">ТАК УВИДЯТ ПОЛЬЗОВАТЕЛИ</span><div class="cmp-bubble"><b class="cmp-bubble-name">Tag Markets</b><div id="compose-live" class="compose-preview-text"><span class="muted">Сообщение появится здесь</span></div><small class="cmp-bubble-time">сейчас</small></div></div></div>`,'Проверить');
   if(!d)return;
   const file=d.media?.size?d.media:null;
   if(!String(d.text||'').trim()&&!file)throw new Error('Добавьте текст или файл');
@@ -1104,7 +1113,7 @@ document.addEventListener('click',async event=>{const el=event.target.closest('[
   const objectUrl=file?URL.createObjectURL(file):null;
   try{
    const media=file?`<div class="compose-preview-media">${kind==='photo'?`<img src="${esc(objectUrl)}" alt="Приложенное фото">`:`<video src="${esc(objectUrl)}" controls preload="metadata"></video>`}<small>${esc(file.name)} · ${fileSize(file.size)}</small></div>`:'';
-   const body=`<p class="compose-recipient">Кому: <b>${esc(recipient)}</b></p>${media}<div class="compose-preview-text">${d.text?broadcastPreview(d.text):'<span class="muted">Без подписи</span>'}</div><p class="compose-footnote">Проверьте сообщение перед отправкой.</p>`;
+   const body=`<p class="compose-recipient">Кому: <b>${esc(recipient)}</b></p><div class="cmp-bubble cmp-review"><b class="cmp-bubble-name">Tag Markets</b>${media}<div class="compose-preview-text">${d.text?broadcastPreview(d.text):'<span class="muted">Без подписи</span>'}</div><small class="cmp-bubble-time">сейчас</small></div><p class="compose-footnote">Проверьте сообщение перед отправкой: после неё его нельзя отозвать.</p>`;
    if(!await dialog('Проверка рассылки',body,'Отправить'))return;
   }finally{if(objectUrl)URL.revokeObjectURL(objectUrl);}
   if(preview){await dialog('Демо-режим',`<p>Макет показывает редактор и вложение, но не отправляет сообщения. Для настоящей рассылки откройте приложение из <a href="https://t.me/tagmarketgold_bot" target="_blank" rel="noopener">бота в Telegram</a>.</p>`,'Понятно');return;}
@@ -1121,7 +1130,7 @@ document.addEventListener('click',async event=>{const el=event.target.closest('[
  }
  }catch(error){toast(error.message);}finally{el.disabled=false;}});
 document.addEventListener('click',event=>{const tool=event.target.closest('[data-format]');if(!tool)return;event.preventDefault();const area=$('#dialog textarea[name="text"]');if(!area)return;const start=area.selectionStart,end=area.selectionEnd,selected=area.value.slice(start,end);const tags={bold:['<b>','</b>'],italic:['<i>','</i>'],mono:['<code>','</code>'],quote:['<blockquote>','</blockquote>']}[tool.dataset.format];if(!tags)return;area.setRangeText(tags[0]+selected+tags[1],start,end,'end');area.focus();area.setSelectionRange(start+tags[0].length,start+tags[0].length+selected.length);area.dispatchEvent(new Event('input',{bubbles:true}));});
-document.addEventListener('input',event=>{if(event.target.matches('#dialog textarea[name="text"]')){const area=event.target,preview=$('#compose-live'),count=$('#compose-count');if(preview)preview.innerHTML=area.value?broadcastPreview(area.value):'<span class="muted">Сообщение появится здесь</span>';if(count)count.textContent=`${area.value.length} / 4096`;}});
+document.addEventListener('input',event=>{if(event.target.matches('#dialog textarea[name="text"]')){const area=event.target,preview=$('#compose-live'),count=$('#compose-count');if(preview)preview.innerHTML=area.value?broadcastPreview(area.value):'<span class="muted">Сообщение появится здесь</span>';if(count)count.textContent=`${area.value.length} / 4096`;const meter=$('#compose-meter');if(meter){meter.style.width=`${Math.min(100,area.value.length/4096*100).toFixed(1)}%`;meter.classList.toggle('warn',area.value.length>3600);}const clear=$('[data-cmp-clear]');if(clear)clear.hidden=!area.value;}});
  document.addEventListener('change',async event=>{try{if(event.target.matches('#dialog input[name="media"]')){const info=$('#compose-file-name');if(info)info.textContent=event.target.files?.[0]?`${event.target.files[0].name} · ${fileSize(event.target.files[0].size)}`:'JPG/PNG до 10 МБ · MP4 до 20 МБ';}if(event.target.id==='add-cabinet-choice'){const fresh=$('#add-new-cabinet');fresh.hidden=event.target.value!=='new';fresh.querySelector('input').disabled=fresh.hidden;}if(event.target.id==='account-select'){state.login=Number(event.target.value);state.offset=0;if(state.view==='account'){location.hash='account/'+state.login;}else await refresh();}if(event.target.id==='currency'){state.currency=event.target.value;await showCached();}}catch(error){toast(error.message);}});
 $('#notifications').innerHTML=icon('bell');$('#refresh').innerHTML=icon('refresh');$('#refresh').addEventListener('click',()=>refresh());
 let savedScheme;try{savedScheme=localStorage.getItem('tag-scheme');}catch{}setScheme(savedScheme||'lime',false);
@@ -1218,4 +1227,66 @@ document.addEventListener('keydown',event=>{
  const cards=[...document.querySelectorAll('.pa-card')],index=cards.indexOf(card),position=index+(event.key==='ArrowUp'?-1:1)+1;
  if(position<1||position>cards.length)return;
  event.preventDefault();paSave(card,position);
+});
+
+// Выбор валюты отображения: кнопка в верхней панели и всплывающее меню вместо системного списка.
+// Скрытый select остаётся источником значения: на нём уже висит сохранение выбора.
+const CURRENCY_INFO=[['USD','Доллар США','$'],['BYN','Белорусский рубль','Br'],['RUB','Российский рубль','₽']];
+function syncCurrencyUi(){
+ const select=$('#display-currency');if(!select)return;
+ const code=select.value||state.displayCurrency||'USD',info=CURRENCY_INFO.find(c=>c[0]===code)||CURRENCY_INFO[0];
+ $('#currency-code').textContent=info[0];$('#currency-sym').textContent=info[2];
+ document.querySelectorAll('#currency-menu [data-currency]').forEach(item=>{const on=item.dataset.currency===info[0];item.classList.toggle('active',on);item.setAttribute('aria-selected',String(on));});
+}
+function currencyMenuOpen(open,{focus=false}={}){
+ const menu=$('#currency-menu'),button=$('#currency-btn');if(!menu||!button)return;
+ if(open&&!menu.children.length)menu.innerHTML=CURRENCY_INFO.map(([code,name,sym])=>`<button type="button" role="option" class="currency-item" data-currency="${code}"><span class="cur-sym">${sym}</span><span class="cur-text"><b>${code}</b><small>${name}</small></span>${icon('check')}</button>`).join('');
+ menu.hidden=!open;button.setAttribute('aria-expanded',String(open));
+ if(open){syncCurrencyUi();if(focus)(menu.querySelector('.active')||menu.firstElementChild)?.focus();}
+}
+function currencyPick(code){
+ const select=$('#display-currency');if(!select||select.value===code){currencyMenuOpen(false);return;}
+ select.value=code;select.dispatchEvent(new Event('change',{bubbles:true}));syncCurrencyUi();currencyMenuOpen(false);$('#currency-btn')?.focus({preventScroll:true});
+ try{tg?.HapticFeedback?.selectionChanged();}catch{}
+}
+document.addEventListener('click',event=>{
+ const button=event.target.closest?.('#currency-btn');
+ if(button){currencyMenuOpen($('#currency-menu').hidden);return;}
+ const item=event.target.closest?.('#currency-menu [data-currency]');
+ if(item){currencyPick(item.dataset.currency);return;}
+ if(!event.target.closest?.('#currency-picker'))currencyMenuOpen(false);
+});
+document.addEventListener('keydown',event=>{
+ const menu=$('#currency-menu');if(!menu||menu.hidden)return;
+ const items=[...menu.querySelectorAll('[data-currency]')],at=items.indexOf(document.activeElement);
+ if(event.key==='Escape'){event.preventDefault();currencyMenuOpen(false);$('#currency-btn').focus();}
+ else if(event.key==='ArrowDown'||event.key==='ArrowUp'){event.preventDefault();items[(at+(event.key==='ArrowDown'?1:-1)+items.length)%items.length]?.focus();}
+});
+syncCurrencyUi();
+
+// Редактор рассылки: получатели, шаблоны, очистка, вложение
+const CMP_TEMPLATES={
+ maintenance:'<b>Технические работы</b>\n\nС 03:00 до 03:10 по МСК возможны короткие перерывы в обновлении данных. Торговля на счетах не затрагивается — всё продолжит работать само.',
+ feature:'<b>Новое в Tag Markets</b>\n\nДобавили … Откройте приложение и посмотрите в разделе «…».',
+ reminder:'<b>Напоминание</b>\n\n…\n\nЕсли нужна помощь — просто ответьте на это сообщение.',
+ thanks:'Спасибо, что вы с нами. Мы продолжаем улучшать приложение и будем держать вас в курсе важных изменений.'
+};
+function cmpArea(){return $('#dialog textarea[name="text"]');}
+document.addEventListener('click',event=>{
+ const seg=event.target.closest?.('[data-cmp-target]');
+ if(seg){event.preventDefault();const form=seg.closest('.composer'),select=form.querySelector('select[name="target"]'),one=seg.dataset.cmpTarget==='one';
+  form.querySelectorAll('[data-cmp-target]').forEach(b=>b.classList.toggle('active',b===seg));
+  const box=form.querySelector('.cmp-one');box.hidden=!one;
+  [...select.options].forEach(o=>{o.hidden=one&&o.value==='all';});
+  select.value=one?(select.options[1]?.value||'all'):'all';return;}
+ const chip=event.target.closest?.('[data-template]');
+ if(chip){event.preventDefault();const area=cmpArea();if(!area)return;const text=CMP_TEMPLATES[chip.dataset.template]||'';
+  area.value=area.value.trim()?`${area.value.replace(/\s+$/,'')}\n\n${text}`:text;area.dispatchEvent(new Event('input',{bubbles:true}));area.focus();area.setSelectionRange(area.value.length,area.value.length);return;}
+ if(event.target.closest?.('[data-cmp-clear]')){event.preventDefault();const area=cmpArea();if(area){area.value='';area.dispatchEvent(new Event('input',{bubbles:true}));area.focus();}return;}
+ if(event.target.closest?.('[data-cmp-file-clear]')){event.preventDefault();event.stopPropagation();const input=$('#dialog input[name="media"]');if(input){input.value='';input.dispatchEvent(new Event('change',{bubbles:true}));}}
+},true);
+document.addEventListener('change',event=>{
+ if(!event.target.matches?.('#dialog input[name="media"]'))return;
+ const drop=event.target.closest('.cmp-drop'),has=!!event.target.files?.length;
+ drop?.classList.toggle('has-file',has);const clear=drop?.querySelector('[data-cmp-file-clear]');if(clear)clear.hidden=!has;
 });
