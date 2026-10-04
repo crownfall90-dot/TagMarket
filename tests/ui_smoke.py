@@ -439,6 +439,14 @@ def projects_ui(page, nav):
     page.locator('a.forecast-link').click()
     page.locator('.forecast-result').wait_for()
     assert page.locator('.forecast-summary-values').count() == 1
+    assert page.locator('[data-action="forecast-calculate"]').count() == 0   # пересчёт идёт сам
+    assert page.locator('.forecast-milestones .feed-day').count() >= 2
+    # бонус заканчивается 17 декабря: на горизонте «3 месяца» это событие по дороге, на «1 месяц» — нет
+    page.locator('[data-action="forecast-horizon"][data-value="3m"]').click()
+    page.wait_for_function("document.querySelectorAll('.forecast-events li').length >= 1")
+    assert 'Закончится бонус' in page.locator('.forecast-events').inner_text()
+    page.locator('[data-action="forecast-horizon"][data-value="1m"]').click()
+    page.wait_for_function("state.forecast.horizon==='1m'&&document.querySelectorAll('.forecast-events li').length===0")
     assert all(page.locator('.forecast-table thead th').all_inner_texts()[i] for i in range(7))
     # TagMarket — такой же проект в списке, таблице и карточках, без отдельного блока
     assert page.locator('.forecast-tag, .forecast-tag-grid').count() == 0

@@ -1020,3 +1020,14 @@ dialog::backdrop{backdrop-filter:none;background:#000b}
 .project-form .project-form-total{display:flex;gap:24px;flex-wrap:wrap}
 .project-account.pa-card .pa-title b{overflow-wrap:break-word;word-break:normal;hyphens:auto}
 @media(max-width:740px){.project-account.pa-card .pa-top{gap:10px}.project-account.pa-card .pa-top>svg{display:none}.project-account.pa-card .pa-title b{font-size:14px}}
+/* Прогноз: этапы, события, пересчёт */
+.forecast-result.is-stale{opacity:.5;pointer-events:none;transition:opacity .2s var(--ease)}
+.forecast-summary-values>div{min-width:0}.fs-sub{display:block;margin-top:4px;font-size:10px;color:var(--muted);font-weight:400;font-variant-numeric:tabular-nums}
+.forecast-milestones,.forecast-events{padding:14px;border-radius:16px;background:rgb(var(--bg-rgb) / .45);border:1px solid var(--line)}
+.forecast-milestones .feed,.forecast-events ul{margin:8px 0 0}
+.fm-list .feed-day{grid-template-columns:minmax(96px,150px) minmax(0,1fr) auto}
+.forecast-events ul{list-style:none;padding:0;display:grid;gap:8px}
+.forecast-events li{display:flex;gap:12px;align-items:flex-start;padding:10px 12px;border-radius:12px;background:rgb(var(--bg-rgb) / .55);border:1px solid #e4bf7a2e}
+.forecast-events li span{flex:none;padding:3px 9px;border-radius:999px;font-size:10px;font-weight:550;color:#e4bf7a;background:#e4bf7a14;border:1px solid #e4bf7a33;white-space:nowrap}
+.forecast-events li p{margin:0;font-size:12px;line-height:1.45;color:var(--text)}
+@media(max-width:740px){.fm-list .feed-day{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"date sum" "bar bar"}.fm-list .feed-date{grid-area:date;display:grid;gap:2px}.fm-list .feed-sum{grid-area:sum}.fm-list .feed-bar{grid-area:bar}.forecast-events li{flex-direction:column;gap:6px}}
