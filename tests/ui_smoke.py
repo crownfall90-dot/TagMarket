@@ -303,9 +303,8 @@ def projects_ui(page, nav):
     assert page.locator('.project-form-account').count() == 0
     assert page.locator('[data-action="project-form-add"]').count() == 0
     assert '10' in page.locator('.project-form-total').inner_text()
-    assert page.locator('.project-form [name="currency"]').is_disabled()
-    page.locator('.project-form [name="multi"]').check()
-    assert page.locator('.project-form [name="multi"]').is_checked()
+    assert page.locator('.project-form [name="currency"]').count() == 0   # валюту проекта не меняют — поля нет
+    assert page.locator('.project-form [name="multi"]').count() == 0      # режима «несколько аккаунтов» нет
     fits(page)
     close_dialog(page)
     page.locator('a.back[href="#projects"]').click()
@@ -318,6 +317,18 @@ def projects_ui(page, nav):
     close_dialog(page)
     page.locator('[data-action="project-account-edit"]').nth(1).click()
     assert page.locator('#dialog input[name="amount"]').input_value() == '3000'
+    # капитализация аккаунта — переключатель; по умолчанию как в проекте (здесь выключена)
+    assert page.locator('#dialog select[name="capitalization"]').count() == 0
+    assert not page.locator('#dialog .cap-switch input').is_checked()
+    assert page.locator('#dialog .account-cap-date').is_hidden()
+    page.locator('#dialog .cap-switch input').check()
+    assert page.locator('#dialog .account-cap-date').is_visible()      # у проекта выключена: нужна дата начала
+    assert page.locator('#dialog input[name="capitalization_from"]').input_value() != ''
+    page.locator('#dialog .cap-switch input').uncheck()
+    assert page.locator('#dialog .account-cap-date').is_hidden()
+    # бонус спрятан за пунктом «Бонусный баланс»: у аккаунта без бонуса поля скрыты
+    assert not page.locator('#dialog [data-bonus-toggle]').is_checked()
+    assert page.locator('#dialog .bonus-fields').is_hidden()
     # фиксированная доплата аккаунту: поле в окне и метка в карточке
     assert page.locator('#dialog input[name="fixed_income"]').input_value() == '60'
     assert page.locator('.pa-card .pa-tags i.fix').count() == 1
@@ -362,7 +373,9 @@ def projects_ui(page, nav):
     close_dialog(page)
     page.locator('a.back[href="#projects"]').click()
     page.locator('[data-action="project-create"]').click()
-    assert not page.locator('.project-form [name="multi"]').is_checked()
+    assert page.locator('.project-form [name="multi"]').count() == 0
+    assert page.locator('.project-form-account').count() == 1
+    assert page.locator('[data-action="project-form-add"]').count() == 0
     assert page.locator('.project-form [name="currency"] option').all_text_contents() == ['USD', 'RUB', 'BYN']
     page.locator('.project-form input[name="name"]').fill('Long project name ' * 4)
     page.locator('.project-form [name="rate_percent"]').fill('2.5')
@@ -406,15 +419,23 @@ def projects_ui(page, nav):
     assert saved['accounts'][0]['amount'] == 10000 and not saved['multi'] and saved['capitalization']
     assert saved['business_days_only']
     page.locator('[data-action="project-edit"]').click()
-    page.locator('.project-form [name="multi"]').check()
+    page.locator('.project-form input[name="name"]').fill('Renamed project')
     page.locator('#dialog-submit').click()
-    page.wait_for_function("window.__projectUiSaved?.multi === true")
+    page.wait_for_function("window.__projectUiSaved?.name === 'Renamed project'")
     page.locator('.project-account').first.wait_for()
     saved = page.evaluate('window.__projectUiSaved')
-    assert saved['multi'] and 'accounts' not in saved   # правка проекта не трогает аккаунты
+    assert 'accounts' not in saved and saved['currency'] == 'USD'   # правка проекта не трогает аккаунты и валюту
+    assert page.locator('[data-action="project-account-add"]').count() == 1
+    assert page.locator('.project-accounts-head [data-action="project-account-add"]').count() == 0   # кнопка под списком
     # второй аккаунт добавляется на странице проекта, вместе с бонусом
     page.locator('[data-action="project-account-add"]').click()
+    page.locator('#dialog[open]').wait_for()
+    assert page.locator('[data-action="project-account-add"]').count() == 1
+    assert page.locator('[data-action="project-account-add"]').is_hidden()   # пока аккаунт заполняют, второй кнопки нет
     page.locator('#dialog input[name="amount"]').fill('3000')
+    assert page.locator('#dialog .bonus-fields').is_hidden()
+    page.locator('#dialog [data-bonus-toggle]').check()
+    assert page.locator('#dialog .bonus-fields').is_visible()
     page.locator('#dialog input[name="bonus_amount"]').fill('500')
     page.locator('#dialog input[name="bonus_expires_at"]').fill('2031-01-01T12:00')
     page.locator('#dialog input[name="bonus_capitalization"]').check()
@@ -443,6 +464,16 @@ def projects_ui(page, nav):
     assert page.locator('.forecast-summary-values').count() == 1
     assert page.locator('[data-action="forecast-calculate"]').count() == 0   # пересчёт идёт сам
     assert page.locator('.forecast-milestones .feed-day').count() >= 2
+    # период «с — по»: считаем со стартовой даты, а не с сегодняшнего дня
+    start = page.evaluate("forecastDate('1w')")
+    page.locator('#forecast-from').fill(start)
+    page.wait_for_function("v => state.forecast.from === v && !!state.forecast.fromResult", arg=start)
+    page.wait_for_function("document.querySelector('.forecast-summary-values')?.innerText.includes('Прирост за период')")
+    assert page.locator('.forecast-milestones .feed-day').count() == 2
+    assert page.locator('#forecast-date').get_attribute('min') == start
+    page.locator('#forecast-from').fill(page.evaluate("projectToday()"))
+    page.wait_for_function("state.forecast.from === '' && !state.forecast.fromResult")
+    page.wait_for_function("document.querySelector('.forecast-summary-values')?.innerText.includes('Расчётный прирост')")
     # бонус заканчивается 17 декабря: на горизонте «3 месяца» это событие по дороге, на «1 месяц» — нет
     page.locator('[data-action="forecast-horizon"][data-value="3m"]').click()
     page.wait_for_function("document.querySelectorAll('.forecast-events li').length >= 1")

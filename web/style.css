@@ -1086,3 +1086,14 @@ dialog::backdrop{backdrop-filter:none;background:#000b}
 @media(prefers-reduced-motion:reduce){.cmp-meter i{transition:none}}
 .cmp-clear{white-space:nowrap;flex:none}
 @media(max-width:740px){.composer-editor .compose-tools>span{display:none}}
+.project-space .pa-add{display:flex;width:100%;justify-content:center;margin-top:var(--gap-in);border-style:dashed;min-height:46px;color:var(--muted)}
+.project-space .pa-add:hover{color:var(--accent);border-color:rgb(var(--accent-rgb) / .45)}
+.project-space .pa-add[hidden]{display:none}
+.bonus-toggle{margin:14px 0 4px}
+.bonus-fields[hidden]{display:none}
+.bonus-fields:not([hidden]){animation:fade-swap .25s var(--ease) both}
+/* Прогноз: период «с — по», переключатель капитализации */
+.forecast-dates{display:grid;grid-template-columns:1fr 1fr;gap:12px}.forecast-dates .field{margin:0}
+@media(max-width:480px){.forecast-dates{gap:8px}}
+.cap-switch{margin:14px 0 4px}
+.account-cap-date[hidden]{display:none}

@@ -536,10 +536,9 @@ def account_change(db, owner, project_id, data, account_id=None, *, remove=False
             else:
                 rows[index] = {**rows[index], **{k: v for k, v in data.items() if k in {"name", "amount", "rate_percent", "capitalization", "capitalization_from", "bonus_amount", "bonus_activated_at", "bonus_expires_at", "bonus_capitalization", "fixed_income"}}}
         else:
-            if not project["multi"]:
-                raise ValueError("Сначала включите «Несколько аккаунтов»")
             rows.append({"name": data.get("name", ""), "amount": data.get("amount"), "rate_percent": data.get("rate_percent"), "capitalization":data.get("capitalization"), "capitalization_from":data.get("capitalization_from", today().isoformat()), "bonus_amount":data.get("bonus_amount"), "bonus_activated_at":data.get("bonus_activated_at"), "bonus_expires_at":data.get("bonus_expires_at"), "bonus_capitalization":data.get("bonus_capitalization", False), "fixed_income":data.get("fixed_income")})
-        return save(db, owner, {"accounts": rows}, project_id)
+        # режима «несколько аккаунтов» больше нет в интерфейсе: второй аккаунт включает его сам
+        return save(db, owner, {"accounts": rows, "multi": True} if not account_id else {"accounts": rows}, project_id)
 
 
 def reorder_account(db, owner, project_id, account_id, position):

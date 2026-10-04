@@ -1276,6 +1276,18 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.call("GET", path)).status, 404)
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM project_accounts WHERE project_id=?", (project["id"],)).fetchone()[0], 0)
 
+    async def test_adding_an_account_to_a_single_account_project_enables_multi_itself(self):
+        created = await (await self.call("POST", "/api/projects", json={"name": "Solo", "currency": "USD",
+            "rate_percent": 1, "period": "month", "multi": False, "accounts": [{"amount": 1000}]})).json()
+        self.assertFalse(created["multi"])
+        path = "/api/projects/" + created["id"]
+        response = await self.call("POST", path + "/accounts", json={"name": "Second", "amount": 500})
+        self.assertEqual(response.status, 201, await response.text())
+        project = await response.json()
+        self.assertTrue(project["multi"])
+        self.assertEqual([a["amount"] for a in project["accounts"]], [1000, 500])
+        self.assertEqual(project["accounts"][0]["id"], created["accounts"][0]["id"])
+
     async def test_projects_single_to_multi_preserves_ids_and_amount(self):
         payload = {"name": "Single", "currency": "RUB", "rate_percent": 0,
                    "period": "month", "multi": False, "accounts": [{"amount": 5000}]}
