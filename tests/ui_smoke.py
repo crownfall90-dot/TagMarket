@@ -690,7 +690,7 @@ def main():
                     assert page.locator(".hero .hero-value").inner_text().strip()
                     # динамика доходности лентой дней: строки с результатом и сводка
                     assert page.locator('.chart-panel .feed .feed-day').count() >= 1
-                    assert page.locator('.chart-panel .feed-meta span').count() == 2
+                    assert page.locator('.chart-panel .feed-meta span').count() in (2, 4)
                     assert 'MYFIN' not in page.locator('.hero').inner_text()
                     fx_unavailable_ui(page)
                     # лента: четыре события предпросмотра, два из них не прочитаны

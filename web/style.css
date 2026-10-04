@@ -925,3 +925,9 @@ dialog,.notification-list,.report-text,.table-wrap,.pc-scroll,.segmented{overscr
 @media(max-width:740px){.pd-summary{gap:6px}.pd-summary>div{padding:9px 10px}.pd-summary b{font-size:12px}.pd-list .feed-day.pd,.forecast-growth .feed-day{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"date sum" "bar bar"}.pd-list .feed-day.pd .feed-date,.forecast-growth .feed-date{grid-area:date;display:grid;gap:2px}.pd-list .feed-day.pd .feed-sum,.forecast-growth .feed-sum{grid-area:sum}.pd-list .feed-day.pd .feed-bar,.forecast-growth .feed-bar{grid-area:bar}}
 .project-account-number{display:inline-grid;place-items:center;min-width:20px;height:20px;margin-right:8px;padding:0 5px;border-radius:7px;background:rgb(var(--accent-rgb) / .1);color:var(--accent);font-size:11px;font-weight:600;font-variant-numeric:tabular-nums;vertical-align:1px}
 .feed-meta{grid-template-columns:repeat(2,minmax(0,1fr))}
+/* Счета и страница счёта: спокойный ритм */
+.account-money .account-today{font-size:10px;margin-top:2px}.account-money .account-today em{font-style:normal;color:var(--muted)}
+.balance-card .balance-side{display:flex;gap:22px;align-items:flex-start;justify-content:flex-end;flex-wrap:wrap}.balance-card .balance-side>div{display:grid;gap:5px;justify-items:end;text-align:right}.balance-card .balance-side small{font-size:10px;color:var(--muted)}
+@media(max-width:740px){.balance-card .balance-row{flex-direction:column;align-items:flex-start;gap:16px}.balance-card .balance-side{justify-content:flex-start;gap:26px;width:100%}.balance-card .balance-side>div{justify-items:start;text-align:left}}
+.detail-chart .feed{margin-top:12px}
+.feed-meta{grid-template-columns:repeat(2,minmax(0,1fr))}.feed-meta span small{overflow-wrap:anywhere}
