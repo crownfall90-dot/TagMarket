@@ -919,6 +919,17 @@ def main():
                     if width == 390:
                         page.wait_for_timeout(500)
                         page.screenshot(path=str(screenshots / "tagmarkets-mobile-settings-smoke.png"), full_page=True)
+                    # жидкое стекло: переключатель в настройках; включённое даёт размытие у верхней панели
+                    was = page.evaluate("glassOn()")
+                    page.locator('[data-action="glass"]').click()
+                    page.wait_for_function("was => glassOn() !== was", arg=was)
+                    page.locator('[data-action="glass"]').click()
+                    page.wait_for_function("was => glassOn() === was", arg=was)
+                    page.evaluate("setGlass(true, false)")
+                    assert page.evaluate("getComputedStyle(document.querySelector('.topbar')).backdropFilter") != 'none'
+                    page.evaluate("setGlass(false, false)")
+                    assert page.evaluate("getComputedStyle(document.querySelector('.topbar')).backdropFilter") == 'none'
+                    page.evaluate("setGlass(true, false)")
                     page.locator('[data-action="shortcut"]').click()
                     assert page.locator('#dialog-title').inner_text() == 'Ярлык Tag Markets'
                     close_dialog(page)
