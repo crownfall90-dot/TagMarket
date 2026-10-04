@@ -326,6 +326,10 @@ def projects_ui(page, nav):
     assert page.locator('#dialog input[name="capitalization_from"]').input_value() != ''
     page.locator('#dialog .cap-switch input').uncheck()
     assert page.locator('#dialog .account-cap-date').is_hidden()
+    # капитализация стоит перед бонусом и без пояснения «по умолчанию как в проекте»
+    assert 'По умолчанию' not in page.locator('#dialog').inner_text()
+    assert page.evaluate("(() => { const c = document.querySelector('#dialog .cap-switch'), b = document.querySelector('#dialog .bonus-toggle'); return !!(c.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING); })()")
+    assert '(необязательно)' not in page.locator('#dialog .bonus-fields').inner_text()
     # бонус спрятан за пунктом «Бонусный баланс»: у аккаунта без бонуса поля скрыты
     assert not page.locator('#dialog [data-bonus-toggle]').is_checked()
     assert page.locator('#dialog .bonus-fields').is_hidden()
@@ -436,6 +440,7 @@ def projects_ui(page, nav):
     assert page.locator('#dialog .bonus-fields').is_hidden()
     page.locator('#dialog [data-bonus-toggle]').check()
     assert page.locator('#dialog .bonus-fields').is_visible()
+    assert page.evaluate("document.activeElement?.name !== 'bonus_amount'")   # клавиатура на телефоне сама не открывается
     page.locator('#dialog input[name="bonus_amount"]').fill('500')
     page.locator('#dialog input[name="bonus_expires_at"]').fill('2031-01-01T12:00')
     page.locator('#dialog input[name="bonus_capitalization"]').check()
