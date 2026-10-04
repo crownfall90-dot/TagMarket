@@ -931,3 +931,7 @@ dialog,.notification-list,.report-text,.table-wrap,.pc-scroll,.segmented{overscr
 @media(max-width:740px){.balance-card .balance-row{flex-direction:column;align-items:flex-start;gap:16px}.balance-card .balance-side{justify-content:flex-start;gap:26px;width:100%}.balance-card .balance-side>div{justify-items:start;text-align:left}}
 .detail-chart .feed{margin-top:12px}
 .feed-meta{grid-template-columns:repeat(2,minmax(0,1fr))}.feed-meta span small{overflow-wrap:anywhere}
+/* Остальные разделы: аккуратные номера аккаунтов, без дублей сумм */
+.project-space .project-account-number{display:inline-flex;align-items:center;justify-content:center;width:20px;min-width:20px;height:20px;padding:0;margin-right:8px;border-radius:7px;flex:none}
+.pd-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
+.fg-head small{font-size:10px;color:var(--muted);font-weight:400}
