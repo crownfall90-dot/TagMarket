@@ -786,8 +786,16 @@ def main():
                     fx_unavailable_ui(page)
                     # лента: четыре события предпросмотра, два из них не прочитаны
                     page.locator('#notifications').click()
-                    assert page.locator('.notification-item').count() == 4
-                    assert page.locator('.notification-item.unread').count() == 2
+                    assert page.locator('.notification-item').count() == 5
+                    assert page.locator('.notification-item.unread').count() == 3
+                    # главная сумма события вынесена вправо, а название события — отдельно от стратегии
+                    assert page.locator('.notification-item .nt-amount').count() >= 3
+                    assert 'Сделка в плюс' in page.locator('.notification-item.tone-good').first.inner_text()
+                    # фильтры по разделам: «Деньги» оставляют пополнение и вывод
+                    page.locator('[data-action="notif-filter"][data-value="money"]').click()
+                    assert page.locator('.notification-item').count() == 2
+                    page.locator('[data-action="notif-filter"][data-value="all"]').click()
+                    assert page.locator('.notification-item').count() == 5
                     close_dialog(page)
                     # динамика: другой период — другой итог
                     result = page.locator('.chart-panel .dynamics-main .result-pair b')

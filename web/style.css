@@ -1116,3 +1116,35 @@ html:not(.no-glass) .unsaved-confirm{backdrop-filter:blur(10px);-webkit-backdrop
 @media(prefers-reduced-transparency:reduce){html:not(.no-glass) :is(.topbar,.mobile-nav,dialog,.currency-menu){backdrop-filter:none;-webkit-backdrop-filter:none;background:rgb(26 30 33 / .98)}}
 /* переключатель в настройках */
 .settings-row.glass-row{margin-top:14px}
+/* Уведомления */
+.nt-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.nt-filters{flex:1;min-width:0}.nt-filters button{display:inline-flex;align-items:center;gap:6px}
+.nt-filters em{font-style:normal;font-size:10px;opacity:.6;font-variant-numeric:tabular-nums}
+.notification-group>h3{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:14px 0 4px}
+.notification-item{align-items:flex-start;padding:12px 10px;margin:0 -10px;border-radius:14px;border-bottom:0;position:relative}
+.notification-item+.notification-item{box-shadow:0 -1px 0 var(--line)}
+.notification-item:hover{transform:none}
+.notification-item .notification-copy{display:grid;gap:3px}
+.notification-item .nt-top{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.notification-item .kicker{font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin:0}
+.notification-item .nt-time{margin:0;font-size:10px;color:var(--muted);white-space:nowrap}
+.notification-item .nt-main{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.notification-item .nt-main b{font-size:14px;font-weight:600;overflow-wrap:anywhere}
+.notification-item .nt-amount{font-size:14px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
+.notification-item .nt-lines{display:block;font-size:11px;line-height:1.5;color:var(--muted);margin:0}
+.notification-item .meta{margin-top:2px}.notification-item .meta em{font-style:normal;font-size:10px;color:var(--accent);display:inline-flex;align-items:center;gap:4px;opacity:.9}
+.notification-item .meta svg{width:11px;height:11px}
+.notification-item.tone-good .notification-dot{background:rgb(var(--accent-rgb) / .12);color:var(--accent)}
+.notification-item.tone-good .nt-amount{color:var(--accent)}
+.notification-item.tone-bad .notification-dot{background:rgb(242 153 153 / .12);color:var(--negative)}
+.notification-item.tone-bad .nt-amount{color:var(--negative)}
+.notification-item.tone-warn .notification-dot{background:#e4bf7a1a;color:#e4bf7a}
+.notification-item.tone-warn .nt-amount{color:#e4bf7a}
+.notification-item.tone-neutral .notification-dot{background:rgb(var(--purple-rgb) / .1);color:var(--purple)}
+.notification-item.unread:before{content:"";position:absolute;left:-4px;top:50%;width:6px;height:6px;margin-top:-3px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px rgb(var(--accent-rgb) / .6)}
+.notification-empty p{max-width:260px;margin:6px auto 0}
+.event-toast-copy>span{font-variant-numeric:tabular-nums}
+.nt-bar{flex-direction:column;align-items:stretch}.nt-bar>.button{align-self:flex-end}
+.nt-filters{width:100%;flex:none}.nt-filters button{flex:1;justify-content:center}
+.notification-item{margin:0;width:100%}
+.notification-list{padding-right:2px}
