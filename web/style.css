@@ -937,3 +937,32 @@ dialog,.notification-list,.report-text,.table-wrap,.pc-scroll,.segmented{overscr
 .fg-head small{font-size:10px;color:var(--muted);font-weight:400}
 /* Динамика: процент за день рядом с суммой */
 .feed-sum .feed-main{display:flex;align-items:baseline;justify-content:flex-end;gap:7px;flex-wrap:wrap}.feed-sum .feed-main em{font-style:normal;font-size:11px;font-weight:550;font-variant-numeric:tabular-nums;opacity:.85}.feed-meta b em{font-style:normal;font-size:11px;font-weight:500;opacity:.8}
+/* Производительность: один лёгкий вход экрана вместо десятков анимаций, без размытия под прокруткой */
+#main.view-enter{animation:view-enter .26s var(--ease-out) both}
+#main.view-enter .panel,#main.view-enter .project-card,#main.view-enter .page-head{animation:none!important}
+.account-card,.stat,.panel,.filterbar,.report-controls,.custom-period,.deal-day,.forecast-space .forecast-result{animation:none}
+.feed-day{animation:none}
+.feed-bar i{animation:none;box-shadow:none}
+.feed-day:nth-child(-n+7) .feed-bar i{animation:feed-grow .55s var(--ease-out) both;animation-delay:calc(var(--n,0) * 30ms)}
+.topbar{backdrop-filter:none;-webkit-backdrop-filter:none;background:rgb(var(--bg-rgb) / .95)}
+.hero .asset-mode,#offline-bar{backdrop-filter:none;-webkit-backdrop-filter:none}
+.mobile-nav{backdrop-filter:none;-webkit-backdrop-filter:none;background:rgb(26 30 33 / .97)}
+dialog::backdrop{backdrop-filter:none;background:#000b}
+.mobile-nav,#toast,#offline-bar{will-change:auto}
+.fade-swap{animation-duration:.22s}
+/* Единый ритм: расстояние между блоками везде одинаковое (--gap), внутри блока — --gap-in */
+:root{--gap:16px;--gap-in:12px}
+@media(min-width:741px){:root{--gap:20px}}
+/* блочные контейнеры: интервал задаёт верхний отступ следующего блока */
+#main>*,.project-space>*{margin-bottom:0!important}
+#main>*+*,.project-space>*+*{margin-top:var(--gap)!important}
+/* сеточные и гибкие контейнеры: интервал задаёт gap, отступы блоков сброшены */
+.faq-page,.forecast-space,.dashboard-grid>div,.side-stack,.account-list,.cards-grid,.project-grid,.two-column,.deal-days,.account-groups,.cabinet-list{gap:var(--gap)}
+.faq-page>*,.forecast-space>*,.dashboard-grid>div>*,.side-stack>*{margin:0!important}
+.page-head{margin-bottom:0}
+.section-head,.account-group-head{margin:0}
+.section-head+*,.account-group-head+*{margin-top:var(--gap-in)}
+#main>.section-head+*,#main>.account-group-head+*,.project-space>.section-head+*{margin-top:var(--gap-in)!important}
+.forecast-result,.forecast-projects{gap:var(--gap-in)}
+.forecast-result>*{margin:0}
+.forecast-mobile-cards{display:grid;gap:var(--gap-in)}

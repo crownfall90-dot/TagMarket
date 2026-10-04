@@ -111,7 +111,7 @@ function enterView(direction){
  if(reducedMotion())return;
  const main=$('#main');
  main.classList.remove('view-enter');
- main.style.setProperty('--enter-x',direction?`${direction*18}px`:'0px');
+ main.style.setProperty('--enter-x',direction?`${direction*12}px`:'0px');
  main.style.setProperty('--enter-y',direction?'0px':'10px');
  void main.offsetWidth;      // перезапуск, если прошлый въезд ещё идёт
  main.classList.add('view-enter');
@@ -124,11 +124,11 @@ function leaveView(direction){
  if(reducedMotion())return Promise.resolve();
  const main=$('#main');
  main.classList.remove('view-enter');
- const shift=direction?`translateX(${-direction*12}px)`:'translateY(-5px)';
+ const shift=direction?`translateX(${-direction*8}px)`:'translateY(-3px)';
  const anim=main.animate([{opacity:1,transform:'none'},{opacity:0,transform:shift}],
-                         {duration:260,easing:'cubic-bezier(.45,0,.55,1)',fill:'forwards'});
+                         {duration:120,easing:'cubic-bezier(.45,0,.55,1)',fill:'forwards'});
  // не ждём дольше самой анимации: если вкладка ушла в фон, finished не придёт
- return Promise.race([anim.finished.catch(()=>{}),new Promise(r=>setTimeout(r,320))])
+ return Promise.race([anim.finished.catch(()=>{}),new Promise(r=>setTimeout(r,170))])
   .then(()=>anim.cancel());
 }
 $('#main').addEventListener('animationend',event=>{if(event.target===event.currentTarget)event.currentTarget.classList.remove('view-enter');});
@@ -756,22 +756,38 @@ async function api(path,options={}){
  const isForm=options.body instanceof FormData;
  const headers={'X-Telegram-Init-Data':tg?.initData||'',...options.headers};
  if(!isForm&&!headers['Content-Type'])headers['Content-Type']='application/json';
- const response=await fetch(new URL('../api'+path,location.href),{...options,signal:AbortSignal.timeout(path==='/broadcast'?180000:20000),headers,cache:'no-store'});
- const d=await response.json().catch(()=>({error:'Сервер вернул некорректный ответ'}));
- if(!response.ok)throw new Error(d.error||`Ошибка ${response.status}`);
- return d;
+ const attempt=async()=>{
+  const response=await fetch(new URL('../api'+path,location.href),{...options,signal:AbortSignal.timeout(path==='/broadcast'?180000:20000),headers,cache:'no-store'});
+  const d=await response.json().catch(()=>({error:'Сервер вернул некорректный ответ'}));
+  if(!response.ok){const error=new Error(d.error||`Ошибка ${response.status}`);error.status=response.status;throw error;}
+  return d;
+ };
+ // чтение безопасно повторить: один повтор после короткой паузы закрывает
+ // обрыв сети и перезапуск сервера, не показывая пользователю ошибку.
+ // Изменения (POST/PUT/PATCH/DELETE) не повторяем — они могли дойти до сервера
+ if(options.method&&options.method!=='GET')return attempt();
+ try{return await attempt();}
+ catch(error){
+  const transient=error.status===undefined||[502,503,504].includes(error.status);
+  if(!transient||document.hidden)throw error;
+  await new Promise(resolve=>setTimeout(resolve,700));
+  return attempt();
+ }
 }
 async function loadReport(){const params=new URLSearchParams({period:state.period});if(state.period==='custom'){if(!state.from||!state.to)return null;params.set('from',state.from);params.set('to',state.to);}if(state.view==='overview')return api(`/overview/report?${params}`);const acc=currentAccount();if(!acc)return null;state.login=acc.login;params.set('kind',state.kind);params.set('offset',state.offset);return api(`/accounts/${acc.login}/report?${params}`);}
 // Данные самого раздела сверх общих /bootstrap: отчёт, график цены, гости,
 // сервисная панель. Нужны и фоновому обновлению, и переходу между разделами
 async function viewParts(){
- const out={};
- if(['overview','account'].includes(state.view)){try{out.report=await loadReport();out.reportError='';}catch(error){out.report=null;out.reportError=error.message;}}
- if(state.view==='overview'){const sonic=state.data.accounts.find(a=>!a.demo&&/sonic|sonik/i.test(`${a.strategy||''} ${a.name||''}`));out.priceChart=sonic?await api(`/accounts/${sonic.login}/candles?period=${state.period==='custom'?'week':state.period}`).catch(()=>null):null;}
- if(state.view==='people')out.people=await api('/people');
- if(state.view==='projects'){const tag=await fetchTagForecast();if(!tag.error)out.tagStats=tag;}
- if(['projects','project','overview','forecast'].includes(state.view)){try{out.projects=(await api('/projects')).projects;out.projectsError='';if(state.view==='forecast'){const [result,tag]=await Promise.all([fetchForecast(out.projects),fetchTagForecast()]);out.forecast={...state.forecast,result,tag};}}catch(error){out.projects=state.projects;out.projectsError=error.message;}}
- if(state.view==='settings'&&state.data.founder)out.admin=await api('/admin');
+ // независимые запросы идут одновременно: раньше отчёт, свечи, проекты и
+ // прогноз TagMarket ждали друг друга по очереди, и раздел открывался на их сумму
+ const out={},jobs=[];
+ if(['overview','account'].includes(state.view))jobs.push((async()=>{try{out.report=await loadReport();out.reportError='';}catch(error){out.report=null;out.reportError=error.message;}})());
+ if(state.view==='overview'){const sonic=state.data.accounts.find(a=>!a.demo&&/sonic|sonik/i.test(`${a.strategy||''} ${a.name||''}`));jobs.push((async()=>{out.priceChart=sonic?await api(`/accounts/${sonic.login}/candles?period=${state.period==='custom'?'week':state.period}`).catch(()=>null):null;})());}
+ if(state.view==='people')jobs.push((async()=>{out.people=await api('/people');})());
+ if(state.view==='projects')jobs.push((async()=>{const tag=await fetchTagForecast();if(!tag.error)out.tagStats=tag;})());
+ if(['projects','project','overview','forecast'].includes(state.view))jobs.push((async()=>{try{out.projects=(await api('/projects')).projects;out.projectsError='';if(state.view==='forecast'){const [result,tag]=await Promise.all([fetchForecast(out.projects),fetchTagForecast()]);out.forecast={...state.forecast,result,tag};}}catch(error){out.projects=state.projects;out.projectsError=error.message;}})());
+ if(state.view==='settings'&&state.data.founder)jobs.push((async()=>{out.admin=await api('/admin');})());
+ await Promise.all(jobs);
  return out;
 }
 // Переход в раздел, где уже были, показывает запомненное сразу — без запроса
