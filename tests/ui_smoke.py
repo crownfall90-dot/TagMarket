@@ -672,10 +672,9 @@ def main():
                     page.locator(".hero").wait_for()
                     page.locator('#toast').evaluate("el => el.classList.remove('visible')")
                     assert page.locator(".hero .hero-value").inner_text().strip()
-                    # динамика доходности: линия, столбики дней и сводка
-                    assert page.locator('.chart-panel .dyn .dyn-line').count() == 1
-                    assert page.locator('.chart-panel .dyn-bars i').count() >= 1
-                    assert page.locator('.chart-panel .dyn-meta span').count() == 3
+                    # динамика доходности лентой дней: строки с результатом и сводка
+                    assert page.locator('.chart-panel .feed .feed-day').count() >= 1
+                    assert page.locator('.chart-panel .feed-meta span').count() == 3
                     assert 'MYFIN' not in page.locator('.hero').inner_text()
                     fx_unavailable_ui(page)
                     # лента: четыре события предпросмотра, два из них не прочитаны
