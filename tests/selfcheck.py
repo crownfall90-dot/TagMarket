@@ -223,7 +223,7 @@ try:
     dep = {"is_balance": True, "is_opening": False, "is_closing": False,
            "net": 720.0, "comment": "Deposit", "time": datetime(2026, 8, 14, 12, 0)}
     n = trades.fmt_notification(dep, "USD")
-    assert "+30.00$" in n and "Заведено на стратегию" in n, n   # 720 ÷ 24 = 30
+    assert "+30.00$" in n and "Заведено на стратегию" in n and "Пополнение стратегии" in n, n   # 720 ÷ 24 = 30
     # разряды разделяет узкий неразрывный пробел — сверяем через него же
     _sep = trades.NBSP
     assert f"было 2{_sep}470.00" in n and f"2{_sep}500.00" in n, n
@@ -232,7 +232,7 @@ try:
     pw = {"is_balance": True, "is_opening": False, "is_closing": False,
           "net": -11.14, "comment": "Profit Withdrawal", "time": datetime(2026, 8, 14, 13, 0)}
     n = trades.fmt_notification(pw, "USD")
-    assert "-11.14$" in n and "не изменил" in n, n
+    assert "-11.14$" in n and "не изменил" in n and "Вывод профита" in n, n
     assert "2500.00" in n, "баланс стратегии = капитал, при выводе профита не меняется"
 finally:
     trades.account = _saved_account
@@ -259,6 +259,7 @@ trades.retained = _saved_kept
 # порядок: дата/время, какая сделка за день, потом чистый профит
 assert note.index("11.08.2026") < note.index("сделка за день") < note.index("66.50"), note
 assert "+66.50" in note, "результат сделки чистыми (95 × 0.7)"
+assert "Сделка закрыта в плюс" in note, note
 assert "Капитал" in note, "капитал показываем всегда"
 assert "За день" in note and "+1.05" in note, "профит за все сделки дня (1.5 × 0.7)"
 assert "3 сделки" in note, "количество сделок за день"

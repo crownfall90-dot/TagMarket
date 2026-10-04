@@ -1479,6 +1479,29 @@ def late_note(row: dict) -> str:
 EVENT_TITLES = {"trades": "Сделка", "deposits": "Пополнение", "withdrawals": "Вывод"}
 
 
+def event_label(row: dict, pair: dict = None) -> str:
+    """Короткое название события для ленты: что именно произошло, а не общий тип."""
+    if not row["is_balance"]:
+        return "Сделка в плюс" if net_of_fee(mine(row["net"])) >= 0 else "Сделка в минус"
+    comment = (row.get("comment") or "").lower()
+    if is_profit_side(row) and is_transfer(row):
+        return "Реинвест профита" if "adjust" in comment else "Вывод профита"
+    if is_transfer(row):
+        if own_amount(row) < 0:
+            return "Вывод капитала"
+        return "Реинвест профита" if "upgrade" in comment else "Пополнение стратегии"
+    return "Плата платформы"
+
+
+def feed_body(body: str) -> str:
+    """Текст для ленты Mini App: без даты (лента показывает время сама), без
+    заголовка (он уже в названии события) и разделителя — суть в 2–5 строках."""
+    plain = html.unescape(re.sub(r"<[^>]+>", "", body))
+    lines = [line.strip() for line in plain.split("\n")]
+    lines = [line for line in lines if line and not line.startswith("🕒") and line != THIN]
+    return "\n".join(lines[1:6]) if len(lines) > 1 else "\n".join(lines)
+
+
 def event_kind(row: dict) -> str:
     """Тип события для выключателей уведомлений: сделка, пополнение или вывод."""
     if not row["is_balance"]:
@@ -1503,8 +1526,7 @@ def fmt_account_event(acc: dict, row: dict, cur: str, day_net: float = None,
     who = acc.get("holder") or acc.get("cabinet") or ""
     sub = " · ".join(x for x in (html.escape(who), f"<code>{acc['login']}</code>") if x)
     tag = f"🏷 <b>{html.escape(title)}</b>" + (f"\n<i>{sub}</i>" if sub else "")
-    plain = html.unescape(re.sub(r"<[^>]+>", "", body))
-    return (f"{tag}\n{THIN}\n{body}", f"{title} · {EVENT_TITLES[event_kind(row)]}", plain)
+    return (f"{tag}\n{THIN}\n{body}", f"{title} · {event_label(row, pair)}", feed_body(body))
 
 
 def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int = None,
@@ -1533,24 +1555,25 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
             # обе половины сразу: профит списан и в тот же момент добавлен
             # в капитал — раньше это были два отдельных, спорящих сообщения
             was, became = capital_around(pair)
-            out = [f"🕒 <b>{when}</b>", "♻️ <b>Реинвест: профит → капитал</b>", THIN,
-                   f"<b>{money(own)}{sign(cur)}</b>",
-                   "🔁 Списано из профита и в тот же момент добавлено в капитал"]
+            # деньги никуда не уходят: профит стал капиталом — сумма без знака «минус»
+            out = [f"🕒 <b>{when}</b>", "♻️ <b>Реинвест профита</b>", THIN,
+                   f"<b>{amount(abs(own), cur)}</b>",
+                   "🔁 Профит добавлен в капитал и дальше работает вместе с ним"]
             out.append(f"💰 Капитал: было {amount(was, cur)} → стало "
                        f"<b>{amount(became, cur)}</b>")
             return "\n".join(out)
 
         if is_profit and is_transfer(row):
             # профит лежит отдельно от капитала, поэтому капитал не меняется
-            head = ("♻️ <b>Реинвест: профит → капитал</b>" if moved_in
-                    else "📤 <b>Профит списан со стратегии</b>")
-            where = ("⬇️ Списано из профита, сейчас уйдёт в капитал" if moved_in
-                     else "➡️ Профит ушёл на баланс Tag Markets")
+            head = ("♻️ <b>Реинвест профита · шаг 1 из 2</b>" if moved_in
+                    else "💸 <b>Вывод профита</b>")
+            where = ("⬇️ Списано из профита — через мгновение уйдёт в капитал" if moved_in
+                     else "➡️ Профит списан со стратегии на баланс Tag Markets")
             out = [f"🕒 <b>{when}</b>", head, THIN,
                    f"<b>{money(own)}{sign(cur)}</b>", where]
             if note:
                 out.append(note)
-            out.append(f"💰 На стратегии: <b>{cap:.2f}{sign(cur)}</b> (не изменилось)")
+            out.append(f"💰 Капитал стратегии: <b>{cap:.2f}{sign(cur)}</b> (не изменился)")
             return "\n".join(out)
 
         if is_transfer(row):
@@ -1561,12 +1584,13 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
             # обычное пополнение, иначе два сообщения выглядят как спорящие
             is_upgrade = "upgrade" in (row["comment"] or "").lower()
             out_of = own < 0
-            head = ("📤 <b>Капитал выведен со стратегии</b>" if out_of
-                    else "♻️ <b>Реинвест: капитал пополнен</b>" if is_upgrade
-                    else "📥 <b>Заведено на стратегию</b>")
-            where = ("➡️ Ушло на баланс Tag Markets" if out_of
-                     else "⬅️ Вторая половина реинвеста — профит уже списан отдельно"
-                     if is_upgrade else "⬅️ Капитал добавлен в стратегию")
+            head = ("📤 <b>Вывод капитала со стратегии</b>" if out_of
+                    else "♻️ <b>Реинвест профита · шаг 2 из 2</b>" if is_upgrade
+                    else "📥 <b>Пополнение стратегии</b>")
+            where = ("➡️ Ушло на баланс Tag Markets — оттуда можно вывести на карту или вернуть в стратегию"
+                     if out_of
+                     else "⬅️ Добавлено в капитал (профит списан предыдущим сообщением)"
+                     if is_upgrade else "⬅️ Заведено на стратегию — капитал вырос")
             was, became = capital_around(row)   # состояние ровно на момент операции
             out = [f"🕒 <b>{when}</b>", head, THIN, f"<b>{money(own)}{sign(cur)}</b>", where]
             if note:
@@ -1608,8 +1632,9 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
 
     # порядок как просили: дата/время, какая сделка за день, потом профит крупно
     out = [f"🕒 <b>{row['time']:%d.%m.%Y  %H:%M:%S}</b>",
-           f"📊 {_nth_word(nth)} сделка за день{'' if total == nth else f' из {total}'}",
-           f"{'✅' if plus else '❌'} <b>{money(profit)}{sign(cur)}</b> чистыми"
+           f"{'✅' if plus else '❌'} <b>Сделка закрыта в {'плюс' if plus else 'минус'}</b>",
+           f"🔢 {_nth_word(nth)} сделка за день{'' if total == nth else f' из {total}'}",
+           f"<b>{money(profit)}{sign(cur)}</b> чистыми"
            + (f"  <i>{pct(profit / pct_base * 100)}</i>" if pct_base else "")]
 
     details = [f"{short(row['symbol'], 12)} {row['side']}"]

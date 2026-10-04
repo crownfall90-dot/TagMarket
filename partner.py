@@ -8,7 +8,6 @@ import hashlib
 import html
 import json
 import os
-import re
 import sqlite3
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -733,15 +732,15 @@ def fmt_wallet_income(row: dict, name: str, when: datetime,
         title = holder or f"Кабинет {cabinet}"
         sub = f"кабинет {html.escape(cabinet)}"
     total = (f"{trades.money(parsed[0])}{trades.sign(parsed[1])}" if parsed else money(row))
-    body = [f"🕒 <b>{when:%d.%m.%Y  %H:%M:%S}</b>", "💰 <b>Пополнение баланса Tag Markets</b>",
+    body = [f"🕒 <b>{when:%d.%m.%Y  %H:%M:%S}</b>", "💳 <b>Пополнение баланса Tag Markets</b>",
             THIN, f"<b>{html.escape(total)}</b>",
-            "➡️ На балансе Tag Markets — можно вывести или вернуть в стратегию"]
+            "➡️ Деньги на балансе Tag Markets — их можно вывести на карту или завести в стратегию"]
     state = cabinet_state(row)
     if state:
         body.append(state)
     body = "\n".join(body)
     text = f"🏷 <b>{html.escape(title)}</b>\n<i>{sub}</i>\n{THIN}\n{body}"
-    return text, f"{title} · Пополнение", html.unescape(re.sub(r"<[^>]+>", "", body))
+    return text, f"{title} · Пополнение баланса", trades.feed_body(body)
 
 
 def kv_get(db, key, default=None):

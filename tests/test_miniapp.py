@@ -668,7 +668,8 @@ class OneEventOneMessageTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("DZMITRY · <code>123</code>", self.chat[0][1])
         items = self.feed()
         self.assertEqual(len(items), 1, "и в ленте Mini App одно событие")
-        self.assertEqual((items[0]["title"], items[0]["kind"]), ("SONIC · Вывод", "withdrawals"))
+        self.assertEqual((items[0]["title"], items[0]["kind"]), ("SONIC · Вывод профита", "withdrawals"))
+        self.assertNotIn("🕒", items[0]["body"], "дата в ленте не нужна — время показывает сама лента")
         self.assertEqual(partner.kv_get(self.db, "mt5_last_ticket:1:123"), "10")
 
     async def test_poll_restores_account_context_after_await(self):
@@ -789,6 +790,7 @@ class OneEventOneMessageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([who for who, _ in self.chat], ["1", "2"])
         self.assertIn("Профит списан со стратегии", self.chat[0][1])
         self.assertIn("Профит списан со стратегии", self.chat[1][1])
+        self.assertIn("Вывод профита", self.chat[0][1])
 
     async def test_mt5_during_hook_send_is_applied_after_it(self):
         # строка MT5 заявлена, пока вебхук ещё ждёт ответа Telegram
@@ -837,11 +839,12 @@ class OneEventOneMessageTests(unittest.IsolatedAsyncioTestCase):
         self.deal(20, -6.0, "Adjust-6.00", moment)
         await self.bot.poll_mt5(self.fake_bot, self.db)
         self.assertEqual(len(self.chat), 1)
-        self.assertIn("сейчас уйдёт в капитал", self.chat[0][1])
+        self.assertIn("уйдёт в капитал", self.chat[0][1])
+        self.assertIn("шаг 1 из 2", self.chat[0][1])
         self.deal(21, 144.0, "Upgrade-144.00", moment)
         await self.bot.poll_mt5(self.fake_bot, self.db)
         self.assertEqual(len(self.chat), 1, "вторая половина не пишет отдельно")
-        self.assertIn("в тот же момент добавлено в капитал", self.chat[0][1])
+        self.assertIn("Профит добавлен в капитал", self.chat[0][1])
         self.assertEqual(len(self.feed()), 1)
         self.assertEqual(partner.kv_get(self.db, "mt5_last_ticket:1:123"), "21")
 
@@ -851,8 +854,9 @@ class OneEventOneMessageTests(unittest.IsolatedAsyncioTestCase):
         self.deal(31, -6.0, "Adjust-6.00", moment)
         await self.bot.poll_mt5(self.fake_bot, self.db)
         self.assertEqual(len(self.chat), 1)
-        self.assertIn("в тот же момент добавлено в капитал", self.chat[0][1])
-        self.assertIn("-6.00$", self.chat[0][1])
+        self.assertIn("Профит добавлен в капитал", self.chat[0][1])
+        self.assertIn("6.00", self.chat[0][1])
+        self.assertNotIn("-6.00", self.chat[0][1], "реинвест — не вывод: сумма без минуса")
         self.assertEqual(partner.kv_get(self.db, "mt5_last_ticket:1:123"), "31")
 
 

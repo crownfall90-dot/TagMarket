@@ -148,7 +148,7 @@ async def handle(request: web.Request, kind: str, fmt) -> web.Response:
         recipient = os.getenv("FOUNDER_ID") or os.getenv("TELEGRAM_CHAT_ID", "")
         for event, event_key, delivery_type in queued:
             if delivery_type == "text" and recipient:
-                title = "Новая регистрация" if kind == "registration" else "Пополнение"
+                title = "Новая регистрация" if kind == "registration" else "Пополнение у гостя"
                 detail = partner.who(event) if kind == "registration" else \
                     f"{partner.whose(event, db)[0]} · {partner.money(event)}"
                 partner.record_notification(db, recipient, event_key, kind, title, detail)
