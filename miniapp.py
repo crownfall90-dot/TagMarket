@@ -24,7 +24,7 @@ from account_lock import locked
 
 from aiohttp import web
 from aiogram.enums import ParseMode
-from aiogram.types import FSInputFile
+from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
 os.environ["TRADES_SOURCE"] = "store"
 import accounts
@@ -1161,6 +1161,15 @@ async def broadcast(request):
             raise web.HTTPBadRequest(text="Текст превышает лимит Telegram")
         if not body and not media_path:
             raise web.HTTPBadRequest(text="Добавьте текст или медиафайл")
+        # кнопка под сообщением: название любое, ссылка всегда на мини-приложение
+        button_text = str(data.get("button_text", "") or "").strip()
+        if len(button_text) > 40:
+            raise web.HTTPBadRequest(text="Название кнопки — до 40 символов")
+        app_url = os.getenv("MINI_APP_URL", "").strip()
+        if button_text and not app_url:
+            raise web.HTTPBadRequest(text="Ссылка на мини-приложение не настроена (MINI_APP_URL)")
+        markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+            text=button_text, web_app=WebAppInfo(url=app_url))]]) if button_text else None
         target = str(data.get("target", "all"))
         db = request.app["db"]
         known = {u for u, _ in logic.all_guests(db)}
@@ -1170,7 +1179,7 @@ async def broadcast(request):
             raise web.HTTPBadRequest(text="Пока нет получателей")
         key = bounded_text(data, "request_id", 64, True)
         fingerprint = hashlib.sha256(json.dumps(
-            [target, body, media_kind, media_digest], ensure_ascii=False).encode()).hexdigest()
+            [target, body, media_kind, media_digest, button_text], ensure_ascii=False).encode()).hexdigest()
         token = os.environ["TELEGRAM_BOT_TOKEN"]
         proxies = [p.strip() for p in os.getenv("TELEGRAM_PROXY", "").split(",") if p.strip()] or [""]
         proxy = None
@@ -1208,17 +1217,20 @@ async def broadcast(request):
                     continue
                 try:
                     if status != "media_sent":
+                        # кнопка — под последним сообщением: под файлом, если текст в его подписи
+                        media_markup = markup if (caption is not None or not body) else None
                         if media_kind == "photo":
                             await sender.send_photo(recipient, FSInputFile(media_path), caption=caption,
-                                                    parse_mode=ParseMode.HTML)
+                                                    parse_mode=ParseMode.HTML, reply_markup=media_markup)
                         elif media_kind == "video":
                             await sender.send_video(recipient, FSInputFile(media_path), caption=caption,
-                                                    parse_mode=ParseMode.HTML, supports_streaming=True)
+                                                    parse_mode=ParseMode.HTML, supports_streaming=True,
+                                                    reply_markup=media_markup)
                         if media_kind:
                             campaign["recipients"][recipient] = "media_sent"
                             partner.kv_set(db, campaign_key, json.dumps(campaign))
                     if body and (not media_kind or caption is None):
-                        await sender.send_message(recipient, body, parse_mode=ParseMode.HTML)
+                        await sender.send_message(recipient, body, parse_mode=ParseMode.HTML, reply_markup=markup)
                     campaign["recipients"][recipient] = "sent"
                     partner.kv_set(db, campaign_key, json.dumps(campaign))
                     try:

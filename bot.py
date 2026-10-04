@@ -1096,7 +1096,7 @@ def _guest_money_lines(db, uid, indent: str = "", seen: set = None,
     return lines
 
 
-def _guest_period_summary(db, uid) -> str:
+def _guest_period_summary(db, uid, exclude_logins: frozenset = frozenset()) -> str:
     """Компактная строка: заработок гостя за сегодня/неделю/месяц/всё время —
     сумма и процент к капиталу на момент каждой сделки (та же мера, что в
     отчётах). «Всё время» считается с момента входа гостя в бот, а не с
@@ -1127,19 +1127,27 @@ def _guest_period_summary(db, uid) -> str:
     pcts = {label: 0.0 for label, _ in periods}
     any_data = False
     cur = ""
+    weight = 0.0
     for a in accs:
-        if a.get("demo"):
+        # только деньги самого гостя: демо и выданные ему копии чужих счетов
+        # (в том числе счета пригласившего) в его заработок не входят
+        if a.get("demo") or a.get("shared_by") or int(a["login"]) in exclude_logins:
             continue
         if not connect(a):
             continue
         any_data = True
         cur = trades.currency()
+        base = max(trades.capital(), 0.0)
         all_rows = trades.fetch(datetime(2000, 1, 1), now + timedelta(days=1), all_history=True)
         for label, start in periods:
             period_rows = [r for r in all_rows if r["time"] >= start]
             net = trades.net_of_fee(trades.mine(trades.summary(period_rows)["total"]))
             sums[label] += net
-            pcts[label] += trades.growth_pct(period_rows, all_rows)
+            # проценты разных счетов не складываем: средний, взвешенный по капиталу
+            pcts[label] += trades.growth_pct(period_rows, all_rows) * (base or 1.0)
+        weight += base or 1.0
+    if weight:
+        pcts = {label: value / weight for label, value in pcts.items()}
 
     if not any_data:
         return ""
@@ -1211,7 +1219,7 @@ def guest_view(db, owner, uid, expand_take: bool = False) -> tuple[str, InlineKe
     # самое у его гостей (если он тоже кого-то пригласил). Кнопок нет: это
     # чужие деньги, забрать их нельзя, только смотреть картину целиком
     money_lines = _guest_money_lines(db, uid, exclude_logins=frozenset(mine))
-    period = _guest_period_summary(db, uid) if money_lines else ""
+    period = _guest_period_summary(db, uid, exclude_logins=frozenset(mine)) if money_lines else ""
 
     out = [f"👤 <b>{html.escape(str(who))}</b>", trades.THIN]
     if since:

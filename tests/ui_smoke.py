@@ -976,16 +976,23 @@ def main():
                         "buffer": base64.b64decode(
                             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9YbZT5cAAAAASUVORK5CYII=")})
                     assert "photo.png" in page.locator('#compose-file-name').inner_text()
-                    assert page.locator('.cmp-drop.has-file').count() == 1
+                    assert page.locator('.cmp-drop').count() == 0          # файл — скрепкой в панели текста
+                    assert page.locator('.cmp-file').is_visible()
                     page.locator('[data-cmp-file-clear]').click()
-                    assert page.locator('.cmp-drop.has-file').count() == 0
+                    assert page.locator('.cmp-file').is_hidden()
                     assert 'photo.png' not in page.locator('#compose-file-name').inner_text()
                     page.locator('#dialog input[name="media"]').set_input_files({
                         "name": "photo.png", "mimeType": "image/png",
                         "buffer": base64.b64decode(
                             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9YbZT5cAAAAASUVORK5CYII=")})
+                    # кнопка «Открыть приложение»: своё название, предпросмотр под сообщением
+                    assert page.locator('#compose-btn-preview').is_hidden()
+                    page.locator('#dialog [data-cmp-button]').check()
+                    page.locator('#dialog input[name="button_text"]').fill('Смотреть отчёт')
+                    assert page.locator('#compose-btn-preview').inner_text() == 'Смотреть отчёт'
                     page.locator('#dialog-submit').click()
                     page.get_by_text('Проверка рассылки').wait_for()
+                    assert page.locator('#dialog .cmp-bubble-btn').inner_text() == 'Смотреть отчёт'
                     assert page.locator('.compose-preview-media img').count() == 1
                     assert page.locator('.compose-preview-media img').evaluate('(el) => el.complete && el.naturalWidth > 0')
                     if width == 390:

@@ -1773,6 +1773,64 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(inbox["unread"], 1)
         self.assertEqual(inbox["items"][0]["body"], "Привет с картинкой")
 
+    async def test_broadcast_button_always_opens_the_mini_app(self):
+        partner.kv_set(self.db, "guest:2", "1")
+        sent = []
+
+        class Session:
+            def __init__(self, **kwargs): pass
+            async def close(self): pass
+
+        class Sender:
+            def __init__(self, *args, **kwargs): pass
+            async def send_message(self, recipient, text, **kwargs):
+                sent.append(kwargs.get("reply_markup"))
+            async def send_photo(self, recipient, media, **kwargs):
+                sent.append(kwargs.get("reply_markup"))
+
+        def form(request_id, button, photo=False):
+            data = FormData()
+            data.add_field("target", "2")
+            data.add_field("text", "Новости")
+            data.add_field("request_id", request_id)
+            data.add_field("button_text", button)
+            if photo:
+                data.add_field("media", io.BytesIO(b"\x89PNG\r\n\x1a\n" + b"x" * 100),
+                               filename="news.png", content_type="image/png")
+            return data
+
+        with patch.dict(os.environ, {"MINI_APP_URL": "https://example.test/tagmarkets/app/"}), \
+                patch.object(miniapp.logic, "AiohttpSession", Session), \
+                patch.object(miniapp.logic, "Bot", Sender), \
+                patch.object(miniapp.logic, "works", return_value=True):
+            response = await self.call("POST", "/api/broadcast", data=form("btn-1", "Смотреть отчёт"))
+            self.assertEqual(response.status, 200, await response.text())
+            button = sent[0].inline_keyboard[0][0]
+            self.assertEqual(button.text, "Смотреть отчёт")
+            self.assertEqual(button.web_app.url, "https://example.test/tagmarkets/app/")
+            # короткий текст в подписи к фото: кнопка под фото, одно сообщение
+            response = await self.call("POST", "/api/broadcast", data=form("btn-2", "Открыть", photo=True))
+            self.assertEqual(response.status, 200, await response.text())
+            self.assertEqual(len(sent), 2)
+            self.assertEqual(sent[1].inline_keyboard[0][0].text, "Открыть")
+            # без названия — без кнопки; длинное название не принимается
+            await self.call("POST", "/api/broadcast", data=form("btn-3", ""))
+            self.assertIsNone(sent[2])
+            too_long = await self.call("POST", "/api/broadcast", data=form("btn-4", "x" * 41))
+            self.assertEqual(too_long.status, 400)
+
+    async def test_guest_earnings_count_only_the_guests_own_accounts(self):
+        import bot
+        guest_accounts = [
+            {"owner": 5, "name": "own", "login": 501, "strategy": "OWN"},
+            {"owner": 5, "name": "shared", "login": 123, "strategy": "SONIC", "shared_by": "1"},
+            {"owner": 5, "name": "demo", "login": 777, "demo": True},
+            {"owner": 5, "name": "inviter", "login": 456, "strategy": "NEO"}]
+        seen = []
+        with patch.object(bot.accounts, "load", return_value=guest_accounts),                 patch.object(bot, "connect", side_effect=lambda a: seen.append(a["login"]) or False):
+            self.assertEqual(bot._guest_period_summary(self.db, "5", exclude_logins=frozenset({456})), "")
+        self.assertEqual(seen, [501], "в заработок гостя входят только его собственные счета")
+
     async def test_broadcast_checks_telegram_before_claiming_request(self):
         partner.kv_set(self.db, "guest:2", "1")
         data = FormData()

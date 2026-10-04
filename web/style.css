@@ -1162,3 +1162,23 @@ dialog::backdrop{background:#000a;backdrop-filter:blur(6px);-webkit-backdrop-fil
 .guest-card .guest-actions .danger{margin-left:auto}
 .cards-grid{grid-template-columns:repeat(auto-fill,minmax(300px,1fr));align-items:start}
 @media(max-width:740px){.cards-grid{grid-template-columns:1fr}}
+/* Рассылка: скрепка в панели текста, файл чипом, кнопка под сообщением */
+.cmp-attach{position:relative;overflow:hidden;cursor:pointer}
+.cmp-attach .cmp-file-input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.cmp-attach.active{color:var(--accent);background:rgb(var(--accent-rgb) / .1)}
+.cmp-clip{width:16px;height:16px}
+.compose-tools .cmp-clear{margin-left:auto}
+.compose-tools .cmp-clear[hidden]+.cmp-attach{margin-left:auto}
+.cmp-file{display:flex;align-items:center;gap:8px;margin:0 12px 12px;padding:7px 8px 7px 10px;border-radius:10px;background:rgb(var(--accent-rgb) / .07);border:1px solid rgb(var(--accent-rgb) / .2)}
+.cmp-file[hidden]{display:none}.cmp-file .cmp-clip{flex:none;color:var(--accent)}
+.cmp-file small{flex:1;min-width:0;font-size:11px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cmp-file-clear{flex:none;width:24px;height:24px;border-radius:50%;border:0;background:var(--raised);color:var(--muted);font-size:15px;line-height:1}
+.cmp-button-field{margin-top:8px}.cmp-button-field[hidden]{display:none}.cmp-button-field .field{margin:0}
+.cmp-bubble-btn{margin-top:6px;padding:9px 12px;border-radius:12px;background:#262d33;border:1px solid rgb(255 255 255 / .06);color:var(--accent);font-size:13px;font-weight:550;text-align:center}
+.cmp-bubble-btn[hidden]{display:none}
+/* Гости: все действия в одну строку; окно «Открыть счета» — владелец счёта под номером */
+.guest-card .guest-actions{flex-wrap:nowrap;gap:6px}
+.guest-card .guest-actions .button{flex:1 1 0;min-width:0;padding-left:8px;padding-right:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.guest-card .guest-actions .danger{margin-left:0}
+.share-row{align-items:flex-start}.share-row>span{display:grid;gap:2px}.share-row b{font-size:13px;font-weight:550}.share-row small{font-size:11px;color:var(--muted)}
+.guest-card .guest-actions .button svg{display:none}.guest-card .guest-actions .button{font-size:11px}
