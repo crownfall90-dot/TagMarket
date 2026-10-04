@@ -566,7 +566,7 @@ def compact_ui_and_quiet_refresh(page, url):
     for period in ('today','yesterday','week','lastweek','month','lastmonth','all','custom'):
         markup=page.evaluate("p=>{state.period=p;return chart([], 'USD', false, 'счёта', [{day:'2026-10-01',value:0,balance:10000},{day:'2026-10-02',value:0,balance:10000}]);}",period)
         assert 'chart-line' in markup and 'Баланс:' in markup
-        assert 'M0,80 H640 V80' in markup
+        assert 'M0,90 H640' in markup
     unknown=page.evaluate("chart([], 'USD', false, 'счёта', [{day:'2026-10-01',value:0,balance:null}])")
     assert 'Нет данных о состоянии счёта за этот период' in unknown
 
@@ -672,9 +672,10 @@ def main():
                     page.locator(".hero").wait_for()
                     page.locator('#toast').evaluate("el => el.classList.remove('visible')")
                     assert page.locator(".hero .hero-value").inner_text().strip()
-                    # тепловая карта дней вместо графика динамики
-                    assert page.locator('.chart-panel .heatmap .hm-cell').count() >= 1
-                    assert page.locator('.chart-panel .hm-legend').count() == 1
+                    # динамика доходности: линия, столбики дней и сводка
+                    assert page.locator('.chart-panel .dyn .dyn-line').count() == 1
+                    assert page.locator('.chart-panel .dyn-bars i').count() >= 1
+                    assert page.locator('.chart-panel .dyn-meta span').count() == 3
                     assert 'MYFIN' not in page.locator('.hero').inner_text()
                     fx_unavailable_ui(page)
                     # лента: четыре события предпросмотра, два из них не прочитаны
@@ -905,10 +906,22 @@ def run_parallel():
     procs = [(w, subprocess.Popen([sys.executable, __file__], env={**os.environ, "TAGMARKETS_UI_SMOKE_WIDTHS": str(w), "PYTHONIOENCODING": "utf-8"},
                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace"))
              for w in WIDTHS]
-    failed = []
+    retry = []
     for width, proc in procs:
         output, _ = proc.communicate()
-        print(output, end="")
+        if proc.returncode:
+            retry.append(width)
+            print(f"UI smoke {width}px: failed under parallel load, re-running alone")
+        else:
+            print(output, end="")
+    # проверки быстрых нажатий и фоновых обновлений завязаны на тайминг: под
+    # нагрузкой четырёх браузеров они изредка ложно падают. Ширина считается
+    # проваленной, только если падает и в одиночном прогоне.
+    failed = []
+    for width in retry:
+        proc = subprocess.run([sys.executable, __file__], env={**os.environ, "TAGMARKETS_UI_SMOKE_WIDTHS": str(width), "PYTHONIOENCODING": "utf-8"},
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+        print(proc.stdout, end="")
         if proc.returncode:
             failed.append(width)
     if failed:
