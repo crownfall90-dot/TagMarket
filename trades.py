@@ -1476,6 +1476,14 @@ def late_note(row: dict) -> str:
     return f"<i>событие от {row['time']:%d.%m}, пришло после включения терминала</i>"
 
 
+WEEKDAYS = ("пн", "вт", "ср", "чт", "пт", "сб", "вс")
+
+
+def dow(moment) -> str:
+    """День недели для уведомлений: «пн», «вт» …"""
+    return WEEKDAYS[moment.weekday()]
+
+
 EVENT_TITLES = {"trades": "Сделка", "deposits": "Пополнение", "withdrawals": "Вывод"}
 
 
@@ -1538,7 +1546,7 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
     сообщение вместо двух подряд «профит списан» / «капитал добавлен» про
     одни и те же деньги — раньше это выглядело как дублирующее уведомление.
     """
-    when = f"{row['time']:%d.%m.%Y  %H:%M:%S}"
+    when = f"{dow(row['time'])}, {row['time']:%d.%m.%Y  %H:%M:%S}"
 
     if row["is_balance"]:
         own = own_amount(row)           # реальные деньги: капитал ÷плечо, прибыль ×1
@@ -1631,7 +1639,7 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
     nth, total = ordinal_today(row)
 
     # порядок как просили: дата/время, какая сделка за день, потом профит крупно
-    out = [f"🕒 <b>{row['time']:%d.%m.%Y  %H:%M:%S}</b>",
+    out = [f"🕒 <b>{dow(row['time'])}, {row['time']:%d.%m.%Y  %H:%M:%S}</b>",
            f"{'✅' if plus else '❌'} <b>Сделка закрыта в {'плюс' if plus else 'минус'}</b>",
            f"🔢 {_nth_word(nth)} сделка за день{'' if total == nth else f' из {total}'}",
            f"<b>{money(profit)}{sign(cur)}</b> чистыми"

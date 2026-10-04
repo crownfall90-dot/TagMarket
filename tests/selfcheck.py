@@ -260,6 +260,7 @@ trades.retained = _saved_kept
 assert note.index("11.08.2026") < note.index("сделка за день") < note.index("66.50"), note
 assert "+66.50" in note, "результат сделки чистыми (95 × 0.7)"
 assert "Сделка закрыта в плюс" in note, note
+assert "вт, 11.08.2026" in note, note       # день недели рядом с датой
 assert "Капитал" in note, "капитал показываем всегда"
 assert "За день" in note and "+1.05" in note, "профит за все сделки дня (1.5 × 0.7)"
 assert "3 сделки" in note, "количество сделок за день"

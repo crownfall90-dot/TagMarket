@@ -732,7 +732,7 @@ def fmt_wallet_income(row: dict, name: str, when: datetime,
         title = holder or f"Кабинет {cabinet}"
         sub = f"кабинет {html.escape(cabinet)}"
     total = (f"{trades.money(parsed[0])}{trades.sign(parsed[1])}" if parsed else money(row))
-    body = [f"🕒 <b>{when:%d.%m.%Y  %H:%M:%S}</b>", "💳 <b>Пополнение баланса Tag Markets</b>",
+    body = [f"🕒 <b>{trades.dow(when)}, {when:%d.%m.%Y  %H:%M:%S}</b>", "💳 <b>Пополнение баланса Tag Markets</b>",
             THIN, f"<b>{html.escape(total)}</b>",
             "➡️ Деньги на балансе Tag Markets — их можно вывести на карту или завести в стратегию"]
     state = cabinet_state(row)

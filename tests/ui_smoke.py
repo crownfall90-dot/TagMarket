@@ -788,9 +788,17 @@ def main():
                     page.locator('#notifications').click()
                     assert page.locator('.notification-item').count() == 5
                     assert page.locator('.notification-item.unread').count() == 3
+                    # рядом с датой — день недели: в заголовках групп и у старых событий
+                    assert any(',' in h or '·' in h for h in page.locator('.notification-group > h3').all_inner_texts())
+                    assert page.locator('.notification-group > h3').first.inner_text().lower().startswith('сегодня ·')
                     # главная сумма события вынесена вправо, а название события — отдельно от стратегии
                     assert page.locator('.notification-item .nt-amount').count() >= 3
                     assert 'Сделка в плюс' in page.locator('.notification-item.tone-good').first.inner_text()
+                    # у сообщения сервиса нет перехода: ни ссылки «Читать», ни второго окна с тем же текстом
+                    message = page.locator('.notification-item.kind-message')
+                    assert message.count() == 1 and message.locator('.meta').count() == 0
+                    # рядом с номером счёта — владелец счёта
+                    assert '10001 · ' in page.locator('.notification-item.kind-trades .kicker').first.inner_text()
                     # фильтры по разделам: «Деньги» оставляют пополнение и вывод
                     page.locator('[data-action="notif-filter"][data-value="money"]').click()
                     assert page.locator('.notification-item').count() == 2
