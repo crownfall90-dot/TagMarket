@@ -785,7 +785,7 @@ html{scroll-padding-top:112px}@media(max-width:740px){html{scroll-padding-top:92
 /* Горизонты прогноза: шесть кнопок раньше прокручивались внутри полосы, и
    «1 день» уезжал за край на узком экране — теперь они лежат сеткой */
 .forecast-horizons{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));overflow:visible;max-width:100%;width:100%}.forecast-horizons .segmented-thumb{display:none}.forecast-horizons button{white-space:nowrap}.forecast-horizons button.active{background:var(--raised)!important;box-shadow:inset 0 0 0 1px rgb(var(--accent-rgb) / .35)}@media(min-width:560px){.forecast-horizons{grid-template-columns:repeat(6,auto);width:max-content;margin:auto}}
-.forecast-tag>b{font-size:12px}.forecast-tag>span{font-size:14px;font-weight:550;text-align:right}.forecast-tag-grid{grid-column:1/-1;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:6px 0 2px}.forecast-tag-grid div{display:grid;gap:3px;min-width:0}.forecast-tag-grid b{font-size:12px;font-weight:550;overflow-wrap:anywhere}@media(max-width:560px){.forecast-tag-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
 
 /* Единый стиль: компактные карточки, общие радиусы и ритм во всех разделах */
 :root{--r-card:20px;--r-ctl:12px;--gap:14px}
@@ -854,3 +854,36 @@ dialog{border-radius:22px}
 .extreme{min-height:64px}
 .project-form .income-fixed,.project-form.fixed .income-percent,.project-form.fixed .cap-row,.project-form.fixed .project-account-rate,.project-form.fixed .project-account-cap,.project-form.fixed .project-account-cap-date,.project-form.fixed .project-cap-from{display:none}
 .project-form.fixed .income-fixed{display:block}
+/* TM-DESIGN-02: единые токены, состояния и мягкая анимация во всех разделах; Прогноз в том же стиле */
+:root{--ease:cubic-bezier(.22,1,.36,1);--dur:.22s;--r-row:14px;--focus:0 0 0 2px var(--bg),0 0 0 4px rgb(var(--accent-rgb) / .55);--hover-line:rgb(var(--accent-rgb) / .38)}
+.button,.segmented button,.forecast-project-row,.project-card,.compact-row,nav a{transition:transform .15s var(--ease),background-color var(--dur) var(--ease),border-color var(--dur) var(--ease),color var(--dur) var(--ease),box-shadow var(--dur) var(--ease)}
+.button:active,.segmented button:active,.project-card:active,.forecast-project-row:active{transform:scale(.985)}
+.button:focus-visible,.segmented button:focus-visible,.forecast-project-row:has(input:focus-visible),a:focus-visible,summary:focus-visible{outline:none;box-shadow:var(--focus)}
+.project-card:hover,.cabinet-group:hover,.people-card:hover{border-color:var(--hover-line)}
+@keyframes tm-rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+#main.view-enter .panel,#main.view-enter .project-card,#main.view-enter .page-head{animation:tm-rise .46s var(--ease) both}
+#main.view-enter .panel:nth-of-type(2),#main.view-enter .project-card:nth-child(2){animation-delay:.05s}
+#main.view-enter .panel:nth-of-type(3),#main.view-enter .project-card:nth-child(3){animation-delay:.1s}
+#main.view-enter .panel:nth-of-type(n+4),#main.view-enter .project-card:nth-child(n+4){animation-delay:.14s}
+.forecast-space{display:grid;gap:var(--gap);align-content:start}
+.forecast-space>.panel{margin:0}
+.forecast-space .forecast-controls{display:grid;gap:12px;justify-items:center}
+.forecast-space .forecast-controls .field{margin:0;width:100%;max-width:320px}
+.forecast-space .forecast-bonus{margin:0}
+.forecast-space .forecast-projects{display:grid;gap:8px}
+.forecast-space .forecast-projects .panel-head{margin-bottom:2px}
+.forecast-space .forecast-project-row{padding:12px 14px;border:1px solid var(--line);border-radius:var(--r-row);background:var(--raised);cursor:pointer}
+.forecast-space .forecast-project-row:hover{border-color:var(--hover-line)}
+.forecast-space .forecast-project-row:has(input:checked){border-color:rgb(var(--accent-rgb) / .45);background:linear-gradient(145deg,rgb(var(--accent-rgb) / .09),var(--raised))}
+.forecast-space .forecast-project-row.forecast-tag-row b{color:var(--accent)}
+.forecast-space .forecast-projects>.button{justify-self:stretch;margin-top:6px;min-height:46px;border-radius:var(--r-row)}
+.forecast-space .forecast-result{display:grid;gap:4px;animation:tm-rise .4s var(--ease) both}
+.forecast-space .forecast-summary-values>div{padding:12px 14px;border-radius:var(--r-row);background:var(--raised);border:1px solid var(--line)}
+.forecast-space .forecast-table-wrap{margin:8px 0 0}
+.forecast-table tbody th small{display:block;margin-top:2px;font-size:10px;font-weight:400;color:var(--muted)}
+.forecast-mobile-card{border-radius:var(--r-row);background:var(--raised)}
+.forecast-mobile-card .forecast-note{display:block;margin:-4px 0 9px;font-size:10px;color:var(--muted)}
+.forecast-foot{margin:2px 4px 0;text-align:center}
+.project-rate{border-radius:var(--r-row)}
+@media(prefers-reduced-motion:reduce){#main.view-enter .panel,#main.view-enter .project-card,#main.view-enter .page-head,.forecast-space .forecast-result{animation:none}.button:active,.segmented button:active,.project-card:active,.forecast-project-row:active{transform:none}}
+#main.quiet-paint .forecast-result{animation:none!important}

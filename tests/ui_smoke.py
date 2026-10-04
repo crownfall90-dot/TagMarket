@@ -383,24 +383,39 @@ def projects_ui(page, nav):
     assert 'Бонус активен' in page.locator('.project-card').filter(has_text='Private Invest').inner_text()
     private_card=page.locator('.project-card').filter(has_text='Private Invest')
     assert 'Бонус завершён' in private_card.inner_text(), private_card.inner_text()
+    # доходность везде в день, в том числе у TagMarket
+    cards = page.locator('.project-card')
+    for i in range(cards.count()):
+        assert '/ день' in cards.nth(i).inner_text(), cards.nth(i).inner_text()
+    assert 'Открыть счета' not in page.locator('.system-project').inner_text()
     page.locator('a.forecast-link').click()
     page.locator('.forecast-result').wait_for()
     assert page.locator('.forecast-summary-values').count() == 1
     assert all(page.locator('.forecast-table thead th').all_inner_texts()[i] for i in range(7))
-    result_text = page.locator('.forecast-result').inner_text()
-    assert 'Среднее рассчитано по 23 торговым дням' in result_text, result_text
-    assert 'статистика, а не обещание' in result_text
-    assert page.locator('.forecast-tag-grid > div').count() == 4
-    assert all('≈' in t for t in page.locator('.forecast-tag-grid b').all_inner_texts())
+    # TagMarket — такой же проект в списке, таблице и карточках, без отдельного блока
+    assert page.locator('.forecast-tag, .forecast-tag-grid').count() == 0
+    assert page.locator('input[name="forecast-project"][value="tagmarket-system"]').is_checked()
+    assert '% / день' in page.locator('.forecast-tag-row').inner_text()
+    wide = page.locator('.forecast-table-wrap').is_visible()
+    tag_view = page.locator('.forecast-table tbody tr').first if wide else page.locator('.forecast-mobile-card').first
+    result_text = tag_view.inner_text()
+    assert 'TagMarket' in result_text and '23 торговых дня' in result_text, result_text
+    assert '≈' in result_text
+    assert 'статистика, а не обещание' not in page.locator('.forecast-space').inner_text()
     fits(page)
+    # снятая галочка убирает TagMarket из расчёта
+    page.locator('.forecast-tag-row').click()
+    page.wait_for_function("state.forecast.selected&&!state.forecast.selected.includes('tagmarket-system')")
+    page.wait_for_function("!document.querySelector('.forecast-result')?.innerText.includes('TagMarket')")
+    page.locator('.forecast-tag-row').click()
+    page.wait_for_function("state.forecast.selected===null&&document.querySelector('.forecast-result')?.innerText.includes('TagMarket')")
     # мало истории: прогноз не строится, текущий капитал остаётся, сообщение понятное
     page.evaluate("state.forecast.tag={sufficient:false,days_used:3,min_days:5,multipliers:{}};render(true)")
+    page.wait_for_function("document.querySelector('.forecast-result')?.innerText.includes('Недостаточно истории для прогноза')")
     result_text = page.locator('.forecast-result').inner_text()
-    assert 'Недостаточно истории для статистического прогноза TagMarket' in result_text
-    assert page.locator('.forecast-tag-grid b').first.inner_text().strip()
-    assert '≈' not in page.locator('.forecast-tag-grid').inner_text()
+    assert '≈' not in (page.locator('.forecast-table tbody tr').first.inner_text() if wide else page.locator('.forecast-mobile-card').first.inner_text())
     page.evaluate("state.forecast.tag={error:'x'};render(true)")
-    assert 'Прогноз TagMarket временно недоступен' in page.locator('.forecast-result').inner_text()
+    assert 'Прогноз временно недоступен' in page.locator('.forecast-result').inner_text()
     page.evaluate('recalculateForecast()')
     page.wait_for_function("state.forecast.tag?.sufficient===true")
     summary=(page.locator('.forecast-mobile-cards .forecast-breakdown summary')
@@ -425,7 +440,7 @@ def projects_ui(page, nav):
     page.evaluate("state.projects[0].currency='BYN';state.displayCurrency='RUB';state.data.fx=null;state.forecast.selected=null")
     page.evaluate('recalculateForecast()')
     page.wait_for_function("document.querySelector('.forecast-result')?.innerText.includes('Частично рассчитан')")
-    assert 'BYN' in page.locator('.forecast-mobile-card').first.inner_text()
+    assert 'BYN' in page.locator('.forecast-mobile-card').filter(has_not_text='TagMarket').first.inner_text()
     fits(page)
     page.locator('[data-action="forecast-back"]').click()
     page.locator('.project-card').first.wait_for()

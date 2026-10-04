@@ -89,6 +89,24 @@ def periods_since(start, period, end, business_days_only=False):
     return max(0, months-(end.day < anniversary))
 
 
+def period_days(period, on=None):
+    """Календарных дней в периоде ставки: день — 1, неделя — 7, месяц — дней в текущем месяце.
+
+    Те же единицы, что в fractional_periods: неделя = 7 календарных дней, месяц —
+    фактическая длина календарного месяца."""
+    if period == "day":
+        return 1
+    if period == "week":
+        return 7
+    on = on or today()
+    return calendar.monthrange(on.year, on.month)[1]
+
+
+def daily_rate_percent(rate_percent, period, on=None):
+    """Средний процент в день: ставка за день остаётся как есть, недельная и месячная делятся на дни периода."""
+    return float(Decimal(str(rate_percent)) / period_days(period, on))
+
+
 def valid_expiration(value):
     if value is None or value == "":
         return None
@@ -384,6 +402,8 @@ def get(db, owner, project_id):
         account["personal_capitalization"] = enabled
         account["personal_income"] = _bounded(personal * rate)
         account["expected_income"] = _bounded((personal + (bonus if account["bonus_active"] else 0)) * rate)
+        account["daily_rate_percent"] = daily_rate_percent(rate * 100, result["period"])
+        account["daily_income"] = _bounded((personal + (bonus if account["bonus_active"] else 0)) * rate / period_days(result["period"]))
         if account["bonus_status"] == "expired":
             expired_bonus_total += Decimal(row[6] or 0) / 100
     result["calculation_limited"] = current_total > MAX_AMOUNT or current_total + bonus_total > MAX_AMOUNT or income > MAX_AMOUNT
@@ -392,6 +412,8 @@ def get(db, owner, project_id):
     if fixed_cents and not result["calculation_limited"]:
         income = Decimal(fixed_cents) / 100  # доход задан суммой за период, а не процентом
     result["expected_income"] = _bounded(income)
+    result["daily_rate_percent"] = daily_rate_percent(result["rate_percent"], result["period"])
+    result["daily_income"] = _bounded(income / period_days(result["period"]))
     result["personal_total"] = result["current_total"]
     result["bonus_total"] = _bounded(bonus_total)
     result["expired_bonus_total"] = _bounded(expired_bonus_total)

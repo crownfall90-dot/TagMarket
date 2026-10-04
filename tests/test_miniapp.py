@@ -1995,6 +1995,20 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(data["summary"]["pct_capital"],
                                round(21 / home["totals"]["USD"]["capital"] * 100, 3))
 
+    def test_project_rate_is_converted_to_percent_per_day(self):
+        # день — как есть; неделя — 7 календарных дней; месяц — дней в календарном месяце (как в fractional_periods)
+        self.assertEqual(projects.daily_rate_percent(2, "day"), 2)
+        self.assertAlmostEqual(projects.daily_rate_percent(7, "week"), 1)
+        self.assertAlmostEqual(projects.daily_rate_percent(30, "month", date(2026, 9, 10)), 1)
+        self.assertAlmostEqual(projects.daily_rate_percent(31, "month", date(2026, 10, 4)), 1)
+        self.assertAlmostEqual(projects.daily_rate_percent(28, "month", date(2026, 2, 1)), 1)
+        self.assertEqual(projects.period_days("week"), 7)
+        weekly = projects.save(self.db, "1", {"name": "Weekly", "currency": "USD", "rate_percent": 7,
+                                              "period": "week", "multi": False, "accounts": [{"amount": 1000}]})
+        self.assertAlmostEqual(weekly["daily_rate_percent"], 1)
+        self.assertAlmostEqual(weekly["daily_income"], weekly["expected_income"] / 7)
+        self.assertAlmostEqual(weekly["accounts"][0]["daily_rate_percent"], 1)
+
     def test_tag_forecast_uses_percent_returns_over_trading_days_only(self):
         # пятница 2026-10-02: день, неделя (5 будней), месяц и выходные считаются по будням
         friday = date(2026, 10, 2)
