@@ -544,7 +544,7 @@ def compact_ui_and_quiet_refresh(page, url):
     page.locator('.people-card').first.locator('summary').click()
     page.wait_for_function("!document.querySelector('.people-card').open")
     fits(page)
-    assert page.locator('.link-card .portal-link').get_attribute('target') == '_blank'
+    assert page.locator('.link-card .portal-link, .link-card .site-link').count() == 0
     page.evaluate('window.api=__uxApi;window.mutate=__uxMutate;void 0')
     page.goto(url+'#faq', wait_until='domcontentloaded')
     page.locator('.faq-strategy').first.wait_for()
@@ -854,6 +854,8 @@ def main():
                     assert page.locator('.link-card .invite-url').inner_text().startswith('https://t.me/')
                     page.locator('[data-action="partner-link"]').first.click()
                     assert page.locator('#dialog input[name="url"]').count() == 1
+                    assert page.locator('#dialog .pl-portal').get_attribute('target') == '_blank'
+                    assert page.locator('#dialog .pl-steps li').count() == 3
                     close_dialog(page)
                     if width == 390:
                         page.wait_for_timeout(500)
