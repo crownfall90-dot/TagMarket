@@ -795,13 +795,16 @@ let quietPending=false,quietFlushTimer=0;
 function uiEditing(){return $('#dialog').open||!!document.querySelector('input:focus,textarea:focus,select:focus')||[...document.querySelectorAll('#main input,#main textarea,#main select')].some(el=>el.type==='checkbox'?el.checked!==el.defaultChecked:el.tagName==='SELECT'?el.value!==([...el.options].find(o=>o.defaultSelected)||el.options[0])?.value:el.value!==el.defaultValue);}
 function flushQuiet(){clearTimeout(quietFlushTimer);quietFlushTimer=setTimeout(()=>{if(quietPending&&!uiEditing()&&!state.busy){quietPending=false;refresh(true);}},0);}
 document.addEventListener('focusout',flushQuiet);document.querySelector('#dialog').addEventListener('close',flushQuiet);
+let lastOkAt=Date.now();
+function setOffline(offline){let bar=$('#offline-bar');if(!offline){bar?.remove();return;}const time=new Date(lastOkAt).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});if(!bar){bar=document.createElement('div');bar.id='offline-bar';bar.setAttribute('role','status');document.body.prepend(bar);}bar.innerHTML=`<span>Нет связи с сервером · данные от ${esc(time)}</span><button type="button" class="text-link" data-action="refresh">Повторить</button>`;}
+window.addEventListener('online',()=>{if($('#offline-bar'))refresh(true);});
 async function refresh(quiet=false){
  if(quiet&&uiEditing()){quietPending=true;return;}
  if(state.busy){if(quiet)quietPending=true;else {state.pendingRefresh=true;generation++;}return;}
  if(quiet)quietPending=false;
  state.busy=true;document.body.classList.add('is-loading');const gen=++generation;
  try{
- const data=await api('/bootstrap');if(gen!==generation)return;state.data=data;state.displayCurrency=data.display_currency||state.displayCurrency;$('#display-currency').value=state.displayCurrency;scheduleRefresh();
+ const data=await api('/bootstrap');if(gen!==generation)return;state.data=data;lastOkAt=Date.now();setOffline(false);state.displayCurrency=data.display_currency||state.displayCurrency;$('#display-currency').value=state.displayCurrency;scheduleRefresh();
   const parts=await viewParts();
   const notifications=await api('/notifications').catch(()=>state.notifications);
   if(gen!==generation)return;
@@ -822,7 +825,7 @@ async function refresh(quiet=false){
   else if(key!==paintedKey){if(uiEditing())quietPending=true;else {render(true);paintedKey=key;}}
  }catch(error){
   if(!state.data){if(!preview&&!tg?.initData){$('#main').innerHTML=authScreen();}else $('#main').innerHTML=empty('Не удалось открыть кабинет',error.message,button('refresh','Попробовать снова','primary','refresh'));}
-  else if(!quiet)toast('Не удалось обновить данные. Показаны последние полученные значения.');
+  else{setOffline(true);if(!quiet)toast('Не удалось обновить данные. Показаны последние полученные значения.');}
  }finally{state.busy=false;document.body.classList.remove('is-loading');if(state.pendingRefresh){state.pendingRefresh=false;await refresh();}else if(quietPending&&!uiEditing())flushQuiet();}
 }
 let navSeq=0;

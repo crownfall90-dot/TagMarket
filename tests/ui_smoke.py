@@ -15,6 +15,7 @@ from playwright.sync_api import sync_playwright
 
 
 WEB = Path(__file__).resolve().parents[1] / "web"
+WIDTHS = tuple(int(w) for w in os.getenv("TAGMARKETS_UI_SMOKE_WIDTHS", "320,390,768,1280").split(","))
 
 
 class QuietHandler(SimpleHTTPRequestHandler):
@@ -611,7 +612,10 @@ def modal_scroll_and_deferred_refresh(page, url):
     assert page.locator('#dialog input[name="name"]').input_value() == 'Незавершённый ввод'
     assert page.evaluate('__bootstrapCalls') == calls
     if page.viewport_size['width'] == 390:
-        page.wait_for_timeout(page.evaluate('refreshEvery()')+500)
+        # настоящий интервал — 30+ секунд; сжимаем его, чтобы дождаться именно фонового тика таймера
+        page.evaluate("window.__refreshEvery = refreshEvery; refreshEvery = () => 1200; scheduleRefresh();")
+        page.wait_for_timeout(1900)
+        page.evaluate("refreshEvery = window.__refreshEvery; scheduleRefresh();")
         assert page.locator('#dialog[open]').count() == 1
         assert page.locator('#dialog input[name="name"]').input_value() == 'Незавершённый ввод'
         assert page.evaluate('__bootstrapCalls') == calls
@@ -657,7 +661,7 @@ def main():
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
             try:
-                for width in (320, 390, 768, 1280):
+                for width in WIDTHS:
                     page = browser.new_page(viewport={"width": width, "height": 844})
                     errors = []
                     page.on("pageerror", lambda error, errors=errors: errors.append(str(error)))
@@ -885,7 +889,7 @@ def main():
                     modal_scroll_and_deferred_refresh(page, url)
                     assert not errors, errors
                     page.close()
-                print("UI smoke PASS: 320px, 390px, 768px and 1280px")
+                print("UI smoke PASS: " + ", ".join(f"{w}px" for w in WIDTHS))
             finally:
                 browser.close()
     finally:
@@ -893,5 +897,26 @@ def main():
         server.server_close()
 
 
+def run_parallel():
+    """Каждая ширина — отдельный процесс со своим сервером и браузером: те же проверки, в ~3 раза быстрее."""
+    import subprocess
+    import sys
+    sys.stdout.reconfigure(errors="replace")  # консоль Windows (cp1251) не должна ронять прогон на выводе
+    procs = [(w, subprocess.Popen([sys.executable, __file__], env={**os.environ, "TAGMARKETS_UI_SMOKE_WIDTHS": str(w), "PYTHONIOENCODING": "utf-8"},
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace"))
+             for w in WIDTHS]
+    failed = []
+    for width, proc in procs:
+        output, _ = proc.communicate()
+        print(output, end="")
+        if proc.returncode:
+            failed.append(width)
+    if failed:
+        sys.exit(f"UI smoke FAIL: {', '.join(f'{w}px' for w in failed)}")
+
+
 if __name__ == "__main__":
-    main()
+    if os.getenv("TAGMARKETS_UI_SMOKE_WIDTHS") or "--serial" in __import__("sys").argv:
+        main()
+    else:
+        run_parallel()

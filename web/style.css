@@ -887,3 +887,4 @@ dialog{border-radius:22px}
 .project-rate{border-radius:var(--r-row)}
 @media(prefers-reduced-motion:reduce){#main.view-enter .panel,#main.view-enter .project-card,#main.view-enter .page-head,.forecast-space .forecast-result{animation:none}.button:active,.segmented button:active,.project-card:active,.forecast-project-row:active{transform:none}}
 #main.quiet-paint .forecast-result{animation:none!important}
+#offline-bar{position:sticky;top:0;z-index:9;display:flex;align-items:center;justify-content:center;gap:12px;padding:8px 16px;background:#e4bf7a1f;border-bottom:1px solid #e4bf7a40;color:#e4bf7a;font-size:11px;backdrop-filter:blur(6px)}#offline-bar .text-link{color:var(--text);text-decoration:underline;padding:4px 0}
