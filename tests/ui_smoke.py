@@ -388,6 +388,7 @@ def projects_ui(page, nav):
     for i in range(cards.count()):
         assert '/ день' in cards.nth(i).inner_text(), cards.nth(i).inner_text()
     assert 'Открыть счета' not in page.locator('.system-project').inner_text()
+    assert 'только по будням' in page.locator('.system-project').inner_text()
     page.locator('a.forecast-link').click()
     page.locator('.forecast-result').wait_for()
     assert page.locator('.forecast-summary-values').count() == 1
