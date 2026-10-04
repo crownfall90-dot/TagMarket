@@ -108,9 +108,12 @@ def rapid_taps_render_once(page, nav):
     # оба раздела уже открывались: данные в памяти, догрузки не будет
     page.evaluate("""() => { window.__realRender = window.render; window.__renders = 0;
         window.render = (...a) => { window.__renders++; return window.__realRender(...a); }; }""")
-    page.locator(f'{nav} a[href="#accounts"]').click()
-    page.wait_for_timeout(80)          # второе нажатие, пока старый экран уезжает
-    page.locator(f'{nav} a[href="#overview"]').click()
+    # оба нажатия — из страницы, с паузой 50 мс: время самих кликов Playwright не должно
+    # сдвигать второе нажатие за конец ухода старого экрана
+    page.evaluate("""([nav]) => new Promise(resolve => {
+        document.querySelector(nav + ' a[href="#accounts"]').click();
+        setTimeout(() => { document.querySelector(nav + ' a[href="#overview"]').click(); resolve(); }, 50);
+    })""", [nav])
     page.wait_for_timeout(1200)
     renders, view = page.evaluate("[window.__renders, state.view]")
     page.evaluate("window.render = window.__realRender")
@@ -294,16 +297,12 @@ def projects_ui(page, nav):
     fits(page)
     page.locator('a[href="#project/preview-home"]').click()
     page.locator('[data-action="project-edit"]').click()
-    amount = page.locator('.project-form-account input[name^="account-amount-"]')
-    assert amount.input_value() == '10000'
+    # в окне проекта — только настройки проекта: аккаунты правятся на странице проекта
+    assert page.locator('.project-form-account').count() == 0
+    assert page.locator('[data-action="project-form-add"]').count() == 0
+    assert '10' in page.locator('.project-form-total').inner_text()
     assert page.locator('.project-form [name="currency"]').is_disabled()
     page.locator('.project-form [name="multi"]').check()
-    assert amount.input_value() == '10000'
-    page.locator('[data-action="project-form-add"]').click()
-    page.locator('.project-form-account input[name^="account-amount-"]').nth(1).fill('3000')
-    assert '13' in page.locator('.project-form-total').inner_text()
-    assert page.locator('.project-account-name input[type="text"]').count() == 2
-    page.locator('.project-form [name="multi"]').click()
     assert page.locator('.project-form [name="multi"]').is_checked()
     fits(page)
     close_dialog(page)
@@ -322,21 +321,34 @@ def projects_ui(page, nav):
     assert page.locator('.pa-card .pa-tags i.fix').count() == 1
     # порядок аккаунтов: номер в списке и выбор позиции в окне редактирования
     assert page.locator('.project-account-number').count() == 3
-    assert page.locator('#dialog select[name="position"] option').count() == 3
-    assert page.locator('#dialog select[name="position"]').input_value() == '2'
+    assert page.locator('#dialog select[name="position"]').count() == 0  # порядок меняют перетаскиванием
     fits(page)
     close_dialog(page)
+
     page.evaluate(r"""() => { window.__reorderCalls = []; window.__ordApi = window.api;
         window.api = async (path, options = {}) => {
           if (path.endsWith('/accounts/reorder')) { __reorderCalls.push(JSON.parse(options.body));
-            const p = structuredClone(state.projects.find(x => x.id === 'preview-private')); return p; }
-          if (/\/accounts\//.test(path) && options.method === 'PATCH') return structuredClone(state.projects.find(x => x.id === 'preview-private'));
+            return structuredClone(state.projects.find(x => x.id === 'preview-private')); }
           return __ordApi(path, options); }; }""")
-    page.locator('[data-action="project-account-edit"]').nth(1).click()
-    page.locator('#dialog select[name="position"]').select_option('1')
-    page.locator('#dialog-submit').click()
+    # перетаскивание: третью карточку (Резерв) ставим на первое место
+    grips = page.locator('.pa-card .pa-grip')
+    assert grips.count() == 3
+    grips.nth(2).scroll_into_view_if_needed()
+    third = grips.nth(2).bounding_box()
+    first = page.locator('.pa-card').first.bounding_box()
+    page.mouse.move(third['x'] + third['width'] / 2, third['y'] + third['height'] / 2)
+    page.mouse.down()
+    page.mouse.move(third['x'] + 4, first['y'] + 8, steps=12)
+    assert page.locator('.pa-card.is-dragging').count() == 1
+    page.mouse.up()
     page.wait_for_function('__reorderCalls.length === 1')
     assert page.evaluate('__reorderCalls[0].position') == 1
+    assert page.locator('#dialog[open]').count() == 0  # отпускание ручки не открывает окно аккаунта
+    # клавиатура: Alt+↓ на первой карточке сдвигает её на вторую позицию
+    page.locator('.pa-card').first.focus()
+    page.keyboard.press('Alt+ArrowDown')
+    page.wait_for_function('__reorderCalls.length === 2')
+    assert page.evaluate('__reorderCalls[1].position') == 2
     page.evaluate('window.api = __ordApi; void 0')
     page.locator('[data-action="project-account-edit"]').nth(2).click()
     page.locator('[data-action="project-account-delete"]').click()
@@ -367,8 +379,15 @@ def projects_ui(page, nav):
     page.evaluate("""() => { window.__projectUiApi=window.api;
         window.api=async (path,options={}) => {
             if(path==='/projects'&&!options.method)return {projects:state.projects};
+            if(path==='/projects/ui-created/accounts'&&options.method==='POST'){
+                const d=JSON.parse(options.body);window.__accountUiSaved=d;
+                const prev=structuredClone(state.projects.find(p=>p.id==='ui-created'));
+                prev.accounts.push({...d,id:'ui-account-1',project_id:'ui-created',position:prev.accounts.length+1,current_amount:d.amount,bonus_active:false,bonus_status:null,bonus_current_amount:0,working_amount:d.amount,expected_income:0});
+                return prev;
+            }
             if((path==='/projects'||path==='/projects/ui-created')&&['POST','PATCH'].includes(options.method)){
-                const d=JSON.parse(options.body);window.__projectUiSaved=d;
+                const raw=JSON.parse(options.body);window.__projectUiSaved=raw;
+                const d=options.method==='PATCH'?{...structuredClone(state.projects.find(p=>p.id==='ui-created')),...raw}:raw;
                 const total=d.accounts.reduce((s,a)=>s+a.amount,0);
                 const current_total=d.capitalization?total*(1+d.rate_percent/100):total;
                 return {...d,id:'ui-created',accounts:d.accounts.map((a,i)=>({...a,id:a.id||'ui-account-'+i,project_id:'ui-created',current_amount:d.capitalization?a.amount*(1+d.rate_percent/100):a.amount,bonus_active:false,bonus_status:null,bonus_current_amount:0,working_amount:a.amount,expected_income:a.amount*d.rate_percent/100})),total,current_total,personal_total:current_total,bonus_total:0,expired_bonus_total:0,working_total:current_total,has_capitalization:current_total!==total,calculation_limited:false,expected_income:current_total*d.rate_percent/100};
@@ -386,15 +405,23 @@ def projects_ui(page, nav):
     assert saved['business_days_only']
     page.locator('[data-action="project-edit"]').click()
     page.locator('.project-form [name="multi"]').check()
-    page.locator('[data-action="project-form-add"]').click()
-    page.locator('.project-form-account input[name^="account-amount-"]').nth(1).fill('3000')
     page.locator('#dialog-submit').click()
-    page.wait_for_function("window.__projectUiSaved?.multi && window.__projectUiSaved.accounts?.length === 2")
+    page.wait_for_function("window.__projectUiSaved?.multi === true")
     page.locator('.project-account').first.wait_for()
     saved = page.evaluate('window.__projectUiSaved')
-    assert saved['multi'] and saved['accounts'][0]['id'] == 'ui-account-0'
-    assert [a['amount'] for a in saved['accounts']] == [10000, 3000]
-    assert page.locator('.project-account').count() == 2
+    assert saved['multi'] and 'accounts' not in saved   # правка проекта не трогает аккаунты
+    # второй аккаунт добавляется на странице проекта, вместе с бонусом
+    page.locator('[data-action="project-account-add"]').click()
+    page.locator('#dialog input[name="amount"]').fill('3000')
+    page.locator('#dialog input[name="bonus_amount"]').fill('500')
+    page.locator('#dialog input[name="bonus_expires_at"]').fill('2031-01-01T12:00')
+    page.locator('#dialog input[name="bonus_capitalization"]').check()
+    page.locator('#dialog-submit').click()
+    page.wait_for_function("window.__accountUiSaved")
+    account = page.evaluate('window.__accountUiSaved')
+    assert account['amount'] == 3000 and account['bonus_amount'] == 500 and account['bonus_capitalization']
+    assert account['bonus_expires_at'].startswith('2031-01-01')
+    page.wait_for_function("document.querySelectorAll('.project-account').length === 2")
     page.locator('[data-action="project-delete"]').click()
     page.locator('#dialog-submit').click()
     page.wait_for_function("state.view==='projects'&&!state.projects.some(p=>p.id==='ui-created')")

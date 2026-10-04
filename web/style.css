@@ -1006,3 +1006,17 @@ dialog::backdrop{backdrop-filter:none;background:#000b}
 .project-account.pa-card .pa-income{display:block;margin:0;text-align:left;max-width:none;font-size:13px;font-weight:550;color:var(--accent)}
 .pa-tags i.fix{color:var(--purple);background:rgb(var(--purple-rgb) / .09);border-color:rgb(var(--purple-rgb) / .26)}
 .project-form-account .project-account-fixed{margin-top:10px}
+/* Перетаскивание аккаунтов проекта */
+.project-account.pa-card{position:relative;-webkit-user-select:none;user-select:none}
+.project-account.pa-card .pa-grip{display:grid;place-items:center;flex:none;width:28px;height:36px;margin:0 -4px 0 -6px;padding:0;color:var(--muted);border-radius:8px;cursor:grab;touch-action:none;max-width:none;transition:color .2s var(--ease),background .2s var(--ease)}
+.project-account.pa-card .pa-grip:hover{color:var(--accent);background:rgb(var(--accent-rgb) / .08)}
+.pa-grip-ico{width:16px;height:16px;fill:currentColor;stroke:none}
+.pa-dragging .pa-card:not(.is-dragging){transition:transform .22s var(--ease-out),border-color .2s,background .2s}
+.pa-card.is-dragging{z-index:6;transition:none!important;cursor:grabbing;border-color:var(--accent)!important;background:var(--panel)!important;box-shadow:0 16px 40px rgb(0 0 0 / .45),0 0 0 1px rgb(var(--accent-rgb) / .3);will-change:transform}
+.pa-dragging,.pa-dragging *{cursor:grabbing!important;-webkit-user-select:none;user-select:none}
+.pa-card:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.project-form-note{margin:14px 0 0;font-size:12px;line-height:1.5;color:var(--muted)}
+.project-form-hint{display:block;margin:-6px 0 8px;font-size:11px;color:var(--muted)}
+.project-form .project-form-total{display:flex;gap:24px;flex-wrap:wrap}
+.project-account.pa-card .pa-title b{overflow-wrap:break-word;word-break:normal;hyphens:auto}
+@media(max-width:740px){.project-account.pa-card .pa-top{gap:10px}.project-account.pa-card .pa-top>svg{display:none}.project-account.pa-card .pa-title b{font-size:14px}}
