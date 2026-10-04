@@ -1293,6 +1293,24 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.call("PATCH", path, json={"accounts": [{"id": foreign_id, "amount": 1}]})).status, 404)
         self.assertEqual((await (await self.call("GET", path)).json())["total"], 8000)
 
+    async def test_project_accounts_can_move_to_position_and_keep_records(self):
+        created = await (await self.call("POST", "/api/projects", json={
+            "name": "Ordered", "currency": "USD", "rate_percent": 1,
+            "period": "month", "multi": True,
+            "accounts": [{"name": f"A{i}", "amount": i * 100} for i in range(1, 6)]})).json()
+        path = f"/api/projects/{created['id']}/accounts/reorder"
+        moved = await self.call("POST", path, json={"account_id": created["accounts"][4]["id"], "position": 1})
+        self.assertEqual(moved.status, 200, await moved.text())
+        result = await moved.json()
+        self.assertEqual([a["id"] for a in result["accounts"]],
+                         [created["accounts"][i]["id"] for i in (4, 0, 1, 2, 3)])
+        self.assertEqual([a["position"] for a in result["accounts"]], [1, 2, 3, 4, 5])
+        self.assertEqual([a["amount"] for a in result["accounts"]], [500, 100, 200, 300, 400])
+        self.assertEqual(result["total"], 1500)
+        self.assertEqual((await self.call("POST", path, json={"account_id": "missing", "position": 1})).status, 404)
+        self.assertEqual((await self.call("POST", path, json={"account_id": created["accounts"][4]["id"], "position": 6})).status, 400)
+        self.assertEqual((await self.call("POST", path, json={"account_id": created["accounts"][4]["id"], "position": "1"})).status, 400)
+
     async def test_project_account_rate_override_and_inheritance(self):
         created = await (await self.call("POST", "/api/projects", json={"name":"Mixed rates", "currency":"USD", "rate_percent":2, "period":"month", "multi":True, "accounts":[{"amount":1000},{"amount":1000,"rate_percent":5}]})).json()
         pid = created["id"]

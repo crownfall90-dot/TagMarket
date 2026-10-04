@@ -380,7 +380,7 @@ def get(db, owner, project_id):
     rows = db.execute("SELECT id,name,amount_cents,rate_percent,capitalization,capitalization_from,bonus_cents,bonus_activated_at,bonus_expires_at,bonus_capitalization FROM project_accounts WHERE project_id=? ORDER BY position,id",
                       (project_id,)).fetchall()
     now = datetime.now(timezone.utc)
-    result["accounts"] = [{"id": r[0], "project_id": project_id, "name": r[1], "amount": r[2] / 100, "rate_percent": r[3], "capitalization": bool(r[4]) if r[4] is not None else None, "capitalization_from":r[5], "bonus_amount": r[6] / 100 if r[6] is not None else None, "bonus_activated_at": r[7], "bonus_expires_at": r[8], "bonus_capitalization": bool(r[9]), "bonus_active": bool(r[6] and r[8] and datetime.fromisoformat(r[8].replace('Z', '+00:00')) > now)} for r in rows]
+    result["accounts"] = [{"id": r[0], "project_id": project_id, "position": index + 1, "name": r[1], "amount": r[2] / 100, "rate_percent": r[3], "capitalization": bool(r[4]) if r[4] is not None else None, "capitalization_from":r[5], "bonus_amount": r[6] / 100 if r[6] is not None else None, "bonus_activated_at": r[7], "bonus_expires_at": r[8], "bonus_capitalization": bool(r[9]), "bonus_active": bool(r[6] and r[8] and datetime.fromisoformat(r[8].replace('Z', '+00:00')) > now)} for index, r in enumerate(rows)]
     cents = sum(r[2] for r in rows)
     result["total"] = cents / 100
     current_total = income = bonus_total = Decimal(0)
@@ -520,3 +520,20 @@ def account_change(db, owner, project_id, data, account_id=None, *, remove=False
                 raise ValueError("Сначала включите «Несколько аккаунтов»")
             rows.append({"name": data.get("name", ""), "amount": data.get("amount"), "rate_percent": data.get("rate_percent"), "capitalization":data.get("capitalization"), "capitalization_from":data.get("capitalization_from", today().isoformat()), "bonus_amount":data.get("bonus_amount"), "bonus_activated_at":data.get("bonus_activated_at"), "bonus_expires_at":data.get("bonus_expires_at"), "bonus_capitalization":data.get("bonus_capitalization", False)})
         return save(db, owner, {"accounts": rows}, project_id)
+
+
+def reorder_account(db, owner, project_id, account_id, position):
+    """Переносит аккаунт на позицию position (с 1), остальные сдвигаются."""
+    if type(position) is not int:
+        raise ValueError("Укажите номер позиции аккаунта")
+    with db:
+        rows = get(db, owner, project_id)["accounts"]
+        index = next((i for i, account in enumerate(rows) if account["id"] == account_id), None)
+        if index is None:
+            raise LookupError("Аккаунт проекта не найден")
+        if not 1 <= position <= len(rows):
+            raise ValueError("Номер позиции вне списка аккаунтов")
+        rows.insert(position - 1, rows.pop(index))
+        db.executemany("UPDATE project_accounts SET position=? WHERE id=? AND project_id=?",
+                       [(i, account["id"], project_id) for i, account in enumerate(rows)])
+        return get(db, owner, project_id)

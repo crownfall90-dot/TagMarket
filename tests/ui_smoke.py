@@ -271,7 +271,7 @@ def guest_with_shared_account_sees_home_and_opens_guide_on_demand(page):
     }""")
     assert page.locator(".hero").count() == 1
     assert page.locator(".resume-banner").count() == 0
-    assert page.locator('.page-head [data-action="add"] .button-label').inner_text() == "Добавить счёт"
+    assert page.locator('.page-head [data-action="add"]').count() == 0  # на главной нет кнопки «Добавить счёт»
     page.evaluate("state.data=window.__smokeSavedData;delete window.__smokeSavedData;state.view='overview';render()")
 
 
@@ -317,8 +317,24 @@ def projects_ui(page, nav):
     close_dialog(page)
     page.locator('[data-action="project-account-edit"]').nth(1).click()
     assert page.locator('#dialog input[name="amount"]').input_value() == '3000'
+    # порядок аккаунтов: номер в списке и выбор позиции в окне редактирования
+    assert page.locator('.project-account-number').count() == 3
+    assert page.locator('#dialog select[name="position"] option').count() == 3
+    assert page.locator('#dialog select[name="position"]').input_value() == '2'
     fits(page)
     close_dialog(page)
+    page.evaluate(r"""() => { window.__reorderCalls = []; window.__ordApi = window.api;
+        window.api = async (path, options = {}) => {
+          if (path.endsWith('/accounts/reorder')) { __reorderCalls.push(JSON.parse(options.body));
+            const p = structuredClone(state.projects.find(x => x.id === 'preview-private')); return p; }
+          if (/\/accounts\//.test(path) && options.method === 'PATCH') return structuredClone(state.projects.find(x => x.id === 'preview-private'));
+          return __ordApi(path, options); }; }""")
+    page.locator('[data-action="project-account-edit"]').nth(1).click()
+    page.locator('#dialog select[name="position"]').select_option('1')
+    page.locator('#dialog-submit').click()
+    page.wait_for_function('__reorderCalls.length === 1')
+    assert page.evaluate('__reorderCalls[0].position') == 1
+    page.evaluate('window.api = __ordApi; void 0')
     page.locator('[data-action="project-account-edit"]').nth(2).click()
     page.locator('[data-action="project-account-delete"]').click()
     page.wait_for_function("document.querySelector('#dialog-title').textContent.includes('Удалить аккаунт')")
@@ -674,7 +690,7 @@ def main():
                     assert page.locator(".hero .hero-value").inner_text().strip()
                     # динамика доходности лентой дней: строки с результатом и сводка
                     assert page.locator('.chart-panel .feed .feed-day').count() >= 1
-                    assert page.locator('.chart-panel .feed-meta span').count() == 3
+                    assert page.locator('.chart-panel .feed-meta span').count() == 2
                     assert 'MYFIN' not in page.locator('.hero').inner_text()
                     fx_unavailable_ui(page)
                     # лента: четыре события предпросмотра, два из них не прочитаны
