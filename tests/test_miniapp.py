@@ -1488,7 +1488,12 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
              "capitalization_from":"2026-10-01", "bonus_amount":100, "bonus_expires_at":expiry,
              "bonus_capitalization":True},
         ]
-        with patch.object(projects, "today", return_value=fixed_today):
+        class FixedClock(datetime):     # «сейчас» зафиксировано: срок бонуса не должен зависеть от реальной даты
+            @classmethod
+            def now(cls, tz=None):
+                return datetime(2026, 10, 2, 9, tzinfo=tz or timezone.utc)
+
+        with patch.object(projects, "today", return_value=fixed_today), patch.object(projects, "datetime", FixedClock):
             created = projects.save(self.db, "1", {"name":"Mixed forecast", "currency":"BYN",
                 "rate_percent":1, "period":"day", "multi":True, "accounts":accounts})
             one_day = projects.forecast(self.db, "1", created["id"], "2026-10-03", True)

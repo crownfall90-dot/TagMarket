@@ -1503,8 +1503,8 @@ def late_note(row: dict) -> str:
     if behind < 30:
         return ""
     if behind < 600:
-        return f"<i>пришло с опозданием на {behind / 60:.0f} ч — терминал был offline</i>"
-    return f"<i>событие от {row['time']:%d.%m}, пришло после включения терминала</i>"
+        return f"<i>пришло с опозданием на {behind / 60:.0f} ч</i>"
+    return f"<i>событие от {row['time']:%d.%m}, пришло с опозданием</i>"
 
 
 WEEKDAYS = ("пн", "вт", "ср", "чт", "пт", "сб", "вс")
@@ -1679,37 +1679,26 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
     pct_base = cap_then if cap_then else cap
     nth, total = ordinal_today(row)
 
-    # порядок как просили: дата/время, какая сделка за день, потом профит крупно
+    # коротко: когда, итог, результат, за день, что накоплено и сколько на стратегии
     out = [f"🕒 <b>{dow(row['time'])}, {row['time']:%d.%m.%Y  %H:%M:%S}</b>",
-           f"{'✅' if plus else '❌'} <b>Сделка закрыта в {'плюс' if plus else 'минус'}</b>",
-           f"🔢 {_nth_word(nth)} сделка за день{'' if total == nth else f' из {total}'}",
-           f"<b>{money(profit)}{sign(cur)}</b> чистыми"
+           f"{'✅' if plus else '❌'} <b>Сделка в {'плюс' if plus else 'минус'}</b> · "
+           f"{short(row['symbol'], 12).split('.')[0]} {'покупка' if str(row['side']).upper() == 'BUY' else 'продажа'}",
+           f"<b>{money(profit)}{sign(cur)}</b>"
            + (f"  <i>{pct(profit / pct_base * 100)}</i>" if pct_base else "")]
-
-    details = [f"{short(row['symbol'], 12)} {row['side']}"]
-    if gross != profit:
-        details.append(f"до комиссии {money(gross)}")
-    opened = opened_at(row.get("position", 0), row["time"])
-    if opened:
-        mins = (row["time"] - opened).total_seconds() / 60
-        held = f", держал {mins:.0f} мин" if mins < 600 else ""
-        details.append(f"вход {opened:%H:%M:%S}{held}")
-    out.append("<i>" + " · ".join(details) + "</i>")
 
     # профит за все сделки дня
     day_profit = net_of_fee(mine(day_net)) if day_net is not None else profit
     n = day_count if day_count is not None else 1
-    word = plural(n, "сделка", "сделки", "сделок")
-    out.append(f"💵 За день: <b>{money(day_profit)}{sign(cur)}</b> <i>({n} {word})</i>")
+    if n > 1:
+        out.append(f"💵 За день: <b>{money(day_profit)}{sign(cur)}</b> <i>({n} {plural(n, 'сделка', 'сделки', 'сделок')})</i>")
 
-    # Деньги на стратегии после этой сделки: капитал + накопленный профит на её момент.
-    # Профит растёт на результат сделки и уменьшается, когда его выводят или реинвестируют.
+    # Накопленный профит — это всё, что заработано и не выведено, а не результат одной
+    # сделки: прежние плюсы и минусы входят в него, поэтому показываем «было → стало».
     around = strategy_around(row)
     if around["became"] or around["kept_became"]:
-        out.append(f"💰 Капитал: <b>{amount(around['cap_became'], cur)}</b>")
-        if abs(around["kept_became"]) >= 0.01:
-            out.append(f"📈 Накоплено профита: <b>{amount(around['kept_became'], cur, signed=True)}</b> "
-                       f"<i>(не выведен)</i>")
+        if abs(around["kept_became"] - around["kept_was"]) >= 0.01:
+            out.append(f"📈 Накоплено профита: {amount(around['kept_was'], cur, signed=True)} → "
+                       f"<b>{amount(around['kept_became'], cur, signed=True)}</b>")
         out.append(f"📊 На стратегии: <b>{amount(around['became'], cur)}</b>")
     out.append(late_note(row))
     return "\n".join(out)

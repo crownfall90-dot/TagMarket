@@ -258,24 +258,23 @@ assert trades.winrate_bar(5, 10, 10).count("▰") == 5
 _saved_capital, _saved_invested = trades.capital, trades.invested
 _saved_kept = trades.retained
 trades.capital = lambda: 100.0          # капитал стратегии
-trades.retained = lambda *a, **k: 42.63         # накопленный профит поверх него
+trades.retained = lambda upto=None, inclusive=True: 42.63 if inclusive else 10.0   # накопленный профит: до сделки 10, после 42.63
 trades.invested = lambda: 142.63        # он же плюс накопленный профит
 note = trades.fmt_notification(rows[0], "USD", day_net=1.5, day_count=3, total_net=9.0)
 trades.capital, trades.invested = _saved_capital, _saved_invested
 trades.retained = _saved_kept
 # порядок: дата/время, какая сделка за день, потом чистый профит
-assert note.index("11.08.2026") < note.index("сделка за день") < note.index("66.50"), note
+assert note.index("11.08.2026") < note.index("Сделка в плюс") < note.index("66.50"), note
 assert "+66.50" in note, "результат сделки чистыми (95 × 0.7)"
-assert "Сделка закрыта в плюс" in note, note
+assert "Сделка в плюс" in note and "Сделка закрыта" not in note, note
 assert "вт, 11.08.2026" in note, note       # день недели рядом с датой
-assert "Капитал" in note, "капитал показываем всегда"
+assert "Капитал" not in note and "до комиссии" not in note, "лишнего в уведомлении нет"
 assert "За день" in note and "+1.05" in note, "профит за все сделки дня (1.5 × 0.7)"
 assert "3 сделки" in note, "количество сделок за день"
 # накопленный профит: он лежит на стратегии, пока его не вывели, и новые
 # сделки прибавляются к нему — раньше «всего» считалось за один день
-assert "Накоплено профита" in note and "+42.63" in note, note
+assert "Накоплено профита: +10.00" in note and "+42.63" in note, "показываем было → стало"
 assert "142.63" in note, "всего на стратегии = капитал + накопленный профит"
-assert "до комиссии +95.00" in note, "видно валовую сумму"
 assert "12:00:00" in note, "нужно время сделки"
 # про открытие позиции больше не пишем — важен результат, а он при закрытии
 opening = dict(rows[0], is_closing=False, is_opening=True)
