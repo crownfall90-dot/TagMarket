@@ -1182,3 +1182,27 @@ dialog::backdrop{background:#000a;backdrop-filter:blur(6px);-webkit-backdrop-fil
 .guest-card .guest-actions .danger{margin-left:0}
 .share-row{align-items:flex-start}.share-row>span{display:grid;gap:2px}.share-row b{font-size:13px;font-weight:550}.share-row small{font-size:11px;color:var(--muted)}
 .guest-card .guest-actions .button svg{display:none}.guest-card .guest-actions .button{font-size:11px}
+/* Динамика кубиками: день — столбик, выше столбик — больше доходность за день */
+.cubes{position:relative;margin-top:16px}
+.cubes-scroll{overflow-x:auto;overflow-y:hidden;padding-bottom:4px;scrollbar-width:thin}
+.cubes-row{position:relative;display:flex;align-items:stretch;gap:4px;height:140px;min-width:100%;width:max(100%,calc(var(--n) * 22px))}
+.cubes-row:before{content:"";position:absolute;left:0;right:0;bottom:var(--base);height:1px;background:var(--line);pointer-events:none}
+.cube{position:relative;flex:1 1 0;min-width:14px;max-width:64px;border:0;padding:0;background:transparent;cursor:pointer}
+.cube:after{content:"";position:absolute;left:0;right:0;height:var(--h);border-radius:7px;transition:transform .2s var(--ease),filter .2s var(--ease),opacity .2s}
+.cube.up:after{bottom:var(--base);background:linear-gradient(180deg,var(--accent),rgb(var(--accent-rgb) / .38));box-shadow:0 8px 18px -10px rgb(var(--accent-rgb) / .7)}
+.cube.down:after{top:calc(100% - var(--base));background:linear-gradient(0deg,var(--negative),rgb(242 153 153 / .38))}
+.cube:not(.active):after{opacity:.55}
+.cube.active:after,.cube:hover:after{opacity:1;filter:brightness(1.08)}
+.cube:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:7px}
+.cube-detail{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 10px;margin-top:10px;padding:10px 12px;border-radius:12px;background:rgb(var(--bg-rgb) / .5);border:1px solid var(--line);font-size:13px;min-height:44px}
+.cube-detail b{font-weight:550}.cube-detail strong{font-size:15px;font-weight:600;font-variant-numeric:tabular-nums}.cube-detail em{font-style:normal;font-size:12px}
+.cube-detail small{flex-basis:100%;font-size:10px;color:var(--muted)}
+.cube-axis{display:flex;justify-content:space-between;margin-top:6px;font-size:10px;color:var(--muted)}
+@media(prefers-reduced-motion:reduce){.cube:after{transition:none}}
+/* График цены: только свечи */
+.price-chart-panel .chart-wrap{margin-top:14px}
+.price-grid{stroke:rgb(255 255 255 / .06);stroke-width:1;stroke-dasharray:2 6;vector-effect:non-scaling-stroke}
+.price-now-line{stroke:rgb(var(--accent-rgb) / .45);stroke-width:1;stroke-dasharray:4 4;vector-effect:non-scaling-stroke}
+.price-level{font-size:9px;opacity:.6}
+#compose-count.over{color:var(--negative)}
+.compose-status.is-warn strong{color:#e4bf7a}

@@ -24,6 +24,7 @@ from account_lock import locked
 
 from aiohttp import web
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramForbiddenError
 from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
 os.environ["TRADES_SOURCE"] = "store"
@@ -1154,7 +1155,7 @@ async def broadcast(request):
                 # just like multipart submissions from the web form.
                 data = {k: v for k, v in (await request.post()).items()}
         try:
-            body = sanitize_broadcast_html(data.get("text", ""))
+            body = sanitize_broadcast_html(data.get("text", ""), limit=16384)
         except ValueError:
             raise web.HTTPBadRequest(text="Текст слишком длинный")
         if telegram_length(plain_report(body)) > 4096:
@@ -1213,7 +1214,7 @@ async def broadcast(request):
             # follow the attachment as a separate formatted message.
             caption = body if telegram_length(plain_report(body)) <= 1000 else None
             for recipient, status in campaign["recipients"].items():
-                if status == "sent":
+                if status in ("sent", "unreachable"):
                     continue
                 try:
                     if status != "media_sent":
@@ -1237,8 +1238,15 @@ async def broadcast(request):
                         partner.record_notification(db, recipient, f"broadcast:{key}", "message",
                                                     "Сообщение Tag Markets",
                                                     plain_report(body) or ("Фото" if media_kind == "photo" else "Видео"))
-                    except sqlite3.DatabaseError:
+                    except Exception:
+                        # доставлено, а запись во «входящих» не удалась — получателю это не повод считаться недоставленным
                         logging.exception("broadcast delivered but inbox save failed for %s", recipient)
+                except TelegramForbiddenError:
+                    # человек заблокировал бота или удалил аккаунт: сколько ни повторяй, сообщение не дойдёт.
+                    # Такого получателя не держим в «ожидает повторной отправки»
+                    logging.warning("broadcast: %s недоступен (бот заблокирован или аккаунт удалён)", recipient)
+                    campaign["recipients"][recipient] = "unreachable"
+                    partner.kv_set(db, campaign_key, json.dumps(campaign))
                 except Exception:
                     logging.exception("miniapp broadcast failed for recipient %s", recipient)
                     if campaign["recipients"][recipient] != "media_sent":
@@ -1249,8 +1257,11 @@ async def broadcast(request):
                 await session.close()
             finally:
                 _broadcast_active.discard(key)
-        result = {"sent": sum(s == "sent" for s in campaign["recipients"].values()),
-                  "failed": sum(s != "sent" for s in campaign["recipients"].values())}
+        statuses = campaign["recipients"]
+        result = {"sent": sum(v == "sent" for v in statuses.values()),
+                  "failed": sum(v not in ("sent", "unreachable") for v in statuses.values()),
+                  "unreachable": [{"id": r, "name": partner.kv_get(db, f"guest_name:{r}") or r}
+                                  for r, v in statuses.items() if v == "unreachable"]}
         return web.json_response(result)
     finally:
         if media_path:

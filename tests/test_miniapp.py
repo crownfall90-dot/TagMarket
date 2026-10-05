@@ -1773,6 +1773,74 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(inbox["unread"], 1)
         self.assertEqual(inbox["items"][0]["body"], "Привет с картинкой")
 
+    async def test_blocked_recipient_is_reported_as_unreachable_not_as_pending_retry(self):
+        from aiogram.exceptions import TelegramForbiddenError
+        from aiogram.methods import SendMessage
+        partner.kv_set(self.db, "guest:2", "1")
+        partner.kv_set(self.db, "guest:3", "1")
+        partner.kv_set(self.db, "guest_name:3", "Заблокировавший")
+        sent = []
+
+        class Session:
+            def __init__(self, **kwargs): pass
+            async def close(self): pass
+
+        class Sender:
+            def __init__(self, *args, **kwargs): pass
+            async def send_message(self, recipient, text, **kwargs):
+                if recipient == "3":
+                    raise TelegramForbiddenError(method=SendMessage(chat_id=3, text=text),
+                                                 message="Forbidden: bot was blocked by the user")
+                sent.append(recipient)
+
+        def form(request_id):
+            data = FormData()
+            data.add_field("target", "all")
+            data.add_field("text", "Привет")
+            data.add_field("request_id", request_id)
+            return data
+
+        with patch.object(miniapp.logic, "AiohttpSession", Session), \
+                patch.object(miniapp.logic, "Bot", Sender), \
+                patch.object(miniapp.logic, "works", return_value=True):
+            response = await self.call("POST", "/api/broadcast", data=form("blocked-1"))
+            self.assertEqual(response.status, 200, await response.text())
+            result = await response.json()
+            self.assertEqual((result["sent"], result["failed"]), (1, 0), "блокировка — не «ожидает повтора»")
+            self.assertEqual(result["unreachable"], [{"id": "3", "name": "Заблокировавший"}])
+            # повтор той же рассылки не шлёт заново ни доставленному, ни недоступному
+            again = await (await self.call("POST", "/api/broadcast", data=form("blocked-1"))).json()
+            self.assertEqual(again, result)
+            self.assertEqual(sent, ["2"])
+
+    async def test_broadcast_limit_counts_visible_text_not_formatting_tags(self):
+        partner.kv_set(self.db, "guest:2", "1")
+        body = "<b>" + "а" * 2000 + "</b>" + "<i>б</i>" * 1500           # в сыром виде заметно больше 4096
+        self.assertGreater(len(body), 4096)
+
+        class Session:
+            def __init__(self, **kwargs): pass
+            async def close(self): pass
+
+        class Sender:
+            def __init__(self, *args, **kwargs): pass
+            async def send_message(self, recipient, text, **kwargs): pass
+
+        def form(text, request_id):
+            data = FormData()
+            data.add_field("target", "2")
+            data.add_field("text", text)
+            data.add_field("request_id", request_id)
+            return data
+
+        with patch.object(miniapp.logic, "AiohttpSession", Session), \
+                patch.object(miniapp.logic, "Bot", Sender), \
+                patch.object(miniapp.logic, "works", return_value=True):
+            ok = await self.call("POST", "/api/broadcast", data=form(body, "limit-ok"))
+            self.assertEqual(ok.status, 200, await ok.text())
+            too_long = await self.call("POST", "/api/broadcast", data=form("а" * 4097, "limit-bad"))
+            self.assertEqual(too_long.status, 400)
+
     async def test_broadcast_button_always_opens_the_mini_app(self):
         partner.kv_set(self.db, "guest:2", "1")
         sent = []
@@ -1877,9 +1945,9 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(miniapp.logic, "Bot", Sender), \
                 patch.object(miniapp.logic, "works", return_value=True):
             first = await self.call("POST", "/api/broadcast", data=form())
-            self.assertEqual(await first.json(), {"sent": 1, "failed": 1})
+            self.assertEqual(await first.json(), {"sent": 1, "failed": 1, "unreachable": []})
             retry = await self.call("POST", "/api/broadcast", data=form())
-        self.assertEqual(await retry.json(), {"sent": 2, "failed": 0})
+        self.assertEqual(await retry.json(), {"sent": 2, "failed": 0, "unreachable": []})
         self.assertEqual(calls.count(("photo", "2")), 1)
         self.assertEqual(calls.count(("photo", "3")), 1)
         self.assertEqual(calls.count(("message", "2")), 1)

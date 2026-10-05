@@ -785,7 +785,19 @@ def main():
                     page.wait_for_function("state.displayCurrency==='USD'")
                     fits(page)
                     # динамика доходности лентой дней: строки с результатом и сводка
-                    assert page.locator('.chart-panel .feed .feed-day').count() >= 1
+                    # динамика кубиками: по кубику на день, выше кубик — больше доходность за день
+                    page.locator('[data-action="period"][data-value="month"]').first.click()
+                    page.wait_for_function("document.querySelectorAll('.chart-panel .cube').length >= 3")
+                    heights = page.evaluate("[...document.querySelectorAll('.chart-panel .cube')].map(c => [parseFloat(c.style.getPropertyValue('--h')), c.dataset.cube])")
+                    assert all(h > 0 for h, _ in heights)
+                    biggest = max(heights, key=lambda x: x[0])
+                    assert biggest[0] > min(h for h, _ in heights), heights
+                    # выбор дня показывает его сумму и процент строкой под рядом
+                    page.locator('.chart-panel .cube').first.click()
+                    assert page.locator('.chart-panel .cube.active').count() == 1
+                    assert '$' in page.locator('.chart-panel .cube-detail').inner_text()
+                    page.locator('[data-action="period"][data-value="today"]').first.click()
+                    page.wait_for_function("document.querySelectorAll('.chart-panel .cube').length >= 1")
                     assert page.locator('.chart-panel .feed-meta span').count() in (2, 4)
                     assert 'MYFIN' not in page.locator('.hero').inner_text()
                     fx_unavailable_ui(page)
@@ -795,7 +807,8 @@ def main():
                     assert page.locator('.notification-item.unread').count() == 3
                     # рядом с датой — день недели: в заголовках групп и у старых событий
                     assert any(',' in h or '·' in h for h in page.locator('.notification-group > h3').all_inner_texts())
-                    assert page.locator('.notification-group > h3').first.inner_text().lower().startswith('сегодня ·')
+                    # первая группа — «Сегодня», а в первые минуты после полуночи UTC события двухминутной давности уже «Вчера»
+                    assert page.locator('.notification-group > h3').first.inner_text().lower().startswith(('сегодня ·', 'вчера ·'))
                     # главная сумма события вынесена вправо, а название события — отдельно от стратегии
                     assert page.locator('.notification-item .nt-amount').count() >= 3
                     assert 'Сделка в плюс' in page.locator('.notification-item.tone-good').first.inner_text()
@@ -821,23 +834,16 @@ def main():
                     page.locator('.chart-panel [data-action="period"][data-value="today"]').click()
                     page.locator('.chart-panel [data-action="period"][data-value="today"].active').wait_for()
                     page.wait_for_function("!document.body.classList.contains('is-loading')")
-                    # график цены SONIC: свечи и отметки сделок
+                    # график цены SONIC: только красно-зелёные свечи, без средних и подписей сделок
                     page.locator('.price-chart-panel svg').wait_for()
-                    # сделки как в MT5: стрелка входа, кольцо выхода, пунктир между ними
-                    assert page.locator('.price-chart-panel .trade-in').count() == 3
-                    assert page.locator('.price-chart-panel .trade-out').count() == 3
-                    assert page.locator('.price-chart-panel .trade-link').count() == 3
-                    # отметки стоят на цене сделки внутри графика, а не прибиты к краю
-                    inside = page.evaluate("""() => { const box = document.querySelector('.price-chart-wrap').getBoundingClientRect();
-                        return [...document.querySelectorAll('.trade-layer i')].every(el => { const r = el.getBoundingClientRect();
-                            const cy = r.top + r.height / 2; return cy > box.top + 4 && cy < box.bottom - 4; }); }""")
-                    assert inside, "отметки сделок вышли за график"
-                    # вход подписан «Покупка/Продажа», выход — сделкой, которой закрыли
-                    tags = page.locator('.trade-layer .trade-tag').all_inner_texts()
-                    assert any(t.startswith('Покупка') for t in tags) and any(t.startswith('Продажа') for t in tags), tags
-                    assert page.locator('.trade-list li').count() == 3
+                    assert page.locator('.price-chart-panel svg rect[fill="url(#cd-up)"]').count() >= 1
+                    assert page.locator('.price-chart-panel svg rect[fill="url(#cd-down)"]').count() >= 1
+                    assert page.locator('.price-chart-panel polyline').count() == 0          # линий MA20/MA50 нет
+                    for gone in ('.price-legend', '.trade-layer', '.trade-list', '.trade-tag', '.chart-hint'):
+                        assert page.locator(f'.price-chart-panel {gone}').count() == 0, gone
+                    assert 'MA20' not in page.locator('.price-chart-panel').inner_text()
                     assert page.locator('.time-axis span').count() == 5
-                    # масштаб и листание: окно свечей меняется, отметки остаются
+                    # масштаб и листание: окно свечей меняется
                     full = page.evaluate("chartView.count")
                     page.locator('[data-action="chart-zoom"][data-value="in"]').click()
                     page.wait_for_function("c => chartView.count < c", arg=full)
@@ -851,9 +857,6 @@ def main():
                     page.wait_for_function("s => chartView.start < s", arg=zoomed_start)
                     page.locator('[data-action="chart-zoom"][data-value="reset"]').click()
                     page.wait_for_function("c => chartView.count === c", arg=full)
-                    assert page.locator('.price-chart-panel .trade-in').count() == 3
-                    circle = page.locator('.trade-layer .trade-out').first.bounding_box()
-                    assert abs(circle["width"] - circle["height"]) < 0.5, f"кольцо выхода сплющено: {circle}"
                     fits(page)
                     if width == 390:
                         page.wait_for_timeout(500)
@@ -954,6 +957,16 @@ def main():
                     page.locator('[data-action="broadcast"]').click()
                     area = page.locator('#dialog textarea[name="text"]')
                     area.wait_for()
+                    # отмена выбора файла не закрывает окно: «cancel» поля файла всплывает до диалога
+                    page.evaluate("document.querySelector('#dialog input[name=\"media\"]').dispatchEvent(new Event('cancel', {bubbles: true}))")
+                    page.wait_for_timeout(150)
+                    assert page.locator('#dialog[open]').count() == 1
+                    # и «назад» Telegram сразу после выбора файла
+                    page.evaluate("filePickerUntil = Date.now() + 5000")
+                    assert page.evaluate("requestDialogExit(document.querySelector('#dialog'))") is not None
+                    page.wait_for_timeout(150)
+                    assert page.locator('#dialog[open]').count() == 1
+                    page.evaluate("filePickerUntil = 0")
                     # получатели: «Всем» по умолчанию, «Одному» открывает выбор пользователя
                     assert page.locator('#dialog select[name="target"]').input_value() == 'all'
                     assert page.locator('.cmp-one').is_hidden()
@@ -976,10 +989,14 @@ def main():
                     area.evaluate('(el) => {el.selectionStart = 0; el.selectionEnd = 10;}')
                     page.locator('[data-format="bold"]').click()
                     assert page.locator('#compose-live b').count() == 1
+                    # теги форматирования не считаются символами: счётчик остался прежним
+                    assert page.locator('#compose-count').inner_text().startswith(f'{len("Обновление для пользователей")} /')
+                    assert page.locator('#dialog textarea[name="text"]').get_attribute('maxlength') is None
                     page.locator('#dialog input[name="media"]').set_input_files({
                         "name": "photo.png", "mimeType": "image/png",
                         "buffer": base64.b64decode(
                             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9YbZT5cAAAAASUVORK5CYII=")})
+                    page.wait_for_timeout(700)      # короткая защита окна после выбора файла прошла
                     assert "photo.png" in page.locator('#compose-file-name').inner_text()
                     assert page.locator('.cmp-drop').count() == 0          # файл — скрепкой в панели текста
                     assert page.locator('.cmp-file').is_visible()
@@ -990,6 +1007,7 @@ def main():
                         "name": "photo.png", "mimeType": "image/png",
                         "buffer": base64.b64decode(
                             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9YbZT5cAAAAASUVORK5CYII=")})
+                    page.wait_for_timeout(700)      # короткая защита окна после выбора файла прошла
                     # кнопка «Открыть приложение»: своё название, предпросмотр под сообщением
                     assert page.locator('#compose-btn-preview').is_hidden()
                     page.locator('#dialog [data-cmp-button]').check()

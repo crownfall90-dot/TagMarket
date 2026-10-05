@@ -53,6 +53,8 @@ function notificationParts(item){
 function notificationTarget(item){const match=/^trade:(\d+):/.exec(item.event_key||'');if(match&&state.data?.accounts.some(a=>String(a.login)===match[1]))return {hash:'account/'+match[1],label:'Открыть счёт'};if(['trades','deposits','withdrawals'].includes(item.kind))return {hash:'accounts',label:'Открыть счета'};if(item.kind==='registration')return {hash:'people',label:'Открыть гостей'};return {hash:'',label:'Читать'};}
 function eventToast(item,count){const el=$('#toast'),[kind,ico]=eventKind(item);el.innerHTML=`<div class="event-toast kind-${esc(item.kind||'other')}" role="alert"><button type="button" class="event-toast-main" data-action="notification-open" data-id="${esc(item.id)}"><span class="event-toast-icon">${icon(ico)}</span><span class="event-toast-copy"><b>${count>1?`${count} новых · `:''}${esc(item.title)}</b><span>${esc(notificationParts(item).amount||notificationParts(item).lines[0]||'')}</span></span><span class="event-toast-go">${icon('arrow')}</span></button><button type="button" class="event-toast-close" data-action="toast-close" aria-label="Закрыть">×</button><i class="event-toast-timer"></i></div>`;el.classList.add('visible','has-event');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('visible'),6000);}
 function button(action,text,style='secondary',ico='',attrs=''){return `<button type="button" class="button ${style}" data-action="${action}" ${attrs}>${ico?icon(ico):''}<span class="button-label">${esc(text)}</span></button>`;}
+// Длина считается по видимому тексту: теги форматирования (<b>, <i>, <code>, <blockquote>) — не символы
+function broadcastLength(value){return String(value||'').replace(/<\/?(?:b|i|code|blockquote)>/gi,'').length;}
 function broadcastPreview(text){return esc(text).replace(/&lt;(\/?)(b|i|code|blockquote)&gt;/g,'<$1$2>');}
 function fileSize(bytes){return `${number(bytes/1024/1024)} МБ`;}
 async function mediaKind(file){const b=new Uint8Array(await file.slice(0,12).arrayBuffer());if(b[0]===255&&b[1]===216&&b[2]===255)return 'photo';if([137,80,78,71,13,10,26,10].every((v,i)=>b[i]===v))return 'photo';if(b[4]===102&&b[5]===116&&b[6]===121&&b[7]===112)return 'video';return null;}
@@ -312,11 +314,14 @@ function periodTabs(only){const short={today:'Сегодня',yesterday:'Вче�
 // Динамика доходности лентой дней: новые сверху, полоска — доля от самого
 // крупного дня, справа результат дня и накопленный итог периода. Дни без
 // сделок (выходные) не выводим, но учитываем в итоге.
-function dayFeed(rep,capital){const cur=rep.currency||'USD',rows=(rep.timeline?.length?rep.timeline:rep.chart||[]).map(p=>({day:p.day,value:Number(p.value)||0}));let total=0;const days=rows.map(p=>({...p,total:(total+=p.value)})).filter(p=>p.value!==0).reverse();if(!days.length)return empty('Пока нет закрытых сделок','Результат по дням появится после первой сделки за период.');const best=days.reduce((a,b)=>b.value>a.value?b:a),worst=days.reduce((a,b)=>b.value<a.value?b:a),peak=Math.max(...days.map(p=>Math.abs(p.value))),wins=days.filter(p=>p.value>0).length,avg=days.reduce((a,p)=>a+p.value,0)/days.length;
+function dayFeed(rep,capital){const cur=rep.currency||'USD',rows=(rep.timeline?.length?rep.timeline:rep.chart||[]).map(p=>({day:p.day,value:Number(p.value)||0}));let total=0;const days=rows.map(p=>({...p,total:(total+=p.value)})).filter(p=>p.value!==0).slice(-180);if(!days.length)return empty('Пока нет закрытых сделок','Результат по дням появится после первой сделки за период.');const best=days.reduce((a,b)=>b.value>a.value?b:a),worst=days.reduce((a,b)=>b.value<a.value?b:a),peak=Math.max(...days.map(p=>Math.abs(p.value))),wins=days.filter(p=>p.value>0).length,avg=days.reduce((a,p)=>a+p.value,0)/days.length;
  const weekday=d=>new Intl.DateTimeFormat('ru-RU',{weekday:'short',timeZone:'UTC'}).format(new Date(`${d}T00:00:00Z`));
- const row=p=>`<li class="feed-day ${p.value>0?'up':'down'}"><span class="feed-date"><b>${esc(date(p.day))}</b><small>${esc(weekday(p.day))}</small></span><span class="feed-bar"><i style="--w:${Math.max(3,Math.abs(p.value)/peak*100).toFixed(1)}%"></i></span><span class="feed-sum"><span class="feed-main"><b class="${signedClass(p.value)}">${money(p.value,cur,true)}</b>${capital>0?`<em class="${signedClass(p.value)}">${percent(p.value/capital*100)}</em>`:''}</span><small>с начала периода ${money(p.total,cur,true)}${capital>0?` · ${percent(p.total/capital*100)}`:''}</small></span></li>`;
- const SHOW=7,MAX=120,head=days.slice(0,SHOW),rest=days.slice(SHOW,MAX);
- return `<ol class="feed">${head.map(row).join('')}</ol>${rest.length?`<details class="feed-more"><summary>Ещё ${countLabel(rest.length,['день','дня','дней'])}</summary><ol class="feed">${rest.map(row).join('')}</ol>${days.length>MAX?'<p class="feed-note">Ранние дни — в отчёте счёта «По месяцам».</p>':''}</details>`:''}<div class="feed-meta"><span><small>Прибыльных дней</small><b>${wins} из ${days.length}</b></span><span><small>Средний день</small><b class="${signedClass(avg)}">${money(avg,cur,true)}</b></span>${days.length>1?`<span><small>Лучший день · ${esc(date(best.day))}</small><b class="positive">${money(best.value,cur,true)}${capital>0?` <em>${percent(best.value/capital*100)}</em>`:''}</b></span><span><small>Худший день · ${esc(date(worst.day))}</small><b class="${signedClass(worst.value)}">${money(worst.value,cur,true)}${capital>0?` <em>${percent(worst.value/capital*100)}</em>`:''}</b></span>`:''}</div>`;}
+ const span=Math.max(...days.map(p=>p.value>0?p.value:0),0)+Math.max(...days.map(p=>p.value<0?-p.value:0),0)||1,negShare=Math.max(...days.map(p=>p.value<0?-p.value:0),0)/span*100;
+ const info=p=>JSON.stringify([`${date(p.day)} · ${weekday(p.day)}`,money(p.value,cur,true),capital>0?percent(p.value/capital*100):'',`с начала периода ${money(p.total,cur,true)}${capital>0?` · ${percent(p.total/capital*100)}`:''}`,p.value>0?1:-1]);
+ const cube=(p,k)=>`<button type="button" class="cube ${p.value>0?'up':'down'}${k===days.length-1?' active':''}" style="--h:${Math.max(5,Math.abs(p.value)/span*100).toFixed(1)}%" data-cube="${esc(info(p))}" aria-label="${esc(`${date(p.day)}: ${money(p.value,cur,true)}`)}"></button>`;
+ const detail=info(days.at(-1));
+ const show=(d)=>{const [day,val,pct,total,sign]=JSON.parse(d);return `<b>${esc(day)}</b><strong class="${sign>0?'positive':'negative'}">${esc(val)}</strong>${pct?`<em class="${sign>0?'positive':'negative'}">${esc(pct)}</em>`:''}<small>${esc(total)}</small>`;};
+ return `<div class="cubes" style="--base:${negShare.toFixed(1)}%"><div class="cubes-scroll"><div class="cubes-row" role="list" style="--n:${days.length}">${days.map(cube).join('')}</div></div></div><div class="cube-detail" aria-live="polite">${show(detail)}</div><div class="cube-axis"><span>${esc(date(days[0].day))}</span><span>${esc(date(days.at(-1).day))}</span></div><div class="feed-meta"><span><small>Прибыльных дней</small><b>${wins} из ${days.length}</b></span><span><small>Средний день</small><b class="${signedClass(avg)}">${money(avg,cur,true)}</b></span>${days.length>1?`<span><small>Лучший день · ${esc(date(best.day))}</small><b class="positive">${money(best.value,cur,true)}${capital>0?` <em>${percent(best.value/capital*100)}</em>`:''}</b></span><span><small>Худший день · ${esc(date(worst.day))}</small><b class="${signedClass(worst.value)}">${money(worst.value,cur,true)}${capital>0?` <em>${percent(worst.value/capital*100)}</em>`:''}</b></span>`:''}</div>`;}
 function fxNote(fx){if(fx.stale){const at=new Date(fx.updated_at);const time=isNaN(at)?'':' от '+new Intl.DateTimeFormat('ru-RU',{hour:'2-digit',minute:'2-digit'}).format(at);return `<small class="stat-note warn-text fx-stale">Используется последний доступный курс${time}</small>`;}return '';}
 function timeMsk(value){return `${String(value||'').slice(11,16)} МСК`;}
 function periodBar(){return `<section class="report-controls panel"><div class="report-control report-period">${periodTabs()}</div></section>${customDates()}`;}
@@ -365,7 +370,6 @@ function tradesTable(rep){
 }
 const MOVE={deposit:['Пополнение стратегии','up','in'],reinvest:['Реинвест профита в капитал','refresh','re'],profit_out:['Вывод профита на баланс Tag Markets','down','out'],profit_in:['Профит вернулся на стратегию','up','in'],capital_out:['Вывод капитала на баланс Tag Markets','down','out']};
 function moveRow(r,cur){const [label,ico,dir]=MOVE[r.move]||['Движение средств','chart','in'];return `<article class="deal-row move-row ${dir}"><div class="deal-symbol"><span class="deal-icon move-${dir}">${icon(ico)}</span><div><b>${label}</b><small>${esc(timeMsk(r.time))}</small>${r.capital_now!=null?`<small class="flow">Капитал ${number(r.capital_was)} → <b>${money(r.capital_now,cur)}</b></small>`:''}</div></div><div class="deal-result"><span class="result-pair ${signedClass(r.net_income)}"><b>${money(r.net_income,cur,true)}</b></span></div></article>`;}
-function movingAvg(values,period){const out=[];for(let i=0;i<values.length;i++){if(i<period-1){out.push(null);continue;}let sum=0;for(let j=i-period+1;j<=i;j++)sum+=values[j];out.push(sum/period);}return out;}
 // Окно графика — какие свечи видны. Живёт вне перерисовки экрана: фоновое
 // обновление не сбрасывает масштаб, новая свеча не сбивает позицию, если
 // смотрят на самый конец. Новый период или счёт — окно по умолчанию
@@ -383,90 +387,37 @@ function priceChart(data){
  const all=data?.candles||[];
  if(all.length<2)return `<section class="panel price-chart-panel"><div class="panel-head"><div><span class="eyebrow">ЦЕНА · ${esc(data?.symbol||'XAUUSD')}</span><h2>График цены</h2></div></div>${empty('Пока нет данных','График появится, как только агент передаст котировки за этот период.')}</section>`;
  const part=priceChartParts(data);
- return `<section class="panel price-chart-panel"><div class="panel-head"><div><span class="eyebrow">ЦЕНА · ${esc(data.symbol)}</span><h2>${esc(data.title||'График цены')}</h2></div><div class="chart-tools" role="group" aria-label="Масштаб графика"><button type="button" class="icon-btn" data-action="chart-zoom" data-value="out" aria-label="Отдалить">−</button><button type="button" class="icon-btn" data-action="chart-zoom" data-value="in" aria-label="Приблизить">+</button><button type="button" class="icon-btn" data-action="chart-zoom" data-value="reset" aria-label="Весь период" title="Весь период">⟲</button></div></div><div class="price-legend"><span class="ma20">MA20</span><span class="ma50">MA50</span><span class="chart-hint">двумя пальцами — масштаб, перетаскиванием — листать</span></div><div class="chart-wrap price-chart-wrap">${part.plot}</div><div class="time-axis">${part.ticks}</div><div class="trade-list-box">${part.list}</div></section>`;
+ return `<section class="panel price-chart-panel"><div class="panel-head"><div><span class="eyebrow">ЦЕНА · ${esc(data.symbol)}</span><h2>${esc(data.title||'График цены')}</h2></div><div class="chart-tools" role="group" aria-label="Масштаб графика"><button type="button" class="icon-btn" data-action="chart-zoom" data-value="out" aria-label="Отдалить">−</button><button type="button" class="icon-btn" data-action="chart-zoom" data-value="in" aria-label="Приблизить">+</button><button type="button" class="icon-btn" data-action="chart-zoom" data-value="reset" aria-label="Весь период" title="Весь период">⟲</button></div></div><div class="chart-wrap price-chart-wrap">${part.plot}</div><div class="time-axis">${part.ticks}</div></section>`;
 }
 function priceChartParts(data){
  const all=data.candles,key=[state.view,state.login,state.period,state.from,state.to,all[0].time].join('|');
  const {start,count}=chartWindow(all.length,key),rows=all.slice(start,start+count);
- // средние считаем по всем свечам, иначе у левого края окна их бы не было
- const closesAll=all.map(r=>Number(r.close)),ma20=movingAvg(closesAll,20).slice(start,start+count),ma50=movingAvg(closesAll,50).slice(start,start+count);
- const n=rows.length,w=640,h=220,pad=6,step=w/n;
- const t0=Date.parse(rows[0].time),t1=Date.parse(rows.at(-1).time),span=Math.max(1,t1-t0),tEnd=t1+15*60e3;
- const inView=t=>!!t&&Date.parse(t)>=t0&&Date.parse(t)<=tEnd;
- // сделки, у которых вход или выход попадает в видимое окно
- const pairs=(data.pairs||[]).filter(p=>p.out_price!=null&&(inView(p.in_time)||inView(p.out_time)));
- const prices=pairs.flatMap(p=>[inView(p.in_time)?p.in_price:null,inView(p.out_time)?p.out_price:null]).filter(v=>v!=null).map(Number);
- const lo0=Math.min(...rows.map(r=>Number(r.low)),...prices),hi0=Math.max(...rows.map(r=>Number(r.high)),...prices),margin=(hi0-lo0)*.08||1;
+ const n=rows.length,w=640,h=220,pad=8,step=w/n;
+ const t0=Date.parse(rows[0].time),t1=Date.parse(rows.at(-1).time),span=Math.max(1,t1-t0);
+ const lo0=Math.min(...rows.map(r=>Number(r.low))),hi0=Math.max(...rows.map(r=>Number(r.high))),margin=(hi0-lo0)*.1||1;
  const lo=lo0-margin,hi=hi0+margin,range=hi-lo;
  const x=i=>i*step+step/2,y=v=>pad+(hi-v)/range*(h-pad*2);
- const xAt=iso=>(Date.parse(iso)-t0)/span*(w-step)+step/2;
  const pct=(v,of)=>(v/of*100).toFixed(2)+'%';
- // классические свечи: зелёная — рост, красная — падение, в любой гамме
- const candles=rows.map((r,i)=>{const o=Number(r.open),c=Number(r.close),color=c>=o?'#26b87a':'#ef4f5f';const bodyTop=y(Math.max(o,c)),bodyBot=y(Math.min(o,c));return `<line x1="${x(i).toFixed(1)}" x2="${x(i).toFixed(1)}" y1="${y(Number(r.high)).toFixed(1)}" y2="${y(Number(r.low)).toFixed(1)}" stroke="${color}" stroke-width="1"/><rect x="${(x(i)-step*.34).toFixed(1)}" y="${bodyTop.toFixed(1)}" width="${(step*.68).toFixed(1)}" height="${Math.max(1,bodyBot-bodyTop).toFixed(1)}" fill="${color}"/>`;}).join('');
- const line=(vals,color)=>{const pts=vals.map((v,i)=>v==null?null:`${x(i).toFixed(1)},${y(v).toFixed(1)}`).filter(Boolean);if(pts.length<2)return '';return `<polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="1.6" opacity=".85"/>`;};
+ // свечи: зелёная — рост, красная — падение; тело с мягким градиентом, закруглённое, тень тонкая
+ const up='#2fcf8a',down='#f0586a';
+ const defs=`<defs><linearGradient id="cd-up" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${up}"/><stop offset="1" stop-color="#1e9a66"/></linearGradient><linearGradient id="cd-down" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff7384"/><stop offset="1" stop-color="#c8394c"/></linearGradient></defs>`;
+ const candles=rows.map((r,i)=>{const o=Number(r.open),c=Number(r.close),rise=c>=o,color=rise?up:down,bodyTop=y(Math.max(o,c)),bodyBot=y(Math.min(o,c)),bw=Math.max(1.2,step*.62);return `<line x1="${x(i).toFixed(1)}" x2="${x(i).toFixed(1)}" y1="${y(Number(r.high)).toFixed(1)}" y2="${y(Number(r.low)).toFixed(1)}" stroke="${color}" stroke-width="1.3" stroke-linecap="round" vector-effect="non-scaling-stroke"/><rect x="${(x(i)-bw/2).toFixed(1)}" y="${bodyTop.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1.4,bodyBot-bodyTop).toFixed(1)}" rx="${Math.min(2,bw/3).toFixed(1)}" fill="url(#cd-${rise?'up':'down'})"/>`;}).join('');
  // шкала цен справа и текущая цена, как в терминале
  const last=Number(rows.at(-1).close),grid=[.15,.38,.62,.85].map(f=>hi-range*f);
  const under=grid.map(v=>`<line class="price-grid" x1="0" x2="${w}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/>`).join('')
   +`<line class="price-now-line" x1="0" x2="${w}" y1="${y(last).toFixed(1)}" y2="${y(last).toFixed(1)}"/>`;
  const axis=grid.map(v=>`<span class="price-level" style="top:${pct(y(v),h)}">${number(v)}</span>`).join('')
   +`<span class="price-now" style="top:${pct(y(last),h)}">${number(last)}</span>`;
- // Ось времени снизу и список сделок под графиком: на телефоне подсказки по
- // наведению не работают — время и цены входа/выхода видны сразу. Время в
- // данных уже МСК (как у сделок в списке), поэтому формат — в UTC
+ // Ось времени снизу. Время в данных уже МСК, поэтому формат — в UTC
  const long=span>36*3600e3,hm={hour:'2-digit',minute:'2-digit',timeZone:'UTC'};
  const fmt=new Intl.DateTimeFormat('ru-RU',long?{day:'numeric',month:'short',timeZone:'UTC'}:hm);
- const clock=new Intl.DateTimeFormat('ru-RU',hm),whenFmt=new Intl.DateTimeFormat('ru-RU',long?{day:'numeric',month:'short',...hm}:hm);
- const when=iso=>whenFmt.format(new Date(iso));
- // Сделки как в терминале MT5: стрелка входа на цене входа (покупка — синяя
- // вверх под ценой, продажа — красная вниз над ценой), кольцо выхода, пунктир
- // между ними цветом результата, тонкие линии вниз к оси времени. У каждой
- // отметки подпись: вход — «Покупка 10:15», выход — сделка, которой позицию
- // закрыли, «Продажа 11:30». Подписи — пока сделок в окне немного, иначе они
- // налезают друг на друга; при отдалении остаются значки и список ниже.
- // Стрелки, кольца и подписи — HTML-слоем в процентах: SVG растянут по
- // ширине экрана (preserveAspectRatio none) и сплющивал бы фигуры в овалы
- const tags=pairs.length<=6;
- let links='',points='';
- for(const p of pairs){
-  const buy=p.side==='BUY',win=Number(p.net)>=0,cls=`${buy?'buy':'sell'} ${win?'win':'loss'}`;
-  const opened=buy?'Покупка':'Продажа',closed=buy?'Продажа':'Покупка';
-  const tip=esc(`${opened}${p.volume?` · ${number(p.volume)} лот`:''}${p.in_price!=null?` · вход ${number(p.in_price)}`:''} · выход ${number(p.out_price)} · ${money(p.net,'USD',true)}`);
-  const x1=p.in_time?xAt(p.in_time):null,y1=p.in_time?y(Number(p.in_price)):null,x2=xAt(p.out_time),y2=y(Number(p.out_price));
-  if(x1!=null)links+=`<line class="trade-link ${cls}" x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}"/>`;
-  if(inView(p.in_time)){
-   links+=`<line class="trade-guide" x1="${x1.toFixed(1)}" x2="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" y2="${h}"/>`;
-   points+=`<i class="trade-in price-marker ${cls}" style="left:${pct(x1,w)};top:${pct(y1,h)}" title="${tip}"></i>`;
-   if(tags)points+=`<span class="trade-tag in ${buy?'buy':'sell'}${x1>w*.72?' edge':''}" style="left:${pct(x1,w)};top:${pct(y1,h)}">${opened} ${clock.format(new Date(p.in_time))}</span>`;
-  }
-  if(inView(p.out_time)){
-   links+=`<line class="trade-guide" x1="${x2.toFixed(1)}" x2="${x2.toFixed(1)}" y1="${y2.toFixed(1)}" y2="${h}"/>`;
-   points+=`<i class="trade-out ${cls}" style="left:${pct(x2,w)};top:${pct(y2,h)}" title="${tip}"></i>`;
-   // подпись выхода — с другой стороны от входа: у покупки выход (продажа)
-   // над кольцом, у продажи — под ним; у правого края — влево от отметки
-   if(tags)points+=`<span class="trade-tag out ${buy?'buy':'sell'} ${win?'win':'loss'}${x2>w*.72?' edge':''}" style="left:${pct(x2,w)};top:${pct(y2,h)}">${closed} ${clock.format(new Date(p.out_time))}</span>`;
-  }
- }
  const ticks=[0,.25,.5,.75,1].map(f=>{const i=Math.round(f*(n-1));return `<span style="left:${pct(x(i),w)}">${fmt.format(new Date(rows[i].time))}</span>`;}).join('');
- const shown=[...pairs].reverse().slice(0,8);
- const items=shown.map(p=>{const buy=p.side==='BUY',win=Number(p.net)>=0;return `<li class="${buy?'buy':'sell'} ${win?'win':'loss'}"><i class="trade-dot"></i><span class="trade-what">${buy?'Покупка':'Продажа'}${p.volume?` ${number(p.volume)}`:''}</span><span class="trade-when">${p.in_time?`${when(p.in_time)} <small>${number(p.in_price)}</small> → `:'… → '}${when(p.out_time)} <small>${number(p.out_price)}</small></span><b>${money(p.net,'USD',true)}</b></li>`;}).join('');
- const list=items?`<div class="trade-list-head">${countLabel(pairs.length,['сделка','сделки','сделок'])} на графике${pairs.length>shown.length?` · последние ${shown.length}`:''}</div><ul class="trade-list">${items}</ul>`:'<div class="trade-list-head">В видимой части графика сделок нет</div>';
- const plot=`<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="Свечной график ${esc(data.symbol)} со сделками стратегии">${under}${candles}${line(ma20,'var(--purple)')}${line(ma50,'#e4bf7a')}${links}</svg><div class="trade-layer">${points}</div><div class="price-axis">${axis}</div>`;
- return {plot,ticks,list};
+ const plot=`<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="Свечной график ${esc(data.symbol)}">${defs}${under}${candles}</svg><div class="price-axis">${axis}</div>`;
+ return {plot,ticks};
 }
 // Подписи сделок, налезающие на уже показанные или на край, прячем: их
 // размеры известны только после отрисовки. При приближении места больше —
 // подписи возвращаются; время и цены всегда есть в списке под графиком
-function declutterTags(){
- const wrap=document.querySelector('.price-chart-wrap');if(!wrap)return;
- const box=wrap.getBoundingClientRect(),kept=[];
- const tags=[...wrap.querySelectorAll('.trade-tag')];
- tags.forEach(t=>t.classList.remove('is-hidden'));
- const rects=tags.map(t=>t.getBoundingClientRect());      // сначала все замеры, потом записи
- tags.forEach((t,i)=>{const r=rects[i];
-  const clash=r.left<box.left||r.right>box.right-52||r.top<box.top||r.bottom>box.bottom
-   ||kept.some(k=>r.left<k.right+3&&r.right>k.left-3&&r.top<k.bottom+2&&r.bottom>k.top-2);
-  if(clash)t.classList.add('is-hidden');else kept.push(r);});
-}
 // Перерисовка только графика — при листании и масштабе. Контейнер
 // .price-chart-wrap не пересоздаётся: на нём держится захват пальца
 function redrawChart(){
@@ -475,10 +426,9 @@ function redrawChart(){
  const part=priceChartParts(state.priceChart);
  panel.querySelector('.price-chart-wrap').innerHTML=part.plot;
  panel.querySelector('.time-axis').innerHTML=part.ticks;
- panel.querySelector('.trade-list-box').innerHTML=part.list;
-}
+ }
 let chartFrame=0;
-function scheduleChart(){if(!chartFrame)chartFrame=requestAnimationFrame(()=>{chartFrame=0;redrawChart();declutterTags();});}
+function scheduleChart(){if(!chartFrame)chartFrame=requestAnimationFrame(()=>{chartFrame=0;redrawChart();});}
 // масштаб вокруг точки: anchor — доля ширины графика под пальцем или курсором
 function chartZoom(factor,anchor=.5){
  const v=chartView,center=v.start+anchor*v.count;
@@ -660,7 +610,6 @@ function render(preserve=false){const snapshot=preserve?captureUiState():null;$(
  document.querySelectorAll('.segmented').forEach(strip=>{const active=strip.querySelector('.active');if(active)centering.push([strip,active.getBoundingClientRect().left-strip.getBoundingClientRect().left-(strip.clientWidth-active.clientWidth)/2]);});
  for(const [strip,shift] of centering)strip.scrollLeft+=shift;
  positionThumbs(prevThumbs);
- if(document.querySelector('.trade-tag'))declutterTags();
  restoreUiState(snapshot);
 }
 function positionThumbs(prevThumbs=new Map()){
@@ -970,8 +919,17 @@ function lockDialog(){if(modalLock)return;modalLock={x:scrollX,y:scrollY};docume
 document.querySelector('#dialog').addEventListener('close',()=>{if($('#dialog').open||!modalLock)return;const pos=modalLock;modalLock=null;document.documentElement.classList.remove('modal-open');document.body.style.removeProperty('--modal-top');window.scrollTo(pos.x,pos.y);dialogBack();});
 async function dialog(title,body,label='Сохранить'){const current=$('#dialog');if(current.open||modalLock){const closed=new Promise(resolve=>current.addEventListener('close',resolve,{once:true}));if(current.open&&!await requestDialogExit(current))return null;await closed;}return new Promise(resolve=>{const d=$('#dialog');$('#dialog-title').textContent=title;$('#dialog-body').innerHTML=body;$('#dialog-submit').textContent=label;const info=['Закрыть','Понятно','Готово'].includes(label);d.classList.toggle('info-only',info);d.onclick=e=>{if(info&&e.target===d)requestDialogExit(d);};d.returnValue='';d.onclose=()=>{const values=Object.fromEntries(new FormData($('form',d)));resolve(d.returnValue==='confirm'?values:null);};const form=$('form',d);form.querySelectorAll('select[name="capitalization"]').forEach(select=>{const date=form.querySelector('input[name="capitalization_from"]');if(date)date.disabled=select.value==='inherit';});form.onsubmit=e=>{if(e.submitter?.value==='cancel'){e.preventDefault();requestDialogExit(d);return;}const fields=[...d.querySelectorAll('input,select,textarea')];if(!fields.every(f=>f.reportValidity()))e.preventDefault();};lockDialog();d.showModal();dialogBack();});}
 function dialogHasChanges(d){return [...d.querySelectorAll('input,select,textarea')].some(f=>{if(f.type==='file')return f.files?.length>0;if(f.type==='checkbox'||f.type==='radio')return f.checked!==f.defaultChecked;if(f.tagName==='SELECT')return f.value!==([...f.options].find(o=>o.defaultSelected)?.value??f.options[0]?.value);return f.value!==f.defaultValue;});}
-function requestDialogExit(d){if(!dialogHasChanges(d)){d.close('cancel');return Promise.resolve(true);}return new Promise(resolve=>{const finish=ok=>{if(ok&&d.open)d.close('cancel');resolve(ok);};if(tg?.showConfirm)tg.showConfirm('Выйти без сохранения изменений?',finish);else finish(window.confirm('Выйти без сохранения изменений?'));});}
-$('#dialog').addEventListener('cancel',event=>{event.preventDefault();requestDialogExit(event.currentTarget);});
+// Выбор файла: системное окно выбора шлёт «cancel» (всплывает до диалога), на телефоне — ещё и «назад»
+// Telegram. Пока окно выбора открыто и сразу после него закрытие диалога не принимаем.
+let filePickerUntil=0;
+const filePickerGuard=()=>Date.now()<filePickerUntil;
+document.addEventListener('click',event=>{if(event.target.closest?.('.cmp-attach,input[type=file]'))filePickerUntil=Date.now()+60000;},true);
+for(const type of ['change','cancel'])document.addEventListener(type,event=>{if(event.target.matches?.('input[type=file]'))filePickerUntil=Date.now()+600;},true);
+const filePickerReturned=()=>{if(filePickerUntil>Date.now())filePickerUntil=Math.min(filePickerUntil,Date.now()+600);};
+window.addEventListener('focus',filePickerReturned);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)filePickerReturned();});
+function requestDialogExit(d){if(filePickerGuard())return Promise.resolve(false);if(!dialogHasChanges(d)){d.close('cancel');return Promise.resolve(true);}return new Promise(resolve=>{const finish=ok=>{if(ok&&d.open)d.close('cancel');resolve(ok);};if(tg?.showConfirm)tg.showConfirm('Выйти без сохранения изменений?',finish);else finish(window.confirm('Выйти без сохранения изменений?'));});}
+$('#dialog').addEventListener('cancel',event=>{if(event.target!==event.currentTarget)return;event.preventDefault();requestDialogExit(event.currentTarget);});
 window.addEventListener('beforeunload',event=>{if($('#dialog').open&&dialogHasChanges($('#dialog'))){event.preventDefault();event.returnValue='';}});
 async function confirm(title,text,label='Подтвердить'){return !!await dialog(title,`<p>${esc(text)}</p>`,label);}
 async function mutate(path,data,method='POST'){await api(path,{method,body:data===undefined?undefined:JSON.stringify(data)});tg?.HapticFeedback?.notificationOccurred('success');toast('Сохранено. Изменения доступны и в боте.');await refresh();}
@@ -1152,10 +1110,11 @@ document.addEventListener('click',async event=>{const el=event.target.closest('[
    <div class="cmp-block"><span class="cmp-label">Быстрый старт</span><div class="cmp-chips">${[['maintenance','Технические работы'],['feature','Новая функция'],['reminder','Напоминание'],['thanks','Благодарность']].map(([id,label])=>`<button type="button" class="cmp-chip" data-template="${id}">${label}</button>`).join('')}</div></div>
    <div class="composer-editor"><div class="composer-editor-head"><b>Текст</b><span id="compose-count">0 / 4096</span></div><div class="cmp-meter" aria-hidden="true"><i id="compose-meter"></i></div>
     <div class="compose-tools"><button type="button" class="format-btn" data-format="bold" aria-label="Жирный" title="Жирный"><b>Ж</b></button><button type="button" class="format-btn" data-format="italic" aria-label="Курсив" title="Курсив"><i>К</i></button><button type="button" class="format-btn" data-format="mono" aria-label="Моноширинный" title="Моноширинный"><code>М</code></button><button type="button" class="format-btn" data-format="quote" aria-label="Цитата" title="Цитата">❝</button><span>Выделите текст для оформления</span><button type="button" class="cmp-clear" data-cmp-clear hidden>Очистить</button><label class="format-btn cmp-attach" title="Фото или видео" aria-label="Прикрепить фото или видео"><input type="file" name="media" accept="image/jpeg,image/png,video/mp4" class="cmp-file-input"><svg class="cmp-clip" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5 12.6 19.9a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/></svg></label></div>
-    <textarea name="text" maxlength="4096" aria-label="Текст сообщения" placeholder="Напишите, что важно сообщить пользователям…"></textarea><div class="cmp-file" hidden><svg class="cmp-clip" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5 12.6 19.9a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/></svg><small id="compose-file-name">JPG/PNG до 10 МБ · MP4 до 20 МБ</small><button type="button" class="cmp-file-clear" data-cmp-file-clear aria-label="Убрать файл">×</button></div></div><div class="cmp-block"><label class="check"><input type="checkbox" name="with_button" data-cmp-button>Кнопка «Открыть приложение»</label><div class="cmp-button-field" hidden>${field('Текст на кнопке','button_text','text','Открыть приложение','maxlength="40"')}<small class="project-form-hint">Ссылка всегда открывает мини-приложение Tag Markets</small></div></div>
+    <textarea name="text" aria-label="Текст сообщения" placeholder="Напишите, что важно сообщить пользователям…"></textarea><div class="cmp-file" hidden><svg class="cmp-clip" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5 12.6 19.9a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/></svg><small id="compose-file-name">JPG/PNG до 10 МБ · MP4 до 20 МБ</small><button type="button" class="cmp-file-clear" data-cmp-file-clear aria-label="Убрать файл">×</button></div></div><div class="cmp-block"><label class="check"><input type="checkbox" name="with_button" data-cmp-button>Кнопка «Открыть приложение»</label><div class="cmp-button-field" hidden>${field('Текст на кнопке','button_text','text','Открыть приложение','maxlength="40"')}</div></div>
    <div class="composer-live"><span class="eyebrow">ТАК УВИДЯТ ПОЛЬЗОВАТЕЛИ</span><div class="cmp-bubble"><b class="cmp-bubble-name">Tag Markets</b><div id="compose-live" class="compose-preview-text"><span class="muted">Сообщение появится здесь</span></div><small class="cmp-bubble-time">сейчас</small></div><div class="cmp-bubble-btn" id="compose-btn-preview" hidden></div></div></div>`,'Проверить');
   if(!d)return;
   const file=d.media?.size?d.media:null;
+  if(broadcastLength(d.text)>4096)throw new Error('Текст длиннее 4096 символов — сократите сообщение');
   if(!String(d.text||'').trim()&&!file)throw new Error('Добавьте текст или файл');
   const kind=file?await mediaKind(file):null;
   if(file&&!kind)throw new Error('Выберите JPG, PNG или MP4');
@@ -1175,14 +1134,14 @@ document.addEventListener('click',async event=>{const el=event.target.closest('[
    let result;
    try{result=await api('/broadcast',{method:'POST',body:form});}
    catch(error){if(!await dialog('Отправка не завершена',`<p>${esc(error.message)}</p><p class="stat-note">Повтор с тем же сообщением не отправит его заново тем, кому оно уже доставлено.</p>`,'Проверить и повторить'))return;continue;}
-   const done=`<div class="compose-status"><span>Доставлено</span><strong>${result.sent}</strong></div><div class="compose-status ${result.failed?'is-error':''}"><span>Ожидают повторной отправки</span><strong>${result.failed}</strong></div>`;
+   const blocked=(result.unreachable||[]),done=`<div class="compose-status"><span>Доставлено</span><strong>${result.sent}</strong></div>${result.failed?`<div class="compose-status is-error"><span>Ожидают повторной отправки</span><strong>${result.failed}</strong></div>`:''}${blocked.length?`<div class="compose-status is-warn"><span>Не получили: заблокировали бота</span><strong>${blocked.length}</strong></div><p class="stat-note">${blocked.map(b=>esc(b.name)).join(', ')}. Пока человек не разблокирует бота, сообщение до него не дойдёт — повторять отправку не нужно.</p>`:''}`;
    if(!result.failed){await dialog('Сообщение отправлено',done,'Готово');return;}
    if(!await dialog('Отправлено частично',`${done}<p class="stat-note">Уже доставленные сообщения повторно не отправятся.</p>`,'Повторить недоставленным'))return;
   }
  }
  }catch(error){toast(error.message);}finally{el.disabled=false;}});
 document.addEventListener('click',event=>{const tool=event.target.closest('[data-format]');if(!tool)return;event.preventDefault();const area=$('#dialog textarea[name="text"]');if(!area)return;const start=area.selectionStart,end=area.selectionEnd,selected=area.value.slice(start,end);const tags={bold:['<b>','</b>'],italic:['<i>','</i>'],mono:['<code>','</code>'],quote:['<blockquote>','</blockquote>']}[tool.dataset.format];if(!tags)return;area.setRangeText(tags[0]+selected+tags[1],start,end,'end');area.focus();area.setSelectionRange(start+tags[0].length,start+tags[0].length+selected.length);area.dispatchEvent(new Event('input',{bubbles:true}));});
-document.addEventListener('input',event=>{if(event.target.matches('#dialog textarea[name="text"]')){const area=event.target,preview=$('#compose-live'),count=$('#compose-count');if(preview)preview.innerHTML=area.value?broadcastPreview(area.value):'<span class="muted">Сообщение появится здесь</span>';if(count)count.textContent=`${area.value.length} / 4096`;const meter=$('#compose-meter');if(meter){meter.style.width=`${Math.min(100,area.value.length/4096*100).toFixed(1)}%`;meter.classList.toggle('warn',area.value.length>3600);}const clear=$('[data-cmp-clear]');if(clear)clear.hidden=!area.value;}});
+document.addEventListener('input',event=>{if(event.target.matches('#dialog textarea[name="text"]')){const area=event.target,preview=$('#compose-live'),count=$('#compose-count');if(preview)preview.innerHTML=area.value?broadcastPreview(area.value):'<span class="muted">Сообщение появится здесь</span>';const length=broadcastLength(area.value);if(count){count.textContent=`${length} / 4096`;count.classList.toggle('over',length>4096);}const meter=$('#compose-meter');if(meter){meter.style.width=`${Math.min(100,length/4096*100).toFixed(1)}%`;meter.classList.toggle('warn',length>3600);}const clear=$('[data-cmp-clear]');if(clear)clear.hidden=!area.value;}});
  document.addEventListener('change',async event=>{try{if(event.target.matches('#dialog input[name="media"]')){const info=$('#compose-file-name');if(info)info.textContent=event.target.files?.[0]?`${event.target.files[0].name} · ${fileSize(event.target.files[0].size)}`:'JPG/PNG до 10 МБ · MP4 до 20 МБ';}if(event.target.id==='add-cabinet-choice'){const fresh=$('#add-new-cabinet');fresh.hidden=event.target.value!=='new';fresh.querySelector('input').disabled=fresh.hidden;}if(event.target.id==='account-select'){state.login=Number(event.target.value);state.offset=0;if(state.view==='account'){location.hash='account/'+state.login;}else await refresh();}if(event.target.id==='currency'){state.currency=event.target.value;await showCached();}}catch(error){toast(error.message);}});
 $('#notifications').innerHTML=icon('bell');$('#refresh').innerHTML=icon('refresh');$('#refresh').addEventListener('click',()=>refresh());
 let savedScheme;try{savedScheme=localStorage.getItem('tag-scheme');}catch{}setScheme(savedScheme||'lime',false);
@@ -1352,3 +1311,16 @@ document.addEventListener('change',event=>{
  if(!toggle.checked)box.querySelectorAll('input').forEach(input=>{if(input.type==='checkbox')input.checked=false;else input.value='';});
  
 });
+
+// Динамика кубиками: выбранный день показывается строкой под рядом
+function cubeSelect(cube){
+ const box=cube.closest('.cubes')?.parentElement;if(!box)return;
+ const detail=box.querySelector('.cube-detail');if(!detail)return;
+ let data;try{data=JSON.parse(cube.dataset.cube);}catch{return;}
+ box.querySelectorAll('.cube.active').forEach(c=>c.classList.remove('active'));cube.classList.add('active');
+ const [day,val,pct,total,sign]=data,tone=sign>0?'positive':'negative';
+ detail.innerHTML=`<b>${esc(day)}</b><strong class="${tone}">${esc(val)}</strong>${pct?`<em class="${tone}">${esc(pct)}</em>`:''}<small>${esc(total)}</small>`;
+}
+document.addEventListener('click',event=>{const cube=event.target.closest?.('.cube');if(cube)cubeSelect(cube);});
+document.addEventListener('pointerover',event=>{if(event.pointerType!=='mouse')return;const cube=event.target.closest?.('.cube');if(cube&&!cube.classList.contains('active'))cubeSelect(cube);});
+document.addEventListener('focusin',event=>{const cube=event.target.closest?.('.cube');if(cube&&!cube.classList.contains('active'))cubeSelect(cube);});
