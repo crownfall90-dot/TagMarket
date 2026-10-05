@@ -290,7 +290,16 @@ def rolled_base(acc: dict, boundary: datetime):
     return float(acc["base"]) + moves, boundary.isoformat()
 
 
-def _profit_on_account() -> float:
+def _mark(row: dict) -> tuple:
+    return (row["time"], row.get("ticket", 0))
+
+
+def _upto(rows: list[dict], upto: tuple, inclusive: bool) -> list[dict]:
+    """Строки до отметки (время, тикет): включая её или без неё."""
+    return [r for r in rows if (_mark(r) <= upto if inclusive else _mark(r) < upto)]
+
+
+def _profit_on_account(upto: tuple = None, inclusive: bool = True) -> float:
     """Сколько нераспределённого профита лежит в балансе счёта (валовым).
 
     Прибыль от сделок ложится в баланс 1:1, без плеча, и остаётся там, пока
@@ -311,6 +320,8 @@ def _profit_on_account() -> float:
         rows = fetch(REPORT_FROM, clock() + timedelta(days=1))
     except Exception:
         return max(left, 0.0)
+    if upto is not None:                        # «как было на момент операции»
+        rows = _upto(rows, upto, inclusive)
     for r in rows:
         if r["is_closing"]:
             left += r["net"]                    # заработали — профит вырос
@@ -449,6 +460,24 @@ def capital_around(row: dict) -> tuple[float, float]:
     return became - own, became
 
 
+def strategy_around(row: dict) -> dict:
+    """Деньги на стратегии до и после операции: капитал + накопленный профит.
+
+    После сделки сумма растёт на её профит, после вывода профита на баланс
+    Tag Markets — уменьшается, реинвест переносит профит в капитал, и сумма
+    не меняется. Считается на момент самой операции, а не «на сейчас»:
+    событие может догнать нас с опозданием (терминал был выключен), и
+    сегодняшний остаток к нему не относится.
+    """
+    cap_was, cap_became = capital_around(row)
+    mark = _mark(row)
+    kept_became = retained(mark, True)
+    kept_was = retained(mark, False)
+    return {"was": cap_was + kept_was, "became": cap_became + kept_became,
+            "cap_was": cap_was, "cap_became": cap_became,
+            "kept_was": kept_was, "kept_became": kept_became}
+
+
 def period_growth(rows: list[dict], flows: list[dict], archived=(), current: float = None) -> float:
     """Доходность периода, %: живые сделки — growth_pct, свёрнутые месяцы —
     процентом, сохранённым при свёртке; месяцы перемножаются, как в growth_all.
@@ -507,7 +536,7 @@ def growth_pct(rows: list[dict], flows: list[dict] = None, current: float = None
     return (g - 1) * 100
 
 
-def retained() -> float:
+def retained(upto: tuple = None, inclusive: bool = True) -> float:
     """Накопленный профит чистыми — то, что реально лежит на стратегии.
 
     Это тот же остаток, что лежит в балансе (_profit_on_account), только
@@ -515,13 +544,15 @@ def retained() -> float:
     приходит раз в неделю. Без этой поправки после сделки на 36.31 валовых
     бот писал 49.21 накоплено, хотя на руки причиталось 25.42.
     """
-    gross = _profit_on_account()
+    gross = _profit_on_account(upto, inclusive)
     if not gross:
         return 0.0
     try:
         rows = fetch(REPORT_FROM, clock() + timedelta(days=1))
     except Exception:       # истории под рукой нет — отдаём как есть
         return gross
+    if upto is not None:
+        rows = _upto(rows, upto, inclusive)
     last_fee = max((r["time"] for r in rows if is_perf_fee(r)), default=None)
     pending = sum(r["net"] for r in rows
                   if r["is_closing"] and (last_fee is None or r["time"] > last_fee))
@@ -1563,12 +1594,15 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
             # обе половины сразу: профит списан и в тот же момент добавлен
             # в капитал — раньше это были два отдельных, спорящих сообщения
             was, became = capital_around(pair)
+            around = strategy_around(pair)
             # деньги никуда не уходят: профит стал капиталом — сумма без знака «минус»
             out = [f"🕒 <b>{when}</b>", "♻️ <b>Реинвест профита</b>", THIN,
                    f"<b>{amount(abs(own), cur)}</b>",
                    "🔁 Профит добавлен в капитал и дальше работает вместе с ним"]
             out.append(f"💰 Капитал: было {amount(was, cur)} → стало "
                        f"<b>{amount(became, cur)}</b>")
+            out.append(f"📊 На стратегии: <b>{amount(around['became'], cur)}</b> <i>(всего не изменилось: "
+                       f"профит стал капиталом)</i>")
             return "\n".join(out)
 
         if is_profit and is_transfer(row):
@@ -1581,7 +1615,11 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
                    f"<b>{money(own)}{sign(cur)}</b>", where]
             if note:
                 out.append(note)
-            out.append(f"💰 Капитал стратегии: <b>{cap:.2f}{sign(cur)}</b> (не изменился)")
+            around = strategy_around(row)
+            out.append(f"💰 На стратегии: было {amount(around['was'], cur)} → стало "
+                       f"<b>{amount(around['became'], cur)}</b>")
+            out.append(f"<i>капитал {amount(around['cap_became'], cur)} + профит "
+                       f"{amount(around['kept_became'], cur)}</i>")
             return "\n".join(out)
 
         if is_transfer(row):
@@ -1603,8 +1641,11 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
             out = [f"🕒 <b>{when}</b>", head, THIN, f"<b>{money(own)}{sign(cur)}</b>", where]
             if note:
                 out.append(note)
-            out.append(f"💰 Капитал: было {amount(was, cur)} → стало "
-                       f"<b>{amount(became, cur)}</b>")
+            around = strategy_around(row)
+            out.append(f"💰 На стратегии: было {amount(around['was'], cur)} → стало "
+                       f"<b>{amount(around['became'], cur)}</b>")
+            out.append(f"<i>капитал {amount(around['cap_became'], cur)} + профит "
+                       f"{amount(around['kept_became'], cur)}</i>")
             return "\n".join(out)
 
         # плата платформы — просто издержка
@@ -1661,16 +1702,14 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
     word = plural(n, "сделка", "сделки", "сделок")
     out.append(f"💵 За день: <b>{money(day_profit)}{sign(cur)}</b> <i>({n} {word})</i>")
 
-    # Накопленный профит: пока его не вывели и не реинвестировали, он лежит на
-    # стратегии, и новые сделки прибавляются к нему. Раньше «всего» считалось
-    # как капитал + профит одного дня — вчерашний нетронутый профит терялся.
-    if cap:
-        kept = retained()           # чистыми, за вычетом доли брокера
-        total = cap + kept
-        out.append(f"💰 Капитал: <b>{amount(cap, cur)}</b>")
-        if abs(kept) >= 0.01:
-            out.append(f"📈 Накоплено профита: <b>{amount(kept, cur, signed=True)}</b> "
+    # Деньги на стратегии после этой сделки: капитал + накопленный профит на её момент.
+    # Профит растёт на результат сделки и уменьшается, когда его выводят или реинвестируют.
+    around = strategy_around(row)
+    if around["became"] or around["kept_became"]:
+        out.append(f"💰 Капитал: <b>{amount(around['cap_became'], cur)}</b>")
+        if abs(around["kept_became"]) >= 0.01:
+            out.append(f"📈 Накоплено профита: <b>{amount(around['kept_became'], cur, signed=True)}</b> "
                        f"<i>(не выведен)</i>")
-        out.append(f"📊 Всего на стратегии: <b>{amount(total, cur)}</b>")
+        out.append(f"📊 На стратегии: <b>{amount(around['became'], cur)}</b>")
     out.append(late_note(row))
     return "\n".join(out)

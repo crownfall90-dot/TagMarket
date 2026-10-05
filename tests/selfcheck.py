@@ -208,7 +208,7 @@ _saved_retained = trades.retained
 trades.account = lambda: _Acc()
 trades._capital_moves = lambda since: 0.0       # пока движений капитала нет
 trades._profit_on_account = lambda: 39.40       # столько прибыли лежит в балансе
-trades.retained = lambda: 39.40                 # она же чистыми (доля уже удержана)
+trades.retained = lambda *a, **k: 39.40                 # она же чистыми (доля уже удержана)
 try:
     assert abs(trades.invested() - 2539.40) < 0.01, trades.invested()
     assert abs(trades.capital() - 2500.0) < 0.01, trades.capital()
@@ -226,14 +226,21 @@ try:
     assert "+30.00$" in n and "Заведено на стратегию" in n and "Пополнение стратегии" in n, n   # 720 ÷ 24 = 30
     # разряды разделяет узкий неразрывный пробел — сверяем через него же
     _sep = trades.NBSP
-    assert f"было 2{_sep}470.00" in n and f"2{_sep}500.00" in n, n
+    # «На стратегии» = капитал + накопленный профит: 2 470 + 39.40 → 2 500 + 39.40
+    assert f"было 2{_sep}509.40" in n and f"2{_sep}539.40" in n, n
+    assert f"капитал 2{_sep}500.00" in n, n
 
-    # вывод чистого профита баланс стратегии НЕ меняет
+    # вывод профита уменьшает деньги на стратегии, капитал остаётся
     pw = {"is_balance": True, "is_opening": False, "is_closing": False,
           "net": -11.14, "comment": "Profit Withdrawal", "time": datetime(2026, 8, 14, 13, 0)}
+    # профит до вывода 50.54, после — 39.40: на стратегии стало меньше на сумму вывода, капитал тот же
+    _kept_before = trades.retained
+    trades.retained = lambda upto=None, inclusive=True: 50.54 if (upto and upto[0].hour == 13 and not inclusive) else 39.40
     n = trades.fmt_notification(pw, "USD")
-    assert "-11.14$" in n and "не изменил" in n and "Вывод профита" in n, n
-    assert "2500.00" in n, "баланс стратегии = капитал, при выводе профита не меняется"
+    trades.retained = _kept_before
+    assert "-11.14$" in n and "Вывод профита" in n, n
+    assert f"было 2{_sep}550.54" in n and f"2{_sep}539.40" in n, "после вывода профита на стратегии стало меньше на его сумму"
+    assert f"капитал 2{_sep}500.00" in n, "капитал при выводе профита не меняется"
 finally:
     trades.account = _saved_account
     trades._capital_moves = _saved_capmoves
@@ -251,7 +258,7 @@ assert trades.winrate_bar(5, 10, 10).count("▰") == 5
 _saved_capital, _saved_invested = trades.capital, trades.invested
 _saved_kept = trades.retained
 trades.capital = lambda: 100.0          # капитал стратегии
-trades.retained = lambda: 42.63         # накопленный профит поверх него
+trades.retained = lambda *a, **k: 42.63         # накопленный профит поверх него
 trades.invested = lambda: 142.63        # он же плюс накопленный профит
 note = trades.fmt_notification(rows[0], "USD", day_net=1.5, day_count=3, total_net=9.0)
 trades.capital, trades.invested = _saved_capital, _saved_invested

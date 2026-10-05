@@ -2561,6 +2561,38 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Заработано <b>+70.00$</b>", status)
         self.assertIn("всего <b>+70.00", trades.fmt_head("USD"))
 
+    async def test_strategy_balance_follows_profit_withdrawal_and_reinvest(self):
+        """«На стратегии» = капитал + накопленный профит на момент операции: растёт после сделки,
+        падает после вывода профита, не меняется при реинвесте."""
+        trades.use(accounts.load(1)[0])
+        base = trades.clock().replace(hour=9, minute=0, second=0, microsecond=0) - timedelta(days=1)
+
+        def deal(ticket, minutes, net, comment="", closing=False, balance=False):
+            return {"ticket": ticket, "time": (base + timedelta(minutes=minutes)).isoformat(), "is_balance": balance,
+                    "is_closing": closing, "is_opening": False, "net": net, "volume": 0.1 if closing else 0,
+                    "comment": comment, "symbol": "XAUUSD" if closing else "", "side": "BUY" if closing else "",
+                    "position": ticket if closing else 0}
+
+        store.save_deals(self.tdb, 123, [
+            deal(1, 0, 2400.0, "Deposit", balance=True),
+            deal(2, 10, 40.0, closing=True),
+            deal(3, 20, -10.0, "Profit Withdrawal", balance=True),
+            deal(4, 30, 20.0, closing=True)])
+        store.save_state(self.tdb, 123, 2400.0 + 40.0 - 10.0 + 20.0, 2450.0, "USD", "Demo", 4)
+        rows = {r["ticket"]: r for r in trades.fetch(datetime(2000, 1, 1), trades.clock() + timedelta(days=1))}
+        first_trade = trades.strategy_around(rows[2])
+        withdrawal = trades.strategy_around(rows[3])
+        second_trade = trades.strategy_around(rows[4])
+        self.assertGreater(first_trade["became"], first_trade["was"], "после сделки на стратегии больше")
+        self.assertLess(withdrawal["became"], withdrawal["was"], "после вывода профита на стратегии меньше")
+        self.assertAlmostEqual(withdrawal["cap_was"], withdrawal["cap_became"], msg="капитал при выводе профита не меняется")
+        self.assertGreater(second_trade["became"], second_trade["was"])
+        self.assertAlmostEqual(second_trade["became"], trades.capital() + trades.retained(), places=6,
+                               msg="после последней операции — ровно то, что на стратегии сейчас")
+        text, title, body = trades.fmt_account_event(accounts.load(1)[0], rows[3], "USD")
+        self.assertIn("На стратегии: было", text)
+        self.assertIn("Вывод профита", title)
+
     async def test_broker_comment_cannot_break_notification_markup(self):
         trades.use(accounts.load(1)[0])
         row = {"ticket": 7, "time": trades.clock(), "is_balance": True, "is_closing": False,
