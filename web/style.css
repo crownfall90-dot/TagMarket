@@ -1233,3 +1233,5 @@ dialog::backdrop{background:#000a;backdrop-filter:blur(6px);-webkit-backdrop-fil
 .cube.down.active:after{filter:drop-shadow(0 0 12px rgb(240 88 106 / .6))}
 .cube:not(.active):after{filter:none}
 .cube-detail .positive{color:#2fcf8a}.cube-detail .negative{color:#f0586a}
+.dialog-error{margin:0 0 12px;padding:10px 12px;border-radius:12px;background:rgb(242 153 153 / .1);border:1px solid rgb(242 153 153 / .3);color:var(--negative);font-size:12px;line-height:1.45}
+.dialog-error{margin:0 0 12px;padding:10px 12px;border-radius:12px;background:rgb(242 153 153 / .1);border:1px solid rgb(242 153 153 / .3);color:var(--negative);font-size:12px;line-height:1.45}

@@ -963,6 +963,11 @@ def main():
                     page.locator('[data-action="broadcast"]').click()
                     area = page.locator('#dialog textarea[name="text"]')
                     area.wait_for()
+                    # «Проверить» с пустым сообщением: ошибка внутри окна, окно остаётся
+                    page.locator('#dialog-submit').click()
+                    page.locator('#dialog .dialog-error').wait_for()
+                    assert 'Добавьте текст или файл' in page.locator('#dialog .dialog-error').inner_text()
+                    assert page.locator('#dialog[open]').count() == 1
                     # отмена выбора файла не закрывает окно: «cancel» поля файла всплывает до диалога
                     page.evaluate("document.querySelector('#dialog input[name=\"media\"]').dispatchEvent(new Event('cancel', {bubbles: true}))")
                     page.wait_for_timeout(150)
@@ -1027,6 +1032,21 @@ def main():
                     if width == 390:
                         page.screenshot(path=str(screenshots / "tagmarkets-mobile-broadcast-smoke.png"))
                     fits(page)
+                    # «Назад» возвращает в сообщение: текст, файл, получатель и кнопка на месте
+                    assert page.locator('#dialog .dialog-actions button[value="cancel"]').inner_text() == 'Назад'
+                    page.locator('#dialog .dialog-actions button[value="cancel"]').click()
+                    page.wait_for_function("document.querySelector('#dialog-title').textContent === 'Сообщение пользователям'")
+                    assert page.locator('#dialog textarea[name="text"]').input_value().startswith('<b>Обновление</b>') or 'Обновление для пользователей' in page.locator('#dialog textarea[name="text"]').input_value()
+                    assert 'photo.png' in page.locator('#compose-file-name').inner_text()
+                    assert page.locator('#dialog [data-cmp-button]').is_checked()
+                    assert page.locator('#dialog input[name="button_text"]').input_value() == 'Смотреть отчёт'
+                    # снова на проверку и закрываем целиком (в окне сообщения «Отмена» снова просто «Отмена»)
+                    page.locator('#dialog-submit').click()
+                    page.get_by_text('Проверка рассылки').wait_for()
+                    page.locator('#dialog .dialog-actions button[value="cancel"]').click()
+                    page.wait_for_function("document.querySelector('#dialog-title').textContent === 'Сообщение пользователям'")
+                    assert page.locator('#dialog .dialog-actions button[value="cancel"]').inner_text() == 'Отмена'
+                    page.evaluate("document.querySelector('#dialog').dataset.dirty = ''")
                     close_dialog(page)
                     page.locator(f'{nav} a[href="#people"]').click()
                     page.locator('.people-card').first.wait_for()

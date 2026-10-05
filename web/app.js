@@ -55,6 +55,33 @@ function eventToast(item,count){const el=$('#toast'),[kind,ico]=eventKind(item);
 function button(action,text,style='secondary',ico='',attrs=''){return `<button type="button" class="button ${style}" data-action="${action}" ${attrs}>${ico?icon(ico):''}<span class="button-label">${esc(text)}</span></button>`;}
 // Длина считается по видимому тексту: теги форматирования (<b>, <i>, <code>, <blockquote>) — не символы
 function broadcastLength(value){return String(value||'').replace(/<\/?(?:b|i|code|blockquote)>/gi,'').length;}
+// Окно «Сообщение пользователям»: состояние (draft) живёт отдельно от окна, поэтому «Назад» из проверки,
+// ошибка проверки и повторное открытие ничего не теряют: текст, файл, получатель, кнопка.
+function composerBody(users,draft){const one=draft.target&&draft.target!=='all';return `<div class="composer">${draft.error?`<div class="dialog-error" role="alert">${esc(draft.error)}</div>`:''}
+   <div class="composer-intro"><span class="eyebrow">РАССЫЛКА</span><p>Напишите сообщение, посмотрите, как оно выглядит у получателя, и проверьте перед отправкой.</p></div>
+   <div class="cmp-block"><span class="cmp-label">Кому</span><div class="segmented cmp-seg" role="group" aria-label="Получатели"><button type="button" class="${one?'':'active'}" data-cmp-target="all">Всем · ${users.length}</button><button type="button" class="${one?'active':''}" data-cmp-target="one">Одному</button></div>
+    <label class="field cmp-one" ${one?'':'hidden'}>Пользователь<select name="target"><option value="all" ${one?'hidden':'selected'}>Все приглашённые · ${users.length}</option>${users.map(u=>`<option value="${esc(u.id)}" ${String(u.id)===String(draft.target)?'selected':''}>${esc(u.name)}</option>`).join('')}</select></label></div>
+   <div class="cmp-block"><span class="cmp-label">Быстрый старт</span><div class="cmp-chips">${[['maintenance','Технические работы'],['feature','Новая функция'],['reminder','Напоминание'],['thanks','Благодарность']].map(([id,label])=>`<button type="button" class="cmp-chip" data-template="${id}">${label}</button>`).join('')}</div></div>
+   <div class="composer-editor"><div class="composer-editor-head"><b>Текст</b><span id="compose-count">0 / 4096</span></div><div class="cmp-meter" aria-hidden="true"><i id="compose-meter"></i></div>
+    <div class="compose-tools"><button type="button" class="format-btn" data-format="bold" aria-label="Жирный" title="Жирный"><b>Ж</b></button><button type="button" class="format-btn" data-format="italic" aria-label="Курсив" title="Курсив"><i>К</i></button><button type="button" class="format-btn" data-format="mono" aria-label="Моноширинный" title="Моноширинный"><code>М</code></button><button type="button" class="format-btn" data-format="quote" aria-label="Цитата" title="Цитата">❝</button><span>Выделите текст для оформления</span><button type="button" class="cmp-clear" data-cmp-clear hidden>Очистить</button><label class="format-btn cmp-attach" title="Фото или видео" aria-label="Прикрепить фото или видео"><input type="file" name="media" accept="image/jpeg,image/png,video/mp4" class="cmp-file-input"><svg class="cmp-clip" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5 12.6 19.9a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/></svg></label></div>
+    <textarea name="text" aria-label="Текст сообщения" placeholder="Напишите, что важно сообщить пользователям…">${esc(draft.text)}</textarea><div class="cmp-file" hidden><svg class="cmp-clip" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5 12.6 19.9a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/></svg><small id="compose-file-name">JPG/PNG до 10 МБ · MP4 до 20 МБ</small><button type="button" class="cmp-file-clear" data-cmp-file-clear aria-label="Убрать файл">×</button></div></div><div class="cmp-block"><label class="check"><input type="checkbox" name="with_button" data-cmp-button ${draft.buttonOn?'checked':''}>Кнопка «Открыть приложение»</label><div class="cmp-button-field" ${draft.buttonOn?'':'hidden'}>${field('Текст на кнопке','button_text','text',draft.buttonText,'maxlength="40"')}</div></div>
+   <div class="composer-live"><span class="eyebrow">ТАК УВИДЯТ ПОЛЬЗОВАТЕЛИ</span><div class="cmp-bubble"><b class="cmp-bubble-name">Tag Markets</b><div id="compose-live" class="compose-preview-text"><span class="muted">Сообщение появится здесь</span></div><small class="cmp-bubble-time">сейчас</small></div><div class="cmp-bubble-btn" id="compose-btn-preview" hidden></div></div></div>`;}
+function composerRestore(draft){
+ const area=$('#dialog textarea[name="text"]');if(area)area.dispatchEvent(new Event('input',{bubbles:true}));
+ const input=$('#dialog input[name="media"]');
+ if(input&&draft.file){try{const transfer=new DataTransfer();transfer.items.add(draft.file);input.files=transfer.files;input.dispatchEvent(new Event('change',{bubbles:true}));}catch{}}
+ cmpButtonPreview();
+ const d=$('#dialog');if(d)d.dataset.dirty=(draft.text||draft.file)?'1':'';
+}
+function composerValidate(values){
+ const file=values.media?.size?values.media:null,text=String(values.text||'');
+ if(broadcastLength(text)>4096)return 'Текст длиннее 4096 символов — сократите сообщение';
+ if(!text.trim()&&!file)return 'Добавьте текст или файл';
+ if(file){const type=String(file.type||'').toLowerCase(),name=String(file.name||'').toLowerCase(),video=type==='video/mp4'||name.endsWith('.mp4'),photo=['image/jpeg','image/png'].includes(type)||/\.(jpe?g|png)$/.test(name);
+  if(!video&&!photo)return 'Выберите JPG, PNG или MP4';
+  if(file.size>(video?20:10)*1024*1024)return 'Фото до 10 МБ, видео до 20 МБ';}
+ return '';
+}
 function broadcastPreview(text){return esc(text).replace(/&lt;(\/?)(b|i|code|blockquote)&gt;/g,'<$1$2>');}
 function fileSize(bytes){return `${number(bytes/1024/1024)} МБ`;}
 async function mediaKind(file){const b=new Uint8Array(await file.slice(0,12).arrayBuffer());if(b[0]===255&&b[1]===216&&b[2]===255)return 'photo';if([137,80,78,71,13,10,26,10].every((v,i)=>b[i]===v))return 'photo';if(b[4]===102&&b[5]===116&&b[6]===121&&b[7]===112)return 'video';return null;}
@@ -918,8 +945,14 @@ let modalLock=null;
 function dialogBack(){tg?.BackButton?.[($('#dialog').open||['account','project'].includes(state.view))?'show':'hide']();}
 function lockDialog(){if(modalLock)return;modalLock={x:scrollX,y:scrollY};document.documentElement.classList.add('modal-open');document.body.style.setProperty('--modal-top',`${-modalLock.y}px`);dialogBack();}
 document.querySelector('#dialog').addEventListener('close',()=>{if($('#dialog').open||!modalLock)return;const pos=modalLock;modalLock=null;document.documentElement.classList.remove('modal-open');document.body.style.removeProperty('--modal-top');window.scrollTo(pos.x,pos.y);dialogBack();});
-async function dialog(title,body,label='Сохранить'){const current=$('#dialog');if(current.open||modalLock){const closed=new Promise(resolve=>current.addEventListener('close',resolve,{once:true}));if(current.open&&!await requestDialogExit(current))return null;await closed;}return new Promise(resolve=>{const d=$('#dialog');$('#dialog-title').textContent=title;$('#dialog-body').innerHTML=body;$('#dialog-submit').textContent=label;const info=['Закрыть','Понятно','Готово'].includes(label);d.classList.toggle('info-only',info);d.onclick=e=>{if(info&&e.target===d)requestDialogExit(d);};d.returnValue='';d.onclose=()=>{const values=Object.fromEntries(new FormData($('form',d)));resolve(d.returnValue==='confirm'?values:null);};const form=$('form',d);form.querySelectorAll('select[name="capitalization"]').forEach(select=>{const date=form.querySelector('input[name="capitalization_from"]');if(date)date.disabled=select.value==='inherit';});form.onsubmit=e=>{if(e.submitter?.value==='cancel'){e.preventDefault();requestDialogExit(d);return;}const fields=[...d.querySelectorAll('input,select,textarea')];if(!fields.every(f=>f.reportValidity()))e.preventDefault();};lockDialog();d.showModal();dialogBack();});}
-function dialogHasChanges(d){return [...d.querySelectorAll('input,select,textarea')].some(f=>{if(f.type==='file')return f.files?.length>0;if(f.type==='checkbox'||f.type==='radio')return f.checked!==f.defaultChecked;if(f.tagName==='SELECT')return f.value!==([...f.options].find(o=>o.defaultSelected)?.value??f.options[0]?.value);return f.value!==f.defaultValue;});}
+async function dialog(title,body,label='Сохранить',opts={}){const current=$('#dialog');if(current.open||modalLock){const closed=new Promise(resolve=>current.addEventListener('close',resolve,{once:true}));if(current.open&&!await requestDialogExit(current))return null;await closed;}return new Promise(resolve=>{const d=$('#dialog');$('#dialog-title').textContent=title;$('#dialog-body').innerHTML=body;$('#dialog-submit').textContent=label;const info=['Закрыть','Понятно','Готово'].includes(label);d.classList.toggle('info-only',info);d.onclick=e=>{if(info&&e.target===d)requestDialogExit(d);};d.returnValue='';d.onclose=()=>{d.dataset.dirty='';const cancelButton=d.querySelector('.dialog-actions button[value="cancel"]');if(cancelButton)cancelButton.textContent='Отмена';const values=Object.fromEntries(new FormData($('form',d)));resolve(d.returnValue==='confirm'?values:null);};const form=$('form',d);form.querySelectorAll('select[name="capitalization"]').forEach(select=>{const date=form.querySelector('input[name="capitalization_from"]');if(date)date.disabled=select.value==='inherit';});const cancelButton=d.querySelector('.dialog-actions button[value="cancel"]');if(cancelButton)cancelButton.textContent=opts.cancelLabel||'Отмена';
+  form.oninput=()=>d.querySelector('.dialog-error')?.remove();
+  form.onsubmit=e=>{if(e.submitter?.value==='cancel'){e.preventDefault();requestDialogExit(d);return;}const fields=[...d.querySelectorAll('input,select,textarea')];if(!fields.every(f=>f.reportValidity())){e.preventDefault();return;}
+   // своя проверка: окно остаётся открытым, ошибка видна внутри него, введённое не теряется
+   if(opts.validate){const message=opts.validate(Object.fromEntries(new FormData(form)));if(message){e.preventDefault();dialogError(d,message);}}};
+  lockDialog();d.showModal();dialogBack();opts.onOpen?.(d);});}
+function dialogError(d,message){d.querySelector('.dialog-error')?.remove();const box=document.createElement('div');box.className='dialog-error';box.setAttribute('role','alert');box.textContent=message;$('#dialog-body').prepend(box);d.scrollTo?.({top:0,behavior:'smooth'});}
+function dialogHasChanges(d){return d.dataset.dirty==='1'||[...d.querySelectorAll('input,select,textarea')].some(f=>{if(f.type==='file')return f.files?.length>0;if(f.type==='checkbox'||f.type==='radio')return f.checked!==f.defaultChecked;if(f.tagName==='SELECT')return f.value!==([...f.options].find(o=>o.defaultSelected)?.value??f.options[0]?.value);return f.value!==f.defaultValue;});}
 // Выбор файла: системное окно выбора шлёт «cancel» (всплывает до диалога), на телефоне — ещё и «назад»
 // Telegram. Пока окно выбора открыто и сразу после него закрытие диалога не принимаем.
 let filePickerUntil=0;
@@ -1104,34 +1137,30 @@ document.addEventListener('click',async event=>{const el=event.target.closest('[
  else if(action==='broadcast'){
   const users=state.admin?.users||[];
   if(!users.length)throw new Error('Пока нет приглашённых пользователей для рассылки');
-  const d=await dialog('Сообщение пользователям',`<div class="composer">
-   <div class="composer-intro"><span class="eyebrow">РАССЫЛКА</span><p>Напишите сообщение, посмотрите, как оно выглядит у получателя, и проверьте перед отправкой.</p></div>
-   <div class="cmp-block"><span class="cmp-label">Кому</span><div class="segmented cmp-seg" role="group" aria-label="Получатели"><button type="button" class="active" data-cmp-target="all">Всем · ${users.length}</button><button type="button" data-cmp-target="one">Одному</button></div>
-    <label class="field cmp-one" hidden>Пользователь<select name="target"><option value="all" selected>Все приглашённые · ${users.length}</option>${users.map(u=>`<option value="${esc(u.id)}">${esc(u.name)}</option>`).join('')}</select></label></div>
-   <div class="cmp-block"><span class="cmp-label">Быстрый старт</span><div class="cmp-chips">${[['maintenance','Технические работы'],['feature','Новая функция'],['reminder','Напоминание'],['thanks','Благодарность']].map(([id,label])=>`<button type="button" class="cmp-chip" data-template="${id}">${label}</button>`).join('')}</div></div>
-   <div class="composer-editor"><div class="composer-editor-head"><b>Текст</b><span id="compose-count">0 / 4096</span></div><div class="cmp-meter" aria-hidden="true"><i id="compose-meter"></i></div>
-    <div class="compose-tools"><button type="button" class="format-btn" data-format="bold" aria-label="Жирный" title="Жирный"><b>Ж</b></button><button type="button" class="format-btn" data-format="italic" aria-label="Курсив" title="Курсив"><i>К</i></button><button type="button" class="format-btn" data-format="mono" aria-label="Моноширинный" title="Моноширинный"><code>М</code></button><button type="button" class="format-btn" data-format="quote" aria-label="Цитата" title="Цитата">❝</button><span>Выделите текст для оформления</span><button type="button" class="cmp-clear" data-cmp-clear hidden>Очистить</button><label class="format-btn cmp-attach" title="Фото или видео" aria-label="Прикрепить фото или видео"><input type="file" name="media" accept="image/jpeg,image/png,video/mp4" class="cmp-file-input"><svg class="cmp-clip" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5 12.6 19.9a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/></svg></label></div>
-    <textarea name="text" aria-label="Текст сообщения" placeholder="Напишите, что важно сообщить пользователям…"></textarea><div class="cmp-file" hidden><svg class="cmp-clip" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5 12.6 19.9a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/></svg><small id="compose-file-name">JPG/PNG до 10 МБ · MP4 до 20 МБ</small><button type="button" class="cmp-file-clear" data-cmp-file-clear aria-label="Убрать файл">×</button></div></div><div class="cmp-block"><label class="check"><input type="checkbox" name="with_button" data-cmp-button>Кнопка «Открыть приложение»</label><div class="cmp-button-field" hidden>${field('Текст на кнопке','button_text','text','Открыть приложение','maxlength="40"')}</div></div>
-   <div class="composer-live"><span class="eyebrow">ТАК УВИДЯТ ПОЛЬЗОВАТЕЛИ</span><div class="cmp-bubble"><b class="cmp-bubble-name">Tag Markets</b><div id="compose-live" class="compose-preview-text"><span class="muted">Сообщение появится здесь</span></div><small class="cmp-bubble-time">сейчас</small></div><div class="cmp-bubble-btn" id="compose-btn-preview" hidden></div></div></div>`,'Проверить');
-  if(!d)return;
-  const file=d.media?.size?d.media:null;
-  if(broadcastLength(d.text)>4096)throw new Error('Текст длиннее 4096 символов — сократите сообщение');
-  if(!String(d.text||'').trim()&&!file)throw new Error('Добавьте текст или файл');
-  const kind=file?await mediaKind(file):null;
-  if(file&&!kind)throw new Error('Выберите JPG, PNG или MP4');
-  if(file&&file.size>(kind==='video'?20:10)*1024*1024)throw new Error('Фото до 10 МБ, видео до 20 МБ');
-  const buttonText=d.with_button==='on'?(String(d.button_text||'').trim()||'Открыть приложение').slice(0,40):'';
-  const recipient=d.target==='all'?`все приглашённые (${users.length})`:users.find(u=>String(u.id)===String(d.target))?.name||'пользователь';
-  const objectUrl=file?URL.createObjectURL(file):null;
-  try{
-   const media=file?`<div class="compose-preview-media">${kind==='photo'?`<img src="${esc(objectUrl)}" alt="Приложенное фото">`:`<video src="${esc(objectUrl)}" controls preload="metadata"></video>`}<small>${esc(file.name)} · ${fileSize(file.size)}</small></div>`:'';
-   const body=`<p class="compose-recipient">Кому: <b>${esc(recipient)}</b></p><div class="cmp-bubble cmp-review"><b class="cmp-bubble-name">Tag Markets</b>${media}<div class="compose-preview-text">${d.text?broadcastPreview(d.text):'<span class="muted">Без подписи</span>'}</div><small class="cmp-bubble-time">сейчас</small></div>${buttonText?`<div class="cmp-bubble-btn">${esc(buttonText)}</div>`:''}<p class="compose-footnote">Проверьте сообщение перед отправкой: после неё его нельзя отозвать.</p>`;
-   if(!await dialog('Проверка рассылки',body,'Отправить'))return;
-  }finally{if(objectUrl)URL.revokeObjectURL(objectUrl);}
+  let draft={target:'all',text:'',buttonOn:false,buttonText:'Открыть приложение',file:null,error:''},kind=null;
+  for(;;){
+   const d=await dialog('Сообщение пользователям',composerBody(users,draft),'Проверить',{validate:composerValidate,onOpen:()=>composerRestore(draft)});
+   if(!d)return;
+   const file=d.media?.size?d.media:null;
+   draft={target:d.target||'all',text:d.text||'',buttonOn:d.with_button==='on',buttonText:String(d.button_text||'').trim()||'Открыть приложение',file,error:''};
+   kind=file?await mediaKind(file):null;
+   if(file&&!kind){draft={...draft,file:null,error:'Выберите JPG, PNG или MP4 (файл не похож на фото или видео)'};continue;}
+   const buttonLabel=draft.buttonOn?draft.buttonText.slice(0,40):'';
+   const recipient=draft.target==='all'?`все приглашённые (${users.length})`:users.find(u=>String(u.id)===String(draft.target))?.name||'пользователь';
+   const objectUrl=file?URL.createObjectURL(file):null;
+   let confirmed;
+   try{
+    const media=file?`<div class="compose-preview-media">${kind==='photo'?`<img src="${esc(objectUrl)}" alt="Приложенное фото">`:`<video src="${esc(objectUrl)}" controls preload="metadata"></video>`}<small>${esc(file.name)} · ${fileSize(file.size)}</small></div>`:'';
+    const body=`<p class="compose-recipient">Кому: <b>${esc(recipient)}</b></p><div class="cmp-bubble cmp-review"><b class="cmp-bubble-name">Tag Markets</b>${media}<div class="compose-preview-text">${draft.text?broadcastPreview(draft.text):'<span class="muted">Без подписи</span>'}</div><small class="cmp-bubble-time">сейчас</small></div>${buttonLabel?`<div class="cmp-bubble-btn">${esc(buttonLabel)}</div>`:''}<p class="compose-footnote">Проверьте сообщение перед отправкой: после неё его нельзя отозвать.</p>`;
+    confirmed=await dialog('Проверка рассылки',body,'Отправить',{cancelLabel:'Назад'});
+   }finally{if(objectUrl)URL.revokeObjectURL(objectUrl);}
+   if(confirmed)break;       // «Назад» (или закрытие окна проверки) возвращает в сообщение с тем же текстом, файлом и выбором
+  }
+  const file=draft.file,buttonText=draft.buttonOn?draft.buttonText.slice(0,40):'';
   if(preview){await dialog('Демо-режим',`<p>Макет показывает редактор и вложение, но не отправляет сообщения. Для настоящей рассылки откройте приложение из <a href="https://t.me/tagmarketgold_bot" target="_blank" rel="noopener">бота в Telegram</a>.</p>`,'Понятно');return;}
   const requestId=crypto.randomUUID();
   for(;;){
-   const form=new FormData();form.append('target',d.target);form.append('text',d.text||'');form.append('request_id',requestId);if(buttonText)form.append('button_text',buttonText);if(file)form.append('media',file);
+   const form=new FormData();form.append('target',draft.target);form.append('text',draft.text||'');form.append('request_id',requestId);if(buttonText)form.append('button_text',buttonText);if(file)form.append('media',file);
    let result;
    try{result=await api('/broadcast',{method:'POST',body:form});}
    catch(error){if(!await dialog('Отправка не завершена',`<p>${esc(error.message)}</p><p class="stat-note">Повтор с тем же сообщением не отправит его заново тем, кому оно уже доставлено.</p>`,'Проверить и повторить'))return;continue;}
