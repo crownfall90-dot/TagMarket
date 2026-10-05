@@ -42,7 +42,7 @@ SENTINELS = [
     ".topbar", ".mobile-nav", ".currency-menu", ".feed-day", ".feed-meta", ".forecast-milestones",
     ".forecast-events", ".pa-card", ".pa-grip", ".notification-item", ".nt-filters", ".guest-card",
     ".cmp-bubble", ".cmp-file", ".cmp-bubble-btn", ".bonus-fields", ".cap-switch", ".share-row",
-    ".project-dynamics", ".forecast-dates", "#offline-bar",
+    ".project-dynamics", ".forecast-dates", "#offline-bar", ".cubes-row", ".cube-detail",
 ]
 for selector in SENTINELS:
     if selector not in CSS:

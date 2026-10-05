@@ -790,6 +790,12 @@ def main():
                     page.wait_for_function("document.querySelectorAll('.chart-panel .cube').length >= 3")
                     heights = page.evaluate("[...document.querySelectorAll('.chart-panel .cube')].map(c => [parseFloat(c.style.getPropertyValue('--h')), c.dataset.cube])")
                     assert all(h > 0 for h, _ in heights)
+                    fits(page)          # длинный период не раздвигает страницу: ряд кубиков прокручивается внутри блока
+                    page.locator('[data-action="period"][data-value="all"]').first.click()
+                    page.wait_for_function("document.querySelectorAll('.chart-panel .cube').length >= 10")
+                    fits(page)
+                    page.locator('[data-action="period"][data-value="month"]').first.click()
+                    page.wait_for_function("document.querySelectorAll('.chart-panel .cube').length >= 3")
                     biggest = max(heights, key=lambda x: x[0])
                     assert biggest[0] > min(h for h, _ in heights), heights
                     # выбор дня показывает его сумму и процент строкой под рядом

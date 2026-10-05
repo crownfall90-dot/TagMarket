@@ -1206,3 +1206,30 @@ dialog::backdrop{background:#000a;backdrop-filter:blur(6px);-webkit-backdrop-fil
 .price-level{font-size:9px;opacity:.6}
 #compose-count.over{color:var(--negative)}
 .compose-status.is-warn strong{color:#e4bf7a}
+/* Кубики: башни из блоков — чем больше доходность за день, тем выше башня */
+.cubes-row{--u:11px;gap:5px}
+.cubes-row:after{content:"";position:absolute;left:0;right:0;top:0;bottom:0;pointer-events:none;background:repeating-linear-gradient(to top,transparent 0 calc(25% - 1px),rgb(255 255 255 / .045) calc(25% - 1px) 25%)}
+.cube{min-width:16px}
+.cube:after{border-radius:5px;-webkit-mask-image:repeating-linear-gradient(to top,#000 0 calc(var(--u) - 3px),transparent calc(var(--u) - 3px) var(--u));mask-image:repeating-linear-gradient(to top,#000 0 calc(var(--u) - 3px),transparent calc(var(--u) - 3px) var(--u));transform-origin:center bottom;animation:cube-rise .65s var(--ease-out) both;animation-delay:calc(var(--i) * 16ms)}
+.cube.down:after{transform-origin:center top}
+.cube.up:after{background:linear-gradient(0deg,rgb(var(--accent-rgb) / .55),var(--accent) 70%,#f4ffd9);box-shadow:none;filter:drop-shadow(0 0 7px rgb(var(--accent-rgb) / .3))}
+.cube.down:after{background:linear-gradient(180deg,rgb(242 153 153 / .55),var(--negative) 70%,#ffd9d9);filter:drop-shadow(0 0 7px rgb(242 153 153 / .28))}
+.cube:not(.active):after{opacity:.5;filter:none}
+.cube.active{z-index:1}
+.cube.active:after{opacity:1;transform:translateY(-3px) scale(1.04);filter:drop-shadow(0 0 12px rgb(var(--accent-rgb) / .6))}
+.cube.down.active:after{transform:translateY(3px) scale(1.04);filter:drop-shadow(0 0 12px rgb(242 153 153 / .55))}
+.cube.best:before,.cube.worst:before{content:"";position:absolute;left:50%;width:6px;height:6px;margin-left:-3px;border-radius:2px;transform:rotate(45deg);background:#fff;box-shadow:0 0 8px rgb(255 255 255 / .8)}
+.cube.best:before{bottom:calc(var(--base) + var(--h) + 6px)}
+.cube.worst:before{top:calc(100% - var(--base) + var(--h) + 6px)}
+@keyframes cube-rise{from{transform:scaleY(0);opacity:0}to{opacity:inherit}}
+@media(prefers-reduced-motion:reduce){.cube:after{animation:none}}
+.cubes,.cubes-scroll{min-width:0;max-width:100%}
+.dynamics,.chart-panel>*{min-width:0}
+@media(max-width:740px){.cubes-row{gap:4px;width:max(100%,calc(var(--n) * 18px))}.cube{min-width:12px}}
+/* Кубики всегда зелёные в плюс и красные в минус — в любой цветовой гамме */
+.cube.up:after{background:linear-gradient(0deg,#1f9d68,#2fcf8a 62%,#a8f5d0);filter:drop-shadow(0 0 7px rgb(47 207 138 / .32))}
+.cube.down:after{background:linear-gradient(180deg,#c43a4d,#f0586a 62%,#ffb3bd);filter:drop-shadow(0 0 7px rgb(240 88 106 / .32))}
+.cube.active:after{filter:drop-shadow(0 0 12px rgb(47 207 138 / .65))}
+.cube.down.active:after{filter:drop-shadow(0 0 12px rgb(240 88 106 / .6))}
+.cube:not(.active):after{filter:none}
+.cube-detail .positive{color:#2fcf8a}.cube-detail .negative{color:#f0586a}
