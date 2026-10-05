@@ -490,13 +490,13 @@ def projects_ui(page, nav):
     assert 'Закончится бонус' in page.locator('.forecast-events').inner_text()
     page.locator('[data-action="forecast-horizon"][data-value="1m"]').click()
     page.wait_for_function("state.forecast.horizon==='1m'&&document.querySelectorAll('.forecast-events li').length===0")
-    assert all(page.locator('.forecast-table thead th').all_inner_texts()[i] for i in range(7))
+    assert page.locator('.forecast-table, .forecast-table-wrap').count() == 0          # таблицы нет: карточки проектов
+    assert page.locator('.fc-card').count() >= 3 and page.locator('.fc-card .fc-steps span').count() >= 9
     # TagMarket — такой же проект в списке, таблице и карточках, без отдельного блока
     assert page.locator('.forecast-tag, .forecast-tag-grid').count() == 0
     assert page.locator('input[name="forecast-project"][value="tagmarket-system"]').is_checked()
-    assert '% / день' in page.locator('.forecast-tag-row').inner_text()
-    wide = page.locator('.forecast-table-wrap').is_visible()
-    tag_view = page.locator('.forecast-table tbody tr').first if wide else page.locator('.forecast-mobile-card').first
+    assert '% / день' in page.locator('.fc-card').first.inner_text()
+    tag_view = page.locator('.fc-card').first
     result_text = tag_view.inner_text()
     assert 'TagMarket' in result_text and '23 торговых дня' in result_text, result_text
     assert '≈' in result_text
@@ -512,15 +512,12 @@ def projects_ui(page, nav):
     page.evaluate("state.forecast.tag={sufficient:false,days_used:3,min_days:5,multipliers:{}};render(true)")
     page.wait_for_function("document.querySelector('.forecast-result')?.innerText.includes('Недостаточно истории для прогноза')")
     result_text = page.locator('.forecast-result').inner_text()
-    assert '≈' not in (page.locator('.forecast-table tbody tr').first.inner_text() if wide else page.locator('.forecast-mobile-card').first.inner_text())
+    assert '≈' not in page.locator('.fc-card').first.inner_text()
     page.evaluate("state.forecast.tag={error:'x'};render(true)")
     assert 'Прогноз временно недоступен' in page.locator('.forecast-result').inner_text()
     page.evaluate('recalculateForecast()')
     page.wait_for_function("state.forecast.tag?.sufficient===true")
-    summary=(page.locator('.forecast-mobile-cards .forecast-breakdown summary')
-             if page.locator('.forecast-mobile-cards').is_visible()
-             else page.locator('.forecast-table .forecast-breakdown summary'))
-    summary.first.click()
+    page.locator('.fc-card .forecast-breakdown summary').first.click()
     assert page.locator('.forecast-account-detail').count() >= 1
     # анимация входа и раскрытия деталей должна завершиться: иначе кнопка
     # ещё едет, и клик попадает в соседний слой
