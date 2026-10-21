@@ -1295,7 +1295,9 @@ async def project_api(request):
     account_id = request.match_info.get("account_id")
     data = await json_object(request) if request.method in {"POST", "PATCH"} else {}
     try:
-        if request.path.endswith("/accounts/reorder") and request.method == "POST":
+        if request.path.endswith("/pause") and request.method == "POST":
+            result = projects.set_paused(db, uid, project_id, data.get("paused"), account_id)
+        elif request.path.endswith("/accounts/reorder") and request.method == "POST":
             result = projects.reorder_account(db, uid, project_id, data.get("account_id"), data.get("position"))
         elif "/accounts" in request.path:
             result = projects.account_change(db, uid, project_id, data, account_id,
@@ -1311,7 +1313,7 @@ async def project_api(request):
         raise web.HTTPNotFound(text=str(exc))
     except ValueError as exc:
         raise web.HTTPBadRequest(text=str(exc))
-    return web.json_response(result, status=201 if request.method == "POST" and not request.path.endswith("/accounts/reorder") else 200)
+    return web.json_response(result, status=201 if request.method == "POST" and not request.path.endswith(("/accounts/reorder", "/pause")) else 200)
 
 
 async def project_forecast(request):
@@ -1433,6 +1435,8 @@ def setup(app):
     app.router.add_get("/api/projects/{project_id}", project_api)
     app.router.add_patch("/api/projects/{project_id}", project_api)
     app.router.add_delete("/api/projects/{project_id}", project_api)
+    app.router.add_post("/api/projects/{project_id}/pause", project_api)
+    app.router.add_post("/api/projects/{project_id}/accounts/{account_id}/pause", project_api)
     app.router.add_post("/api/projects/{project_id}/accounts/reorder", project_api)
     app.router.add_post("/api/projects/{project_id}/accounts", project_api)
     app.router.add_patch("/api/projects/{project_id}/accounts/{account_id}", project_api)

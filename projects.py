@@ -232,27 +232,42 @@ def _bounded(value):
     return None if value > MAX_AMOUNT else float(value)
 
 
+def _bonus_window(account, start, end):
+    """Периоды, за которые бонус приносил доход: от активации (не раньше start) до срока (не позже end)."""
+    activated = account.get("bonus_activated_at")
+    begins = max(start, datetime.fromisoformat(activated.replace("Z", "+00:00")).date()) if activated else start
+    expires = datetime.fromisoformat(account["bonus_expires_at"].replace("Z", "+00:00")).date()
+    return begins, min(end, expires)
+
+
 def _current_account(account, project, as_of):
+    """Ставка, капитализация, баланс аккаунта сейчас и действующий бонус.
+
+    Доход прибавляется к балансу каждый день, начиная с даты начала (своей
+    даты капитализации/начислений аккаунта или проекта): с капитализацией —
+    сложным процентом, без неё — простым. Доплата аккаунту и доход на бонус
+    тоже ложатся в баланс и остаются в нём, когда бонус закончится. Дни на
+    паузе не начисляются.
+    """
     rate = Decimal(str(account["rate_percent"] if account["rate_percent"] is not None else project["rate_percent"])) / 100
     enabled = account["capitalization"] if account["capitalization"] is not None else project["capitalization"]
-    personal = Decimal(str(account["amount"]))
-    # пауза останавливает начисления: время на паузе в расчёт не входит
+    amount = Decimal(str(account["amount"]))
+    business_only = project.get("business_days_only", False)
     accrued_to = as_of - timedelta(days=paused_shift(account, project, as_of))
+    start = account.get("capitalization_from") or project.get("capitalization_from") or as_of.isoformat()
     begins = income_start(account, project)
-    if enabled:
-        start = account["capitalization_from"] or project["capitalization_from"]
-        start = max(start, begins) if begins else start
-        personal = _growth(personal, rate, periods_since(start, project["period"], accrued_to,
-                            project.get("business_days_only", False)), True)
+    start = date.fromisoformat(max(start, begins) if begins else start)
+    periods = fractional_periods(start, accrued_to, project["period"], business_only) if accrued_to > start else 0
+    personal = _growth(amount, rate, periods, enabled)
+    personal += Decimal(str(account.get("fixed_income") or 0)) * Decimal(str(periods))
     bonus = Decimal(0)
-    if account["bonus_active"]:
-        bonus = Decimal(str(account["bonus_amount"]))
-        if account["bonus_capitalization"]:
-            activated = datetime.fromisoformat((account["bonus_activated_at"] or "").replace("Z", "+00:00")) if account["bonus_activated_at"] else datetime.combine(as_of, datetime.min.time(), timezone.utc)
-            start = activated.date().isoformat()
-            start = max(start, begins) if begins else start
-            bonus = _growth(bonus, rate, periods_since(start, project["period"], accrued_to,
-                                project.get("business_days_only", False)), True)
+    if account.get("bonus_amount") and account.get("bonus_expires_at"):
+        principal = Decimal(str(account["bonus_amount"]))
+        bonus_from, bonus_to = _bonus_window(account, start, accrued_to)
+        span = fractional_periods(bonus_from, bonus_to, project["period"], business_only) if bonus_to > bonus_from else 0
+        personal += _growth(principal, rate, span, account["bonus_capitalization"]) - principal
+        if account["bonus_active"]:
+            bonus = principal
     return rate, bool(enabled), personal, bonus
 
 
@@ -264,10 +279,14 @@ def _checkpoint(project, accounts, target, include_bonus, start):
         business_only = project.get("business_days_only", False)
         begins = max(start, account["_from"])     # начисления ещё не начались — прирост с их даты
         periods_to_target = fractional_periods(begins, target, project["period"], business_only) if target > begins else 0
-        personal = _growth(personal_now, rate, periods_to_target, personal_cap)
+        if personal_cap:
+            personal = _growth(personal_now, rate, periods_to_target, True)
+        else:       # простой процент — только на вложенную сумму
+            personal = personal_now + Decimal(str(account["amount"])) * rate * Decimal(str(periods_to_target))
         fixed_extra = Decimal(str(account.get("fixed_income") or 0)) * Decimal(str(periods_to_target))  # доплата не капитализируется
         bonus = Decimal(0)
         bonus_expires = None
+        active_at_checkpoint = False
         if include_bonus and account["bonus_active"]:
             expiry = datetime.fromisoformat(account["bonus_expires_at"].replace("Z", "+00:00"))
             bonus_expires = expiry.date()
@@ -275,8 +294,12 @@ def _checkpoint(project, accounts, target, include_bonus, start):
             active_at_checkpoint = expiry > end_of_target
             if target == start:
                 active_at_checkpoint = expiry > datetime.now(timezone.utc)
+            # доход на бонус до его срока остаётся в балансе и после окончания бонуса
+            end = min(target, bonus_expires)
+            span = fractional_periods(begins, end, project["period"], business_only) if end > begins else 0
+            bonus = _growth(bonus_now, rate, span, account["bonus_capitalization"]) - bonus_now
             if active_at_checkpoint:
-                bonus = _growth(bonus_now, rate, periods_to_target, account["bonus_capitalization"])
+                bonus += bonus_now
         working = personal + bonus + fixed_extra
         fixed_total += fixed_extra
         initial += personal_now + (bonus_now if include_bonus and account["bonus_active"] else 0)
@@ -456,7 +479,7 @@ def get(db, owner, project_id):
     result["accounts"] = [{"id": r[0], "project_id": project_id, "position": index + 1, "name": r[1], "amount": r[2] / 100, "rate_percent": r[3], "capitalization": bool(r[4]) if r[4] is not None else None, "capitalization_from":r[5], "bonus_amount": r[6] / 100 if r[6] is not None else None, "bonus_activated_at": r[7], "bonus_expires_at": r[8], "bonus_capitalization": bool(r[9]), "fixed_income": r[10] / 100 if r[10] else None, "bonus_active": bool(r[6] and r[8] and datetime.fromisoformat(r[8].replace('Z', '+00:00')) > now), "income_from": r[11], "paused": bool(r[12]), "paused_at": r[12], "paused_days": r[13] or 0} for index, r in enumerate(rows)]
     # аккаунт на паузе остаётся в списке, но в баланс и доход проекта не входит
     cents = sum(r[2] for a, r in zip(result["accounts"], rows) if not a["paused"])
-    current_total = income = bonus_total = fixed_extra_total = paused_total = Decimal(0)
+    current_total = income = bonus_total = fixed_extra_total = paused_total = accrued_total = Decimal(0)
     expired_bonus_total = Decimal(0)
     all_earning = True
     for account, row in zip(result["accounts"], rows):
@@ -476,9 +499,12 @@ def get(db, owner, project_id):
         account["bonus_rate_income"] = _bounded((bonus if account["bonus_active"] and works else 0) * rate)
         account["personal_amount"] = float(amount)
         account["personal_capitalization"] = enabled
-        account["personal_income"] = _bounded(personal * rate if works else Decimal(0))
+        account["personal_income"] = _bounded((personal if enabled else amount) * rate if works else Decimal(0))
         fixed_extra = Decimal(row[10] or 0) / 100 if works else Decimal(0)
-        account_income = working * rate + fixed_extra if works else Decimal(0)
+        # без капитализации процент идёт только на вложенную сумму, начисленное не работает
+        base = working if enabled else amount + (bonus if account["bonus_active"] else 0)
+        account_income = base * rate + fixed_extra if works else Decimal(0)
+        account["accrued_income"] = _bounded(personal - amount)
         account["expected_income"] = _bounded(account_income)
         account["daily_rate_percent"] = daily_rate_percent(rate * 100, result["period"])
         account["daily_income"] = _bounded(account_income / period_days(result["period"]))
@@ -486,6 +512,7 @@ def get(db, owner, project_id):
             paused_total += working
             continue
         current_total += personal
+        accrued_total += personal - amount
         if account["bonus_active"]:
             bonus_total += bonus
         income += account_income - fixed_extra
@@ -507,6 +534,7 @@ def get(db, owner, project_id):
     result["expired_bonus_total"] = _bounded(expired_bonus_total)
     result["working_total"] = _bounded(current_total + bonus_total)
     result["paused_total"] = _bounded(paused_total)
+    result["accrued_income"] = _bounded(accrued_total)
     result["paused_accounts"] = sum(a["paused"] for a in result["accounts"])
     result["income_starts"] = result["income_from"] if result["income_from"] and result["income_from"] > on.isoformat() else None
     result["has_capitalization"] = result["current_total"] is not None and result["current_total"] != result["total"]
@@ -537,12 +565,14 @@ def save(db, owner, data, project_id=None):
         if fixed_cents:
             capitalization = False  # фиксированная сумма начисляется без капитализации
         capitalization_from = start_date(merged.get("capitalization_from", today().isoformat()))
+        income_from = income_date(merged.get("income_from"))
         if old and currency != old["currency"]:
             raise ValueError("Валюту проекта с вложениями менять нельзя. Создайте отдельный проект")
         rows = merged.get("accounts")
         if not isinstance(rows, list) or not 1 <= len(rows) <= MAX_ACCOUNTS or (not multi and len(rows) != 1):
             raise ValueError("Нужен один аккаунт или до 100 аккаунтов в режиме «Несколько аккаунтов»")
-        existing = {a["id"] for a in old["accounts"]} if old else set()
+        previous = {a["id"]: a for a in old["accounts"]} if old else {}
+        existing = set(previous)
         prepared, ids = [], set()
         for row in rows:
             if not isinstance(row, dict):
@@ -557,7 +587,10 @@ def save(db, owner, data, project_id=None):
             prepared.append((account_id, text(row.get("name", "")), numeric(row.get("amount"), MAX_AMOUNT, amount=True),
                              numeric(row["rate_percent"], MAX_RATE) if row.get("rate_percent") is not None else None,
                              row.get("capitalization"), start_date(row["capitalization_from"]) if row.get("capitalization_from") is not None else (None if old is None or row.get("id") else today().isoformat()),
-                             optional_amount(row.get("bonus_amount")), valid_activation(row.get("bonus_activated_at")), valid_expiration(row.get("bonus_expires_at")), row.get("bonus_capitalization", False), optional_fixed(row.get("fixed_income"))))
+                             optional_amount(row.get("bonus_amount")), valid_activation(row.get("bonus_activated_at")), valid_expiration(row.get("bonus_expires_at")), row.get("bonus_capitalization", False), optional_fixed(row.get("fixed_income")),
+                             # пауза меняется только через set_paused, из формы её не берём
+                             income_date(row.get("income_from")), previous.get(account_id, {}).get("paused_at"),
+                             previous.get(account_id, {}).get("paused_days") or 0))
             if row.get("capitalization") is not None and type(row["capitalization"]) is not bool:
                 raise ValueError("Некорректный режим капитализации аккаунта")
             if type(row.get("bonus_capitalization", False)) is not bool:
@@ -565,7 +598,7 @@ def save(db, owner, data, project_id=None):
             if prepared[-1][6] is not None and not prepared[-1][8]:
                 raise ValueError("Для бонуса укажите дату окончания")
             if prepared[-1][6] is None:
-                prepared[-1] = (*prepared[-1][:6], None, None, None, False, prepared[-1][10])
+                prepared[-1] = (*prepared[-1][:6], None, None, None, False, *prepared[-1][10:])
         if sum(row[2] for row in prepared) > MAX_AMOUNT * 100:
             raise ValueError("Общая сумма проекта превышает допустимый предел")
         if fixed_cents:
@@ -576,13 +609,13 @@ def save(db, owner, data, project_id=None):
             prepared = [(*row[:3], None, None, None, *row[6:]) for row in prepared]
         project_id = project_id or uuid.uuid4().hex
         if old:
-            db.execute("UPDATE projects SET name=?,currency=?,rate_percent=?,period=?,multi=?,business_days_only=?,capitalization=?,capitalization_from=?,income_fixed_cents=? WHERE id=? AND owner_id=?",
-                       (name, currency, rate, period, int(multi), int(business_days_only), int(capitalization), capitalization_from, fixed_cents, project_id, str(owner)))
+            db.execute("UPDATE projects SET name=?,currency=?,rate_percent=?,period=?,multi=?,business_days_only=?,capitalization=?,capitalization_from=?,income_fixed_cents=?,income_from=? WHERE id=? AND owner_id=?",
+                       (name, currency, rate, period, int(multi), int(business_days_only), int(capitalization), capitalization_from, fixed_cents, income_from, project_id, str(owner)))
             db.execute("DELETE FROM project_accounts WHERE project_id=?", (project_id,))
         else:
-            db.execute("INSERT INTO projects (id,owner_id,name,currency,rate_percent,period,multi,business_days_only,capitalization,capitalization_from,income_fixed_cents) VALUES (?,?,?,?,?,?,?,?,?,?,?)", (project_id, str(owner), name, currency, rate, period, int(multi), int(business_days_only), int(capitalization), capitalization_from, fixed_cents))
-        db.executemany("INSERT INTO project_accounts (id,project_id,name,amount_cents,position,rate_percent,capitalization,capitalization_from,bonus_cents,bonus_activated_at,bonus_expires_at,bonus_capitalization,fixed_income_cents) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                       [(aid, project_id, title, cents, i, rate, cap, start, bonus, activated or datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z") if bonus else None, expires, int(bonus_cap), fixed) for i, (aid, title, cents, rate, cap, start, bonus, activated, expires, bonus_cap, fixed) in enumerate(prepared)])
+            db.execute("INSERT INTO projects (id,owner_id,name,currency,rate_percent,period,multi,business_days_only,capitalization,capitalization_from,income_fixed_cents,income_from) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (project_id, str(owner), name, currency, rate, period, int(multi), int(business_days_only), int(capitalization), capitalization_from, fixed_cents, income_from))
+        db.executemany("INSERT INTO project_accounts (id,project_id,name,amount_cents,position,rate_percent,capitalization,capitalization_from,bonus_cents,bonus_activated_at,bonus_expires_at,bonus_capitalization,fixed_income_cents,income_from,paused_at,paused_days) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                       [(aid, project_id, title, cents, i, rate, cap, start, bonus, activated or datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z") if bonus else None, expires, int(bonus_cap), fixed, begins, paused_at, paused_days) for i, (aid, title, cents, rate, cap, start, bonus, activated, expires, bonus_cap, fixed, begins, paused_at, paused_days) in enumerate(prepared)])
         return get(db, owner, project_id)
 
 
@@ -605,11 +638,44 @@ def account_change(db, owner, project_id, data, account_id=None, *, remove=False
                     raise ValueError("Последний аккаунт удаляется вместе с проектом")
                 rows.pop(index)
             else:
-                rows[index] = {**rows[index], **{k: v for k, v in data.items() if k in {"name", "amount", "rate_percent", "capitalization", "capitalization_from", "bonus_amount", "bonus_activated_at", "bonus_expires_at", "bonus_capitalization", "fixed_income"}}}
+                rows[index] = {**rows[index], **{k: v for k, v in data.items() if k in {"name", "amount", "rate_percent", "capitalization", "capitalization_from", "bonus_amount", "bonus_activated_at", "bonus_expires_at", "bonus_capitalization", "fixed_income", "income_from"}}}
         else:
-            rows.append({"name": data.get("name", ""), "amount": data.get("amount"), "rate_percent": data.get("rate_percent"), "capitalization":data.get("capitalization"), "capitalization_from":data.get("capitalization_from", today().isoformat()), "bonus_amount":data.get("bonus_amount"), "bonus_activated_at":data.get("bonus_activated_at"), "bonus_expires_at":data.get("bonus_expires_at"), "bonus_capitalization":data.get("bonus_capitalization", False), "fixed_income":data.get("fixed_income")})
+            rows.append({"name": data.get("name", ""), "amount": data.get("amount"), "rate_percent": data.get("rate_percent"), "capitalization":data.get("capitalization"), "capitalization_from":data.get("capitalization_from", today().isoformat()), "bonus_amount":data.get("bonus_amount"), "bonus_activated_at":data.get("bonus_activated_at"), "bonus_expires_at":data.get("bonus_expires_at"), "bonus_capitalization":data.get("bonus_capitalization", False), "fixed_income":data.get("fixed_income"), "income_from":data.get("income_from")})
         # режима «несколько аккаунтов» больше нет в интерфейсе: второй аккаунт включает его сам
         return save(db, owner, {"accounts": rows, "multi": True} if not account_id else {"accounts": rows}, project_id)
+
+
+def set_paused(db, owner, project_id, paused, account_id=None):
+    """Ставит на паузу или возобновляет проект целиком либо один его аккаунт.
+
+    Пока идёт пауза, начисления стоят. При снятии паузы её дни прибавляются
+    к paused_days аккаунтов — только те, что ещё не покрыты другой паузой
+    (проекта или самого аккаунта), чтобы пересечение не считалось дважды.
+    """
+    if type(paused) is not bool:
+        raise ValueError("Укажите, ставить ли на паузу")
+    with db:
+        project = get(db, owner, project_id)
+        on = today().isoformat()
+        if account_id is not None:
+            account = next((a for a in project["accounts"] if a["id"] == account_id), None)
+            if account is None:
+                raise LookupError("Аккаунт проекта не найден")
+            if paused and not account["paused_at"]:
+                db.execute("UPDATE project_accounts SET paused_at=? WHERE id=? AND project_id=?", (on, account_id, project_id))
+            elif not paused and account["paused_at"]:
+                until = min(on, project["paused_at"]) if project["paused_at"] else on
+                db.execute("UPDATE project_accounts SET paused_at=NULL, paused_days=paused_days+? WHERE id=? AND project_id=?",
+                           (_days(account["paused_at"], until), account_id, project_id))
+        elif paused and not project["paused_at"]:
+            db.execute("UPDATE projects SET paused_at=? WHERE id=? AND owner_id=?", (on, project_id, str(owner)))
+        elif not paused and project["paused_at"]:
+            for account in project["accounts"]:
+                until = account["paused_at"] or on
+                db.execute("UPDATE project_accounts SET paused_days=paused_days+? WHERE id=? AND project_id=?",
+                           (_days(project["paused_at"], until), account["id"], project_id))
+            db.execute("UPDATE projects SET paused_at=NULL WHERE id=? AND owner_id=?", (project_id, str(owner)))
+        return get(db, owner, project_id)
 
 
 def reorder_account(db, owner, project_id, account_id, position):
