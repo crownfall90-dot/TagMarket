@@ -46,8 +46,8 @@ def setup(db):
         CREATE INDEX IF NOT EXISTS project_accounts_project ON project_accounts(project_id, position);
     """)
     for table, fields in {
-        "projects": {"business_days_only":"INTEGER NOT NULL DEFAULT 0 CHECK(business_days_only IN (0,1))", "capitalization":"INTEGER NOT NULL DEFAULT 0 CHECK(capitalization IN (0,1))", "capitalization_from":"TEXT", "income_fixed_cents":"INTEGER CHECK(income_fixed_cents IS NULL OR income_fixed_cents > 0)"},
-        "project_accounts": {"rate_percent":"REAL CHECK(rate_percent IS NULL OR rate_percent BETWEEN 0 AND 1000)", "capitalization":"INTEGER CHECK(capitalization IS NULL OR capitalization IN (0,1))", "capitalization_from":"TEXT", "bonus_cents":"INTEGER", "bonus_activated_at":"TEXT", "bonus_expires_at":"TEXT", "bonus_capitalization":"INTEGER NOT NULL DEFAULT 0 CHECK(bonus_capitalization IN (0,1))", "fixed_income_cents":"INTEGER CHECK(fixed_income_cents IS NULL OR (fixed_income_cents > 0 AND fixed_income_cents <= 100000000000000))"},
+        "projects": {"business_days_only":"INTEGER NOT NULL DEFAULT 0 CHECK(business_days_only IN (0,1))", "capitalization":"INTEGER NOT NULL DEFAULT 0 CHECK(capitalization IN (0,1))", "capitalization_from":"TEXT", "income_fixed_cents":"INTEGER CHECK(income_fixed_cents IS NULL OR income_fixed_cents > 0)", "income_from":"TEXT", "paused_at":"TEXT"},
+        "project_accounts": {"rate_percent":"REAL CHECK(rate_percent IS NULL OR rate_percent BETWEEN 0 AND 1000)", "capitalization":"INTEGER CHECK(capitalization IS NULL OR capitalization IN (0,1))", "capitalization_from":"TEXT", "bonus_cents":"INTEGER", "bonus_activated_at":"TEXT", "bonus_expires_at":"TEXT", "bonus_capitalization":"INTEGER NOT NULL DEFAULT 0 CHECK(bonus_capitalization IN (0,1))", "fixed_income_cents":"INTEGER CHECK(fixed_income_cents IS NULL OR (fixed_income_cents > 0 AND fixed_income_cents <= 100000000000000))", "income_from":"TEXT", "paused_at":"TEXT", "paused_days":"INTEGER NOT NULL DEFAULT 0"},
     }.items():
         existing = {r[1] for r in db.execute(f"PRAGMA table_info({table})")}
         for name, definition in fields.items():
@@ -71,6 +71,51 @@ def start_date(value):
     if parsed.isoformat() != value or not date(2000, 1, 1) <= parsed <= today():
         raise ValueError("Дата начала: с 2000 года до сегодняшнего дня")
     return value
+
+
+INCOME_AHEAD_DAYS = 3660
+
+
+def income_date(value):
+    """Дата, с которой доход начинает прибавляться к балансу: пусто — сразу, можно и в будущем."""
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        raise ValueError("Укажите дату начала начислений")
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError:
+        raise ValueError("Некорректная дата начала начислений") from None
+    if parsed.isoformat() != value or not date(2000, 1, 1) <= parsed <= today() + timedelta(days=INCOME_AHEAD_DAYS):
+        raise ValueError("Дата начала начислений: с 2000 года и не дальше 10 лет вперёд")
+    return value
+
+
+def _days(start, end):
+    return max(0, (date.fromisoformat(end) - date.fromisoformat(start)).days)
+
+
+def paused_shift(account, project, as_of):
+    """Сколько дней аккаунт простоял на паузе к дате as_of — на столько сдвигаются начисления.
+
+    Закрытые паузы аккаунта и проекта уже сложены в paused_days (без двойного
+    счёта пересечений, см. set_paused); идущая пауза — от более ранней из
+    двух отметок до as_of.
+    """
+    opened = [d for d in (account.get("paused_at"), project.get("paused_at")) if d]
+    running = _days(min(opened), as_of.isoformat()) if opened else 0
+    return (account.get("paused_days") or 0) + running
+
+
+def income_start(account, project):
+    """Дата начала начислений аккаунта: своя или проекта; None — без ограничения."""
+    return account.get("income_from") or project.get("income_from")
+
+
+def earning(account, project, on):
+    """Приносит ли аккаунт доход в этот день: не на паузе и начисления уже начались."""
+    start = income_start(account, project)
+    return not account.get("paused_at") and not project.get("paused_at") and (not start or start <= on.isoformat())
 
 
 def periods_since(start, period, end, business_days_only=False):
@@ -191,16 +236,22 @@ def _current_account(account, project, as_of):
     rate = Decimal(str(account["rate_percent"] if account["rate_percent"] is not None else project["rate_percent"])) / 100
     enabled = account["capitalization"] if account["capitalization"] is not None else project["capitalization"]
     personal = Decimal(str(account["amount"]))
+    # пауза останавливает начисления: время на паузе в расчёт не входит
+    accrued_to = as_of - timedelta(days=paused_shift(account, project, as_of))
+    begins = income_start(account, project)
     if enabled:
         start = account["capitalization_from"] or project["capitalization_from"]
-        personal = _growth(personal, rate, periods_since(start, project["period"], as_of,
+        start = max(start, begins) if begins else start
+        personal = _growth(personal, rate, periods_since(start, project["period"], accrued_to,
                             project.get("business_days_only", False)), True)
     bonus = Decimal(0)
     if account["bonus_active"]:
         bonus = Decimal(str(account["bonus_amount"]))
         if account["bonus_capitalization"]:
             activated = datetime.fromisoformat((account["bonus_activated_at"] or "").replace("Z", "+00:00")) if account["bonus_activated_at"] else datetime.combine(as_of, datetime.min.time(), timezone.utc)
-            bonus = _growth(bonus, rate, periods_since(activated.date().isoformat(), project["period"], as_of,
+            start = activated.date().isoformat()
+            start = max(start, begins) if begins else start
+            bonus = _growth(bonus, rate, periods_since(start, project["period"], accrued_to,
                                 project.get("business_days_only", False)), True)
     return rate, bool(enabled), personal, bonus
 
@@ -211,7 +262,8 @@ def _checkpoint(project, accounts, target, include_bonus, start):
     for account in accounts:
         rate, personal_cap, personal_now, bonus_now = account["_current"]
         business_only = project.get("business_days_only", False)
-        periods_to_target = fractional_periods(start, target, project["period"], business_only)
+        begins = max(start, account["_from"])     # начисления ещё не начались — прирост с их даты
+        periods_to_target = fractional_periods(begins, target, project["period"], business_only) if target > begins else 0
         personal = _growth(personal_now, rate, periods_to_target, personal_cap)
         fixed_extra = Decimal(str(account.get("fixed_income") or 0)) * Decimal(str(periods_to_target))  # доплата не капитализируется
         bonus = Decimal(0)
@@ -224,8 +276,7 @@ def _checkpoint(project, accounts, target, include_bonus, start):
             if target == start:
                 active_at_checkpoint = expiry > datetime.now(timezone.utc)
             if active_at_checkpoint:
-                span = fractional_periods(start, target, project["period"], business_only)
-                bonus = _growth(bonus_now, rate, span, account["bonus_capitalization"])
+                bonus = _growth(bonus_now, rate, periods_to_target, account["bonus_capitalization"])
         working = personal + bonus + fixed_extra
         fixed_total += fixed_extra
         initial += personal_now + (bonus_now if include_bonus and account["bonus_active"] else 0)
@@ -267,8 +318,12 @@ def forecast(db, owner, project_id, until, include_bonus=True):
         raise ValueError("Дата прогноза должна быть в пределах 10 лет")
     accounts = []
     for source in project["accounts"]:
+        if source["paused"] or project["paused"]:
+            continue        # на паузе — ни баланса, ни дохода в прогнозе
         account = dict(source)
         account["_current"] = _current_account(account, project, start)
+        begins = income_start(account, project)
+        account["_from"] = max(start, date.fromisoformat(begins)) if begins else start
         accounts.append(account)
     dates = {
         "now": start,
@@ -282,7 +337,7 @@ def forecast(db, owner, project_id, until, include_bonus=True):
     selected = checkpoints["selected"]
     return {
         "project_id": project_id, "currency": project["currency"], "until": target.isoformat(),
-        "includes_bonus": bool(include_bonus), "current": current,
+        "includes_bonus": bool(include_bonus), "current": current, "paused": project["paused"],
         "checkpoints": checkpoints, "accounts": selected["accounts"],
         "total": selected["total"], "income": selected["growth"],
         "calculation_limited": selected["calculation_limited"],
@@ -381,53 +436,66 @@ def numeric(value, maximum, *, amount=False):
 
 
 def get(db, owner, project_id):
-    row = db.execute("SELECT id,name,currency,rate_percent,period,multi,business_days_only,capitalization,capitalization_from,income_fixed_cents FROM projects WHERE id=? AND owner_id=?",
+    row = db.execute("SELECT id,name,currency,rate_percent,period,multi,business_days_only,capitalization,capitalization_from,income_fixed_cents,income_from,paused_at FROM projects WHERE id=? AND owner_id=?",
                      (project_id, str(owner))).fetchone()
     if row is None:
         raise LookupError("Проект не найден")
-    result = dict(zip(("id", "name", "currency", "rate_percent", "period", "multi", "business_days_only", "capitalization", "capitalization_from", "income_fixed_cents"), row))
+    result = dict(zip(("id", "name", "currency", "rate_percent", "period", "multi", "business_days_only", "capitalization", "capitalization_from", "income_fixed_cents", "income_from", "paused_at"), row))
     fixed_cents = result.pop("income_fixed_cents")
     result["income_mode"] = "fixed" if fixed_cents else "percent"
     result["fixed_income"] = fixed_cents / 100 if fixed_cents else None
     result["multi"] = bool(result["multi"])
     result["business_days_only"] = bool(result["business_days_only"])
     result["capitalization"] = bool(result["capitalization"])
-    result["calculation_date"] = today().isoformat()
-    rows = db.execute("SELECT id,name,amount_cents,rate_percent,capitalization,capitalization_from,bonus_cents,bonus_activated_at,bonus_expires_at,bonus_capitalization,fixed_income_cents FROM project_accounts WHERE project_id=? ORDER BY position,id",
+    result["paused"] = bool(result["paused_at"])
+    on = today()
+    result["calculation_date"] = on.isoformat()
+    rows = db.execute("SELECT id,name,amount_cents,rate_percent,capitalization,capitalization_from,bonus_cents,bonus_activated_at,bonus_expires_at,bonus_capitalization,fixed_income_cents,income_from,paused_at,paused_days FROM project_accounts WHERE project_id=? ORDER BY position,id",
                       (project_id,)).fetchall()
     now = datetime.now(timezone.utc)
-    result["accounts"] = [{"id": r[0], "project_id": project_id, "position": index + 1, "name": r[1], "amount": r[2] / 100, "rate_percent": r[3], "capitalization": bool(r[4]) if r[4] is not None else None, "capitalization_from":r[5], "bonus_amount": r[6] / 100 if r[6] is not None else None, "bonus_activated_at": r[7], "bonus_expires_at": r[8], "bonus_capitalization": bool(r[9]), "fixed_income": r[10] / 100 if r[10] else None, "bonus_active": bool(r[6] and r[8] and datetime.fromisoformat(r[8].replace('Z', '+00:00')) > now)} for index, r in enumerate(rows)]
-    cents = sum(r[2] for r in rows)
-    result["total"] = cents / 100
-    current_total = income = bonus_total = fixed_extra_total = Decimal(0)
+    result["accounts"] = [{"id": r[0], "project_id": project_id, "position": index + 1, "name": r[1], "amount": r[2] / 100, "rate_percent": r[3], "capitalization": bool(r[4]) if r[4] is not None else None, "capitalization_from":r[5], "bonus_amount": r[6] / 100 if r[6] is not None else None, "bonus_activated_at": r[7], "bonus_expires_at": r[8], "bonus_capitalization": bool(r[9]), "fixed_income": r[10] / 100 if r[10] else None, "bonus_active": bool(r[6] and r[8] and datetime.fromisoformat(r[8].replace('Z', '+00:00')) > now), "income_from": r[11], "paused": bool(r[12]), "paused_at": r[12], "paused_days": r[13] or 0} for index, r in enumerate(rows)]
+    # аккаунт на паузе остаётся в списке, но в баланс и доход проекта не входит
+    cents = sum(r[2] for a, r in zip(result["accounts"], rows) if not a["paused"])
+    current_total = income = bonus_total = fixed_extra_total = paused_total = Decimal(0)
     expired_bonus_total = Decimal(0)
+    all_earning = True
     for account, row in zip(result["accounts"], rows):
         amount = Decimal(row[2]) / 100
-        rate, enabled, personal, bonus = _current_account(account, result, today())
+        rate, enabled, personal, bonus = _current_account(account, result, on)
+        works = earning(account, result, on)
+        all_earning = all_earning and works
+        begins = income_start(account, result)
+        account["income_starts"] = begins if begins and begins > on.isoformat() else None
+        account["earning"] = works
         account["current_amount"] = _bounded(personal)
         account["capitalization_active"] = enabled
         account["bonus_current_amount"] = _bounded(bonus) if account["bonus_active"] else 0
-        account["working_amount"] = _bounded(personal + (bonus if account["bonus_active"] else 0))
+        working = personal + (bonus if account["bonus_active"] else 0)
+        account["working_amount"] = _bounded(working)
         account["bonus_status"] = "active" if account["bonus_active"] else "expired" if account["bonus_amount"] else None
-        account["bonus_rate_income"] = _bounded((bonus if account["bonus_active"] else 0) * rate)
+        account["bonus_rate_income"] = _bounded((bonus if account["bonus_active"] and works else 0) * rate)
+        account["personal_amount"] = float(amount)
+        account["personal_capitalization"] = enabled
+        account["personal_income"] = _bounded(personal * rate if works else Decimal(0))
+        fixed_extra = Decimal(row[10] or 0) / 100 if works else Decimal(0)
+        account_income = working * rate + fixed_extra if works else Decimal(0)
+        account["expected_income"] = _bounded(account_income)
+        account["daily_rate_percent"] = daily_rate_percent(rate * 100, result["period"])
+        account["daily_income"] = _bounded(account_income / period_days(result["period"]))
+        if account["paused"]:
+            paused_total += working
+            continue
         current_total += personal
         if account["bonus_active"]:
             bonus_total += bonus
-        income += (personal + (bonus if account["bonus_active"] else 0)) * rate
-        account["personal_amount"] = float(amount)
-        account["personal_capitalization"] = enabled
-        account["personal_income"] = _bounded(personal * rate)
-        fixed_extra = Decimal(row[10] or 0) / 100
+        income += account_income - fixed_extra
         fixed_extra_total += fixed_extra
-        account["expected_income"] = _bounded((personal + (bonus if account["bonus_active"] else 0)) * rate + fixed_extra)
-        account["daily_rate_percent"] = daily_rate_percent(rate * 100, result["period"])
-        account["daily_income"] = _bounded(((personal + (bonus if account["bonus_active"] else 0)) * rate + fixed_extra) / period_days(result["period"]))
         if account["bonus_status"] == "expired":
             expired_bonus_total += Decimal(row[6] or 0) / 100
     result["calculation_limited"] = current_total > MAX_AMOUNT or current_total + bonus_total > MAX_AMOUNT or income > MAX_AMOUNT
     result["total"] = _bounded(cents and Decimal(cents) / 100 or Decimal(0))
     result["current_total"] = _bounded(current_total)
-    if fixed_cents and not result["calculation_limited"]:
+    if fixed_cents and all_earning and not result["calculation_limited"]:
         income = Decimal(fixed_cents) / 100  # доход задан суммой за период, а не процентом
     income += fixed_extra_total  # доплаты аккаунтам идут сверх процента и сверх общей суммы проекта
     result["fixed_extra_total"] = _bounded(fixed_extra_total)
@@ -438,6 +506,9 @@ def get(db, owner, project_id):
     result["bonus_total"] = _bounded(bonus_total)
     result["expired_bonus_total"] = _bounded(expired_bonus_total)
     result["working_total"] = _bounded(current_total + bonus_total)
+    result["paused_total"] = _bounded(paused_total)
+    result["paused_accounts"] = sum(a["paused"] for a in result["accounts"])
+    result["income_starts"] = result["income_from"] if result["income_from"] and result["income_from"] > on.isoformat() else None
     result["has_capitalization"] = result["current_total"] is not None and result["current_total"] != result["total"]
     return result
 
