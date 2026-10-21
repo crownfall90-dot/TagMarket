@@ -692,7 +692,7 @@ function previewData(d){
  d.report.day_totals={[shifted('2026-09-16')]:{count:d.report.deals.length,net:dealToday}};
  d.report.months.forEach(month=>{const [year,index]=month.month.split('-').map(Number);const next=new Date(Date.UTC(today.getUTCFullYear(),today.getUTCMonth()+(year-2026)*12+index-9,1));month.month=next.toISOString().slice(0,7)});
  let totalToday=0;
- for(const account of d.bootstrap.accounts){if(!account.totals)continue;account.totals.today_net=round(dealToday*account.totals.month_net/d.report.summary.net_income);totalToday+=account.totals.today_net;}
+ for(const account of d.bootstrap.accounts){if(account.totals&&!account.totals.days)account.totals.days=Array.from({length:14},(_,i)=>Math.round((account.totals.month_net/14)*(1+Math.sin(i*1.3+Number(account.login)%7)*.9)*100)/100);if(!account.totals)continue;account.totals.today_net=round(dealToday*account.totals.month_net/d.report.summary.net_income);totalToday+=account.totals.today_net;}
  d.bootstrap.totals.USD.today=round(totalToday);
  d.bootstrap.totals.USD.trading_day=shifted('2026-09-16');
  d.bootstrap.totals.USD.trading_day_net=round(totalToday);
@@ -1005,8 +1005,25 @@ function projectIncome(p){const v=projectDailyIncome(p);return v==null?'—':`�
 function projectRateLabel(p){return `${p.income_mode==='fixed'?projectMoney(projectDailyIncome(p),p.currency)+' фикс.':number(projectDailyRate(p))+'%'} / день${p.period==='day'&&p.business_days_only?' · по будням':''}`;}
 function tagStatsOk(){const t=state.tagStats;return !!(t&&t.sufficient&&t.average_daily_return!=null);}
 function tagDailyRate(){const t=state.tagStats,ok=tagStatsOk(),capital=displayAmount(tagBalance(),'USD'),income=ok&&capital!=null?capital*t.average_daily_return:null;return `<div class="project-rate"><span>${ok?`${number(Math.round(t.average_daily_return*10000)/100)}% / день`:'Доходность / день'} · только по будням</span><b>${ok&&income!=null?`≈ ${income>0?'+':''}${money(income,state.displayCurrency)} / день`:'—'}</b></div>`;}
-function tagTradingDayLine(){const t=state.data.totals.USD||{},value=t.trading_day_net==null?null:displayAmount(t.trading_day_net,'USD');return t.trading_day?`<div class="project-rate tag-trading-day"><span>Плюс за ${esc(date(t.trading_day))}</span><b>${value==null||t.trading_day_partial?'—':money(value,state.displayCurrency,true)}</b></div>`:'';}
-function projectCard(p){if(p.system)return `<a href="#tagmarket" class="panel project-card system-project"><div class="project-card-head"><span class="project-icon">${icon('chart')}</span><h2>TagMarket</h2>${icon('arrow')}</div><b class="project-total">${p.total==null?'—':money(p.total,state.displayCurrency)}</b><small>${countLabel(p.accounts.length,['торговый счёт','торговых счёта','торговых счетов'])}</small>${tagTradingDayLine()}${tagDailyRate()}</a>`;return `<a href="#project/${esc(p.id)}" class="panel project-card${p.paused?' is-paused':''}" data-ui-key="project-${esc(p.id)}"><div class="project-card-head"><span class="project-icon">${icon('projects')}</span><h2>${esc(p.name)}</h2>${icon('arrow')}</div>${p.multi?`<small class="project-count">${countLabel(p.accounts.length,['аккаунт','аккаунта','аккаунтов'])}</small>`:''}${projectFinance(p)}<div class="project-rate"><span>${projectRateLabel(p)}</span><b>${p.calculation_limited?'—':projectIncome(p)}</b></div></a>`;}
+// Три карточки Финансов — один каркас (значок, название, строки, строка дохода), но у каждой своя
+// живая картинка: у проектов — кольцо доли портфеля, у TagMarket — столбики дней, у банков — полоса долей.
+function shareRing(p){
+ const portfolio=portfolioTotals(),total=portfolio.working??portfolio.own,mine=displayAmount(p.working_total??p.total,p.currency);
+ if(!total||total<=0||mine==null||p.paused)return '';
+ const share=Math.max(0,Math.min(1,mine/total));
+ return `<span class="share-ring" title="Доля в портфеле: ${Math.round(share*100)}%">${ring(share,1,38,'Доля в портфеле')}<b>${Math.round(share*100)}%</b></span>`;
+}
+function tagSpark(){
+ const byIndex=[];
+ for(const a of state.data.accounts){const days=a.totals?.days||[];days.forEach((v,i)=>{const x=displayAmount(v,a.totals.cur||'USD');if(x!=null)byIndex[i]=(byIndex[i]||0)+x;});}
+ const vals=byIndex.filter(v=>v!=null).slice(-14);
+ if(vals.length<2)return '';
+ const max=Math.max(...vals.map(Math.abs),1e-9);
+ return `<div class="spark" role="img" aria-label="Результат по дням">${vals.map((v,i)=>`<i class="${v<0?'neg':'pos'}${i===vals.length-1?' last':''}" style="--h:${Math.max(8,Math.abs(v)/max*100).toFixed(1)}%;--d:${i*45}ms" title="${esc(money(v,state.displayCurrency,true))}"></i>`).join('')}</div>`;
+}
+function tagMonthRow(){const t=state.data.totals.USD||{},v=t.month==null?null:displayAmount(t.month,'USD');return v==null?'':`<div class="project-finance-row"><small>За месяц</small><b class="${v<0?'negative':'positive'}">${money(v,state.displayCurrency,true)}</b></div>`;}
+function tagTradingDayRow(){const t=state.data.totals.USD||{},value=t.trading_day_net==null?null:displayAmount(t.trading_day_net,'USD');return t.trading_day?`<div class="project-finance-row tag-trading-day"><small>Плюс за ${esc(date(t.trading_day))}</small><b class="${value!=null&&value<0?'negative':'positive'}">${value==null||t.trading_day_partial?'—':money(value,state.displayCurrency,true)}</b></div>`:'';}
+function projectCard(p){if(p.system)return `<a href="#tagmarket" class="panel project-card system-project tag-card" data-ui-key="project-tagmarket"><div class="project-card-head"><span class="project-icon">${icon('chart')}</span><h2>TagMarket</h2>${icon('arrow')}</div><small class="project-count">${countLabel(p.accounts.length,['торговый счёт','торговых счёта','торговых счетов'])}</small><div class="project-finance"><div class="project-finance-row working-capital"><small>Баланс</small><b>${p.total==null?'—':money(p.total,state.displayCurrency)}</b></div>${tagMonthRow()}${tagTradingDayRow()}</div>${tagSpark()}${tagDailyRate()}</a>`;return `<a href="#project/${esc(p.id)}" class="panel project-card${p.paused?' is-paused':''}" data-ui-key="project-${esc(p.id)}"><div class="project-card-head"><span class="project-icon">${icon('projects')}</span><h2>${esc(p.name)}</h2>${shareRing(p)}${icon('arrow')}</div>${p.multi?`<small class="project-count">${countLabel(p.accounts.length,['аккаунт','аккаунта','аккаунтов'])}</small>`:''}${projectFinance(p)}<div class="project-rate"><span>${projectRateLabel(p)}</span><b>${p.calculation_limited?'—':projectIncome(p)}</b></div></a>`;}
 // Динамика по всем проектам: доля каждого в рабочем капитале портфеля и
 // ожидаемый доход в день, суммы приведены к валюте отображения.
 function projectsDynamics(portfolio){const cur=state.displayCurrency,rows=[],tagOk=tagStatsOk(),tagCap=portfolio.tag;let partial=portfolio.tag==null;
@@ -1386,9 +1403,22 @@ const BANK_KINDS={card:'Карта',current:'Счёт',deposit:'Вклад',savi
 const BANK_NAMES=['Альфа-Банк','БНБ-Банк','Беларусбанк','Приорбанк','МТБанк','БелВЭБ Банк','Белагропромбанк','Белинвестбанк','Сбербанк','Т-Банк','ВТБ','Revolut','Wise'];
 function bankMoney(value,cur){return new Intl.NumberFormat('ru-RU',{style:'currency',currency:cur,maximumFractionDigits:2}).format(value);}
 function bankAgo(a){const src=a.source==='sms'?'из SMS':'вручную';return `${src} · ${agoText(a.updated_at)||'только что'}`;}
+function bankShares(){
+ const by={};for(const a of state.banks?.accounts||[]){if(!a.counted)continue;const v=displayAmount(a.balance,a.currency);if(v!=null&&v>0)by[a.bank]=(by[a.bank]||0)+v;}
+ const entries=Object.entries(by).sort((a,b)=>b[1]-a[1]),sum=entries.reduce((n,[,v])=>n+v,0);
+ return {entries,sum};
+}
+function bankStack(max=4){
+ const {entries,sum}=bankShares();if(!sum)return '';
+ const top=entries.slice(0,max),rest=entries.slice(max).reduce((n,[,v])=>n+v,0),parts=rest>0?[...top,['Другие',rest]]:top;
+ return `<div class="bank-stack" role="img" aria-label="Доли банков в балансе">${parts.map(([name,v],i)=>`<i class="seg-${i%5}" style="--w:${(v/sum*100).toFixed(1)}%;--d:${i*110}ms" title="${esc(name)}: ${Math.round(v/sum*100)}%"></i>`).join('')}</div><div class="bank-legend">${parts.map(([name,v],i)=>`<span><i class="seg-${i%5}"></i>${esc(name)} <em>${Math.round(v/sum*100)}%</em></span>`).join('')}</div>`;
+}
 function bankSummaryCard(){
- const accs=state.banks?.accounts||[],t=bankTotal();
- return `<a href="#banks" class="panel project-card system-project bank-summary" data-ui-key="bank-summary"><div class="project-card-head"><span class="project-icon">${icon('bank')}</span><h2>Банки и счета</h2>${icon('arrow')}</div>${accs.length?`<b class="project-total">${t.partial?'—':money(t.sum,state.displayCurrency)}</b><small>${countLabel(accs.length,['счёт','счёта','счетов'])}${state.banks.inbox?.length?` · ${state.banks.inbox.length} ждут подтверждения`:''}</small>`:`<small class="muted">Добавьте свои карты и счета — баланс войдёт в общую сумму. Можно вручную или обновлять из SMS.</small><span class="button secondary small">Добавить счёт</span>`}</a>`;
+ const b=state.banks,accs=b?.accounts||[],t=bankTotal(),upd=accs.map(a=>a.updated_at).sort().at(-1),auto=accs.some(a=>a.source==='sms');
+ const head=`<div class="project-card-head"><span class="project-icon">${icon('bank')}</span><h2>Банки и счета</h2>${icon('arrow')}</div>`;
+ if(!accs.length)return `<a href="#banks" class="panel project-card system-project bank-summary" data-ui-key="project-banks">${head}<small class="project-count">Пока пусто</small><div class="project-finance"><div class="project-finance-row"><small>Карты, счета, вклады</small><b>—</b></div></div><div class="project-rate"><span>Введите баланс сами или обновляйте из SMS банка</span><b>Добавить счёт</b></div></a>`;
+ const counted=accs.filter(a=>a.counted).length;
+ return `<a href="#banks" class="panel project-card system-project bank-summary" data-ui-key="project-banks">${head}<small class="project-count">${countLabel(accs.length,['счёт','счёта','счетов'])}</small><div class="project-finance"><div class="project-finance-row working-capital"><small>На счетах</small><b>${t.partial?'—':money(t.sum,state.displayCurrency)}</b></div>${counted<accs.length?`<div class="project-finance-row"><small>Не в общем балансе</small><b>${accs.length-counted}</b></div>`:''}${b.inbox?.length?`<div class="project-finance-row attention"><small>Сообщения банка</small><b>${b.inbox.length} ${b.inbox.length%10===1&&b.inbox.length%100!==11?'ждёт':'ждут'} подтверждения</b></div>`:''}</div>${bankStack()}<div class="project-rate"><span>${upd?`Обновлено ${esc(agoText(upd))}`:'Баланс вручную'}</span><b>${auto?'из SMS · авто':'вручную'}</b></div></a>`;
 }
 function banksView(){
  const back='<a href="#projects" class="button secondary small back">← Финансы</a>',head=`<div class="project-space">${back}</div>`+header('Банки и счета','Свои карты, счета и вклады — в общем балансе',`<div class="head-actions">${button('bank-sync','','secondary icon-only','refresh','aria-label="Автообновление из SMS" title="Автообновление из SMS"')}${button('bank-add','Счёт','primary','plus')}</div>`);

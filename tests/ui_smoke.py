@@ -286,7 +286,7 @@ def banks_ui(page, nav):
     page.locator(f'{nav} a[href="#projects"]').click()
     page.locator('.bank-summary').wait_for()
     assert '5 счетов' in page.locator('.bank-summary').inner_text() or '5\u00a0счетов' in page.locator('.bank-summary').inner_text()
-    assert page.locator('.bank-summary').inner_text().count('ждут подтверждения') == 1
+    assert 'ждёт подтверждения' in page.locator('.bank-summary').inner_text()      # одно сообщение во входящих
     page.locator('.bank-summary').click()
     page.locator('.bank-hero').wait_for()
     assert page.locator(f'{nav} a[href="#projects"].active').count() == 1      # банки — часть «Финансов»

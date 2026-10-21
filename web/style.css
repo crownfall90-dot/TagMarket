@@ -1543,3 +1543,30 @@ li.done>.wish-check{background:var(--accent);border-color:var(--accent)}
 .inbox-actions{display:flex;flex-wrap:wrap;gap:8px}
 .ops-list{display:grid}.op-row{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid var(--line)}.op-row:first-child{border-top:0}
 .op-row>span{display:grid}.op-row small{color:var(--muted);font-size:12px}.op-values{justify-items:end;text-align:right}
+
+/* ═════ Финансы: три карточки на одном каркасе, у каждой своя анимация ═════ */
+@keyframes st-fill{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@keyframes st-bar-pulse{0%,100%{filter:brightness(1)}50%{filter:brightness(1.45)}}
+/* проекты: кольцо доли портфеля */
+.share-ring{position:relative;display:grid;place-items:center;flex:none;width:38px;height:38px}
+.share-ring .ring{position:absolute;inset:0;width:38px;height:38px}
+.share-ring .ring-bg,.share-ring .ring-fg{stroke-width:4}
+.share-ring b{position:relative;font-size:9.5px;font-weight:600;letter-spacing:-.02em;color:var(--muted)}
+.project-card:hover .share-ring .ring-fg{filter:drop-shadow(0 0 7px rgb(var(--accent-rgb) / .75))}
+/* TagMarket: столбики результата по дням */
+.spark{display:flex;align-items:flex-end;gap:3px;height:46px;margin-top:14px}
+.spark i{flex:1 1 0;min-width:0;height:var(--h);border-radius:4px 4px 2px 2px;transform-origin:bottom;animation:st-grow .7s var(--ease-out) both;animation-delay:var(--d)}
+.spark i.pos{background:linear-gradient(180deg,var(--accent),rgb(var(--accent-rgb) / .25))}
+.spark i.neg{background:linear-gradient(180deg,rgb(242 153 153 / .3),var(--negative))}
+.spark i.last{animation:st-grow .7s var(--ease-out) both,st-bar-pulse 2.6s ease-in-out 1s infinite;animation-delay:var(--d),0s}
+.tag-card .project-finance-row.tag-trading-day small{color:var(--muted)}
+/* банки: полоса долей банков в балансе */
+.bank-stack{display:flex;gap:3px;height:10px;margin-top:14px;border-radius:999px;overflow:hidden}
+.bank-stack i{flex:0 0 auto;width:var(--w);border-radius:3px;transform-origin:left;animation:st-fill .85s var(--ease-out) both;animation-delay:var(--d)}
+.bank-stack i:first-child{border-radius:999px 3px 3px 999px}.bank-stack i:last-child{border-radius:3px 999px 999px 3px}.bank-stack i:only-child{border-radius:999px}
+.seg-0{background:var(--accent)}.seg-1{background:var(--purple)}.seg-2{background:#7ab8f5}.seg-3{background:#f0b46b}.seg-4{background:#f29ac0}
+.bank-legend{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:8px;font-size:11px;color:var(--muted)}
+.bank-legend span{display:inline-flex;align-items:center;gap:5px;min-width:0}.bank-legend i{width:8px;height:8px;border-radius:50%;flex:none}.bank-legend em{font-style:normal;color:var(--text)}
+.project-finance-row.attention b{color:var(--purple)}
+.bank-summary:hover .bank-stack i{filter:brightness(1.15)}
+@media(prefers-reduced-motion:reduce){.spark i,.spark i.last,.bank-stack i,.share-ring .ring-fg{animation:none!important}}
