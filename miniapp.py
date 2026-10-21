@@ -30,6 +30,7 @@ from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarku
 os.environ["TRADES_SOURCE"] = "store"
 import accounts
 import activity
+import banks
 import bot as logic
 import coordination
 import fx
@@ -298,6 +299,8 @@ async def bootstrap(request):
     currencies = {a["totals"]["cur"].upper() for a in items
                   if a["totals"]}
     project_currencies = {p[0] for p in db.execute("SELECT currency FROM projects WHERE owner_id=?", (str(uid),))}
+    # валюты банковских счетов тоже нужны курсу: баланс в BYN или RUB показывается в валюте отображения
+    project_currencies |= {a["currency"] for a in banks.accounts(db, uid)}
     display_currency = partner.kv_get(db, f"display_currency:{uid}", "USD")
     unsupported = currencies - {"USD", "RUB", "BYN"}
     byn_per_unit = fx_info = None
@@ -1455,6 +1458,63 @@ async def activity_sync_key(request):
     return web.json_response({**activity.sync_status(db, uid), "url": sync_url(request)})
 
 
+async def banks_api(request):
+    """Банки и счета: список, создание, правка, удаление, история и входящие сообщения."""
+    uid, _ = authorize(request)
+    db = request.app["db"]
+    info, method, path = request.match_info, request.method, request.path
+    data = await json_object(request) if method in {"POST", "PATCH"} else {}
+    if path == "/api/banks":
+        if method == "GET":
+            return web.json_response({**banks.overview(db, uid), "sync": activity.sync_status(db, uid),
+                                      "sync_url": sync_url(request).replace("/activity/sync", "/banks/sync")})
+        return web.json_response(_section_call(lambda: banks.save_account(db, uid, data)), status=201)
+    if "/inbox/" in path:
+        item_id = info["item_id"]
+        if method == "DELETE":
+            _section_call(lambda: banks.dismiss_inbox(db, uid, item_id))
+            return web.json_response({"ok": True})
+        return web.json_response(_section_call(lambda: banks.resolve_inbox(db, uid, item_id, data)))
+    account_id = info["account_id"]
+    if path.endswith("/ops"):
+        return web.json_response({"operations": _section_call(lambda: banks.operations(db, uid, account_id))})
+    if method == "DELETE":
+        _section_call(lambda: banks.delete_account(db, uid, account_id))
+        return web.json_response({"ok": True})
+    if method == "GET":
+        return web.json_response(_section_call(lambda: banks.account(db, uid, account_id)))
+    return web.json_response(_section_call(lambda: banks.save_account(db, uid, data, account_id)))
+
+
+async def banks_sync(request):
+    """Пересылка SMS/пуша банка с телефона: тот же личный ключ, что у шагов."""
+    key = request.query.get("key") or request.headers.get("X-Sync-Key") or ""
+    auth = request.headers.get("Authorization", "")
+    if auth.lower().startswith("bearer "):
+        key = auth[7:].strip()
+    db = request.app["db"]
+    owner = activity.owner_for(db, key)
+    if owner is None or partner.kv_get(db, f"left:{owner}") == "1":
+        raise web.HTTPUnauthorized(text="Ключ синхронизации не подходит — создайте новый в приложении")
+    now = time.monotonic()
+    start, count = _rates.pop(f"bank:{owner}", (now, 0))
+    if now - start >= 60:
+        start, count = now, 0
+    _rates[f"bank:{owner}"] = (start, count + 1)
+    if count >= 60:
+        raise web.HTTPTooManyRequests(text="Слишком часто")
+    if request.content_type in ("application/x-www-form-urlencoded", "multipart/form-data"):
+        body = {k: v for k, v in (await request.post()).items() if isinstance(v, str)}
+    else:
+        body = await request.json()
+    if isinstance(body, str):
+        body = {"text": body}
+    if not isinstance(body, dict):
+        raise ValueError("Ожидается JSON-объект")
+    message = next((body[k] for k in ("text", "message", "sms", "body", "content") if isinstance(body.get(k), str)), None)
+    return web.json_response(_section_call(lambda: banks.ingest(db, owner, message)))
+
+
 async def lists_api(request):
     """Вишлисты, заметки и календарь — один обработчик на все пути раздела."""
     uid, _ = authorize(request)
@@ -1543,8 +1603,17 @@ def insights_for(db, uid, display="USD", rates=None, tag=None):
                              datetime.now(timezone.utc) - datetime.fromisoformat(sync["last_sync"]) > timedelta(hours=36))
         now = lists.today()
         events = lists.events_between(db, uid, now.isoformat(), (now + timedelta(days=7)).isoformat())["events"]
+        bank_total = 0.0
+        bank_known = False
+        for a in banks.accounts(db, uid):
+            if a["counted"]:
+                value = conv(a["balance"], a["currency"])
+                if value is not None:
+                    bank_total += value
+                    bank_known = True
         return insights.analyze({
-            "finance": {"currency": display, "projects": projects, "tag": tag_part},
+            "finance": {"currency": display, "projects": projects, "tag": tag_part,
+                        "banks": bank_total if bank_known else None},
             "activity": {**summary, "sync": sync}, "tasks": lists.tasks(db, uid), "events": events,
             "wishlists": lists.wishlists(db, uid), "friends": len(logic.guests_of(db, uid))},
             now, hour=int(datetime.now(timezone(timedelta(hours=3))).strftime("%H")))
@@ -1623,6 +1692,7 @@ def setup(app):
     _state_db = app["db"]
     projects.setup(app["db"])
     activity.setup(app["db"])
+    banks.setup(app["db"])
     lists.setup(app["db"])
     # Legacy copies lack provenance. Matching only a login is unsafe: an
     # independently added account may use that number with another password.
@@ -1665,6 +1735,15 @@ def setup(app):
     app.router.add_get("/api/activity/sync/key", activity_sync_key)
     app.router.add_post("/api/activity/sync/key", activity_sync_key)
     app.router.add_delete("/api/activity/sync/key", activity_sync_key)
+    app.router.add_post("/api/banks/sync", banks_sync)
+    app.router.add_get("/api/banks", banks_api)
+    app.router.add_post("/api/banks", banks_api)
+    app.router.add_post("/api/banks/inbox/{item_id}", banks_api)
+    app.router.add_delete("/api/banks/inbox/{item_id}", banks_api)
+    app.router.add_get("/api/banks/{account_id}", banks_api)
+    app.router.add_patch("/api/banks/{account_id}", banks_api)
+    app.router.add_delete("/api/banks/{account_id}", banks_api)
+    app.router.add_get("/api/banks/{account_id}/ops", banks_api)
     app.router.add_get("/api/insights", insights_api)
     app.router.add_get("/api/activity", activity_api)
     app.router.add_post("/api/activity", activity_api)

@@ -33,6 +33,7 @@ import bot
 import coordination
 import miniapp
 import activity
+import banks
 import lists
 import projects
 import partner
@@ -1652,6 +1653,63 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         other = await (await self.call("GET", "/api/insights", uid=2)).json()
         self.assertFalse(any("Сдать отчёт" in i["text"] for i in other["insights"]))
 
+    async def test_bank_accounts_manual_and_updated_from_sms(self):
+        card = await self.call("POST", "/api/banks", json={"bank": "Альфа-Банк", "title": "Зарплатная", "kind": "card",
+                                                           "currency": "BYN", "balance": 1500.5, "last4": "1234"})
+        self.assertEqual(card.status, 201, await card.text())
+        card = await card.json()
+        self.assertEqual((card["balance"], card["last4"], card["counted"]), (1500.5, "1234", True))
+        deposit = await (await self.call("POST", "/api/banks", json={"bank": "БНБ-Банк", "kind": "deposit", "currency": "USD", "balance": 2000})).json()
+        listed = await (await self.call("GET", "/api/banks")).json()
+        self.assertEqual(listed["totals"], {"BYN": 1500.5, "USD": 2000})
+        # валюту менять нельзя, лишние поля и странные суммы — отказ; чужой счёт — 404
+        self.assertEqual((await self.call("PATCH", f"/api/banks/{card['id']}", json={"currency": "USD"})).status, 400)
+        self.assertEqual((await self.call("PATCH", f"/api/banks/{card['id']}", json={"owner_id": "2"})).status, 400)
+        self.assertEqual((await self.call("POST", "/api/banks", json={"bank": "X", "currency": "USD", "balance": 1.234, "kind": "card"})).status, 400)
+        self.assertEqual((await self.call("POST", "/api/banks", json={"bank": "X", "currency": "EUR", "balance": 1, "kind": "card"})).status, 400)
+        self.assertEqual((await self.call("GET", f"/api/banks/{card['id']}", uid=2)).status, 404)
+        # ключ синхронизации — тот же, что у шагов; SMS обновляет баланс сам, без дублей по тексту
+        self.assertEqual((await self.client.post("/api/banks/sync", json={"text": "x"})).status, 401)
+        key = (await (await self.call("POST", "/api/activity/sync/key")).json())["key"]
+        sms = await self.client.post("/api/banks/sync", headers={"Authorization": f"Bearer {key}"},
+                                     json={"text": "Карта *1234: Покупка 25,40 BYN, остаток 1 340,10 BYN. MAGAZIN"})
+        result = await sms.json()
+        self.assertEqual((sms.status, result["status"], result["balance"], result["amount"]), (200, "applied", 1340.1, -25.4))
+        self.assertEqual((await (await self.call("GET", f"/api/banks/{card['id']}")).json())["source"], "sms")
+        # без остатка — по сумме и знаку операции
+        topup = await (await self.client.post(f"/api/banks/sync?key={key}", data={"text": "Зачисление 100,00 BYN на карту *1234"})).json()
+        self.assertEqual(topup["balance"], 1440.1)
+        ops = (await (await self.call("GET", f"/api/banks/{card['id']}/ops")).json())["operations"]
+        self.assertEqual([o["amount"] for o in ops][:2], [100, -25.4])
+        # незнакомая карта и сообщения без денег: во входящие / игнор; код из SMS баланс не трогает
+        unknown = await (await self.client.post("/api/banks/sync", headers={"X-Sync-Key": key},
+                                                json={"text": "Покупка 12,00 USD *7777, остаток 88,00 USD"})).json()
+        self.assertEqual(unknown["status"], "inbox")
+        ignored = await (await self.client.post("/api/banks/sync", headers={"X-Sync-Key": key}, json={"text": "Ваш код 123456"})).json()
+        self.assertEqual(ignored["status"], "ignored")
+        wrong_currency = await self.client.post("/api/banks/sync", headers={"X-Sync-Key": key}, json={"text": "Покупка 5 USD *1234, остаток 10 USD"})
+        self.assertEqual(wrong_currency.status, 400)
+        inbox = (await (await self.call("GET", "/api/banks")).json())["inbox"]
+        self.assertEqual(len(inbox), 1)
+        # подтверждение одним тапом: создать счёт под сообщение — следующие SMS привяжутся сами
+        made = await (await self.call("POST", f"/api/banks/inbox/{inbox[0]['id']}", json={"create": {"bank": "Приор", "kind": "card"}})).json()
+        self.assertEqual((made["currency"], made["last4"], made["balance"]), ("USD", "7777", 88))
+        again = await (await self.client.post("/api/banks/sync", headers={"X-Sync-Key": key}, json={"text": "Покупка 8,00 USD *7777, остаток 80,00 USD"})).json()
+        self.assertEqual((again["status"], again["balance"]), ("applied", 80))
+        self.assertEqual((await (await self.call("GET", "/api/banks")).json())["inbox"], [])
+        # «не считать в общем балансе», чужие данные не видны, удаление
+        await self.call("PATCH", f"/api/banks/{deposit['id']}", json={"counted": False})
+        self.assertEqual((await (await self.call("GET", "/api/banks")).json())["totals"], {"BYN": 1440.1, "USD": 80})
+        self.assertEqual((await (await self.call("GET", "/api/banks", uid=2)).json())["accounts"], [])
+        # валюта банковского счёта нужна курсу, даже если остальное — в долларах
+        await self.call("POST", "/api/banks", json={"bank": "Беларусбанк", "kind": "current", "currency": "RUB", "balance": 100})
+        with patch.object(miniapp, "fx_snapshot", return_value={"rates": {"BYN": 1.0, "USD": 3.0, "RUB": 0.036}, "provider": "myfin",
+                                                                 "stale": False, "updated_at": "2026-10-21T10:00:00Z"}):
+            home = await (await self.call("GET", "/api/bootstrap")).json()
+        self.assertIsNotNone(home["fx"])
+        self.assertEqual((await self.call("DELETE", f"/api/banks/{deposit['id']}")).status, 200)
+        self.assertEqual((await self.call("GET", f"/api/banks/{deposit['id']}/ops")).status, 404)
+
     async def test_station_preferences_are_per_user_and_validated(self):
         home = await (await self.call("GET", "/api/bootstrap")).json()
         self.assertEqual(home["station"]["home"], ["circle", "finance", "activity", "tasks", "events", "wish"])
@@ -3146,6 +3204,24 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("web/" + name, deploy.FILES)
         self.assertEqual((await self.client.get("/app/secret.jpg")).status, 404)
 
+    async def test_every_server_module_ships_with_the_deploy_and_rollback_lists(self):
+        # выкладка принимает архив строго из FILES: модуль, который импортируется, но не перечислен,
+        # ронял бы сервер на импорте после «успешной» выкладки
+        import re
+        import tools.deploy_miniapp as deploy
+        import tools.rollback_miniapp as rollback
+        root = Path(__file__).resolve().parents[1]
+        shipped = {name for name in deploy.FILES if name.endswith(".py")}
+        rollbackable = set(rollback.FILES) | set(rollback.OPTIONAL_FILES)
+        for name in ("webhook_server.py", "miniapp.py", "bot.py"):
+            for module in re.findall(r"^(?:import|from)\s+(\w+)", (root / name).read_text(encoding="utf-8"), re.M):
+                if (root / f"{module}.py").exists():
+                    with self.subTest(module=module):
+                        self.assertIn(f"{module}.py", shipped)
+                        self.assertIn(f"{module}.py", rollbackable)
+        for module in ("activity", "lists", "banks", "insights", "projects"):
+            self.assertIn(f"{module}.py", shipped)
+
     async def test_guest_cannot_toggle_shared_account_polling(self):
         accounts.share([123],1,2)
         r = await self.call("PATCH", "/api/accounts/123", uid=2, json={"enabled": False})
@@ -3417,6 +3493,41 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         partner.kv_set(self.db, "partner_link:7", base + '&x="><b>')
         self.assertEqual(miniapp.logic.partner_link(self.db, 7), "")
 
+
+
+class BankMessageParserTests(unittest.TestCase):
+    """Разбор SMS и пушей банков: остаток, сумма со знаком, цифры карты, валюта."""
+
+    CASES = [
+        ("BLR ALFA-BANK. Karta *1234. Pokupka 25.40 BYN. Ostatok 1 340,10 BYN", "1234", "BYN", "1340.10", "-25.40"),
+        ("Карта *1234: Покупка 25,40 BYN, остаток 1 340,10 BYN. MAGAZIN MINSK", "1234", "BYN", "1340.10", "-25.40"),
+        ("Оплата 1 200,00 RUB. Карта *5678. Доступно 15 420,55 RUB", "5678", "RUB", "15420.55", "-1200.00"),
+        ("Зачисление 500,00 BYN на карту 4321. Баланс: 2 100,00 BYN", "4321", "BYN", "2100.00", "500.00"),
+        ("Purchase 12.50 USD card *9999 balance 340.20 USD", "9999", "USD", "340.20", "-12.50"),
+        ("Пополнение счёта 3000 $. Остаток: $4,520.30 (*1111)", "1111", "USD", "4520.30", "3000"),
+        ("Списано 45,90 р. Карта 1234. Остаток 90,10 р.", "1234", "RUB", "90.10", "-45.90"),
+        ("Покупка 1,250.00 USD *9999 баланс 1,000,340.20 USD", "9999", "USD", "1000340.20", "-1250.00"),
+    ]
+
+    def test_realistic_messages(self):
+        for text, last4, currency, balance, amount in self.CASES:
+            parsed = banks.parse_message(text)
+            self.assertEqual((parsed["last4"], parsed["currency"], str(parsed["balance"]), str(parsed["amount"])),
+                             (last4, currency, balance, amount), text)
+
+    def test_noise_is_not_money(self):
+        for text in ("Ваш код подтверждения 123456", "Вход в интернет-банк выполнен", "", "Акция: кэшбэк до 5%"):
+            parsed = banks.parse_message(text)
+            self.assertIsNone(parsed["balance"], text)
+            self.assertIsNone(parsed["amount"], text)
+
+    def test_amounts_and_separators(self):
+        for raw, expected in (("1,340.10", "1340.10"), ("1.340,10", "1340.10"), ("1 340,10", "1340.10"), ("12,5", "12.5"), ("−25.4", "-25.4")):
+            self.assertEqual(str(banks.amount_from_text(raw)), expected, raw)
+        self.assertEqual(banks.cents("1 340,10"), 134010)
+        for bad in (True, "abc", float("inf"), 1.005, 10**13):
+            with self.assertRaises(ValueError):
+                banks.cents(bad)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

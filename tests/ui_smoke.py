@@ -141,7 +141,7 @@ def rapid_switching_stays_under_limit(page, nav):
         page.locator(f'{nav} a[href="#overview"]').click()
         page.locator('.home-grid').wait_for()
     page.locator(f'{nav} a[href="#projects"]').click()
-    page.locator('.project-card.system-project').click()
+    page.locator('.project-card.system-project').first.click()      # TagMarket — первая системная карточка
     page.locator('.hero').wait_for()
     for _ in range(10):
         for value in ("yesterday", "today"):
@@ -281,6 +281,39 @@ def guest_with_shared_account_sees_home_and_opens_guide_on_demand(page):
     page.evaluate("state.data=window.__smokeSavedData;delete window.__smokeSavedData;state.view='tagmarket';render()")
 
 
+def banks_ui(page, nav):
+    """Банки и счета: общий баланс в Финансах, экран банков, редактор, входящие сообщения и инструкция по SMS."""
+    page.locator(f'{nav} a[href="#projects"]').click()
+    page.locator('.bank-summary').wait_for()
+    assert '5 счетов' in page.locator('.bank-summary').inner_text() or '5\u00a0счетов' in page.locator('.bank-summary').inner_text()
+    assert page.locator('.bank-summary').inner_text().count('ждут подтверждения') == 1
+    page.locator('.bank-summary').click()
+    page.locator('.bank-hero').wait_for()
+    assert page.locator(f'{nav} a[href="#projects"].active').count() == 1      # банки — часть «Финансов»
+    assert page.locator('.bank-group').count() == 4 and page.locator('.bank-account').count() == 5
+    assert page.locator('.bank-account.off').count() == 1                      # наличные не в общем балансе
+    assert page.locator('.inbox-item').count() == 1
+    fits(page)
+    page.locator('.bank-account').first.click()
+    page.locator('#dialog input[name="bank"]').wait_for()
+    assert page.locator('#dialog select[name="currency"]').is_disabled()       # валюту счёта менять нельзя
+    assert page.locator('#dialog input[name="last4"]').input_value() == '1234'
+    fits(page)
+    close_dialog(page)
+    page.locator('[data-action="bank-inbox-assign"]').click()
+    page.locator('#dialog select[name="account"]').wait_for()
+    close_dialog(page)
+    page.locator('.page-head [data-action="bank-sync"]').click()
+    page.locator('#dialog .sync-steps').first.wait_for()
+    assert 'SMS' in page.locator('#dialog .sync-steps').first.inner_text()
+    fits(page)
+    close_dialog(page)
+    page.locator('.page-head [data-action="bank-add"]').click()
+    page.locator('#dialog input[name="bank"]').wait_for()
+    assert page.locator('#dialog input[name="bank"]').input_value() == ''
+    close_dialog(page)
+
+
 def station_sections(page, nav):
     """Главная Станции, круг жизни, активности, планы (задачи, календарь, заметки, желания) и настройки."""
     page.locator(f'{nav} a[href="#overview"]').click()
@@ -370,7 +403,7 @@ def station_sections(page, nav):
     # настройки Станции — в общих «Настройках»
     page.locator('#settings-link').click()
     page.locator('.station-settings').wait_for()
-    assert page.locator('.station-row').count() == 3
+    assert page.locator('.station-row').count() == 5
     fits(page)
 
 
@@ -378,8 +411,8 @@ def projects_ui(page, nav):
     page.locator(f'{nav} a[href="#projects"]').click()
     page.locator('.project-card').first.wait_for()
     assert page.locator(f'{nav} a[data-tab]').count() == 5
-    assert page.locator('.project-card').count() == 3  # TagMarket плюс два preview-проекта
-    assert 'Плюс за' in page.locator('.project-card.system-project').inner_text()
+    assert page.locator('.project-card').count() == 4  # TagMarket, банки плюс два preview-проекта
+    assert 'Плюс за' in page.locator('.project-card.system-project').first.inner_text()
     # доходность проекта: процент или фиксированная сумма
     page.locator('[data-action="project-create"]').first.click()
     page.locator('.project-form [name="income_mode"]').wait_for()
@@ -553,11 +586,12 @@ def projects_ui(page, nav):
     private_card=page.locator('.project-card').filter(has_text='Private Invest')
     assert 'Бонус завершён' in private_card.inner_text(), private_card.inner_text()
     # доходность везде в день, в том числе у TagMarket
-    cards = page.locator('.project-card')
+    cards = page.locator('.project-card:not(.bank-summary)')      # у карточки банков дохода в день нет
     for i in range(cards.count()):
         assert '/ день' in cards.nth(i).inner_text(), cards.nth(i).inner_text()
-    assert 'Открыть счета' not in page.locator('.system-project').inner_text()
-    assert 'только по будням' in page.locator('.system-project').inner_text()
+    tag_card = page.locator('.system-project:not(.bank-summary)')
+    assert 'Открыть счета' not in tag_card.inner_text()
+    assert 'только по будням' in tag_card.inner_text()
     page.locator('a.forecast-link').click()
     page.locator('.forecast-result').wait_for()
     assert page.locator('.forecast-summary-values').count() == 1
@@ -636,7 +670,7 @@ def projects_ui(page, nav):
         page.wait_for_function("!document.querySelector('#main').getAnimations({subtree:true}).some(a=>a.playState==='running')")
         page.screenshot(path=str(Path(tempfile.gettempdir()) / 'tagmarkets-mobile-projects.png'), full_page=True)
     page.evaluate("state.projects=[];render()")
-    assert page.locator('.project-card').count() == 1  # торговые счета остаются отдельной карточкой
+    assert page.locator('.project-card').count() == 2  # торговые счета и банки остаются отдельными карточками
     assert page.locator('[data-action="project-create"]').count() == 1
     fits(page)
 
@@ -1171,6 +1205,7 @@ def main():
                         page.wait_for_timeout(500)
                         page.screenshot(path=str(screenshots / "tagmarkets-mobile-velvet-smoke.png"), full_page=True)
                     station_sections(page, nav)
+                    banks_ui(page, nav)
                     projects_ui(page, nav)
                     compact_ui_and_quiet_refresh(page, url)
                     modal_scroll_and_deferred_refresh(page, url)

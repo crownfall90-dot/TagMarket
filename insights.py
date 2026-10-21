@@ -70,7 +70,8 @@ def analyze(data, today, hour=12):
     cur = fin.get("currency") or "USD"
     projects = fin.get("projects") or []
     tag = fin.get("tag")
-    if projects or tag:
+    bank = fin.get("banks")
+    if projects or tag or bank is not None:
         score = 0
         daily = sum(p["daily_income"] or 0 for p in projects if not p.get("paused"))
         if projects:
@@ -96,9 +97,14 @@ def analyze(data, today, hour=12):
             out.append((50, "finance", "info", f"«{p['name']}» на паузе — в доход и баланс не входит", "#projects"))
         for p in waiting[:2]:
             out.append((55, "finance", "info", f"Начисления по «{p['name']}» начнутся {_date(p['income_starts'])}", "#projects"))
+        if bank is not None:
+            out.append((44, "finance", "info", f"На банковских счетах: {money(bank, cur)}", "#banks"))
+            if not projects and not tag:
+                score = 60 if bank >= 0 else 25
         scores["finance"] = score
         fin_status = (f"≈ {money(daily, cur)} в день" if daily > 0 else
-                      "есть проекты на паузе" if paused else "без дохода в день")
+                      "есть проекты на паузе" if paused else
+                      f"на счетах {money(bank, cur)}" if bank is not None else "без дохода в день")
     else:
         fin_status = "добавьте проект или счёт"
         daily = 0
