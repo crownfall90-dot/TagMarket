@@ -787,8 +787,8 @@ def invite_link(username: str, token: str) -> str:
 
 
 def onboarding_message(db, uid) -> str:
-    """Приветствие Станции: что внутри, без обязательных шагов и регистраций."""
-    return ("<b>Добро пожаловать в Станцию</b>\n" + trades.THIN +
+    """Приветствие Platformer: что внутри, без обязательных шагов и регистраций."""
+    return ("<b>Добро пожаловать в Platformer</b>\n" + trades.THIN +
             "\nЛичное пространство для вас и друзей:\n\n"
             "💰 <b>Финансы</b> — проекты, вклады и счета TagMarket\n"
             "🏃 <b>Активности</b> — шаги, вес, сон и тренировки\n"
@@ -800,7 +800,7 @@ def onboarding_message(db, uid) -> str:
 def onboarding_buttons(mini_url: str, db=None, uid=None) -> InlineKeyboardMarkup:
     rows = []
     if mini_url.startswith("https://"):
-        rows.append([InlineKeyboardButton(text="✦ Открыть Станцию", web_app=WebAppInfo(url=mini_url))])
+        rows.append([InlineKeyboardButton(text="✦ Открыть Platformer", web_app=WebAppInfo(url=mini_url))])
     rows.append([InlineKeyboardButton(text="Мои счета TagMarket", callback_data="dash")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -1214,11 +1214,11 @@ def account_menu(name: str, owner) -> tuple[str, InlineKeyboardMarkup]:
     return text, InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-NO_ACCOUNTS = ("👋 <b>Станция · TagMarket</b>\n" + trades.THIN +
+NO_ACCOUNTS = ("👋 <b>Platformer · TagMarket</b>\n" + trades.THIN +
                "\nЗдесь появятся сделки и заработок по счетам MT5, если они у вас есть: "
                "сколько принесла каждая сделка, сколько вышло за день, неделю и месяц.\n\n"
                "Есть счёт в Tag Markets — добавьте его кнопкой ＋ Счёт. Нет — ничего страшного, "
-               "остальные разделы Станции работают и без него.\n\n"
+               "остальные разделы Platformer работают и без него.\n\n"
                "<i>Хватит investor-пароля: бот только читает, торговать не может. "
                "Чужие счета тебе не видны, твои — никому другому.</i>")
 

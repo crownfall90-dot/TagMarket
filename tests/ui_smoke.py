@@ -141,7 +141,7 @@ def rapid_switching_stays_under_limit(page, nav):
         page.locator(f'{nav} a[href="#overview"]').click()
         page.locator('.home-grid').wait_for()
     page.locator(f'{nav} a[href="#projects"]').click()
-    page.locator('.project-card.system-project').click()
+    page.locator('.project-card.system-project').first.click()      # TagMarket — первая системная карточка
     page.locator('.hero').wait_for()
     for _ in range(10):
         for value in ("yesterday", "today"):
@@ -281,20 +281,71 @@ def guest_with_shared_account_sees_home_and_opens_guide_on_demand(page):
     page.evaluate("state.data=window.__smokeSavedData;delete window.__smokeSavedData;state.view='tagmarket';render()")
 
 
+def banks_ui(page, nav):
+    """Банки и счета: общий баланс в Финансах, экран банков, редактор, входящие сообщения и инструкция по SMS."""
+    page.locator(f'{nav} a[href="#projects"]').click()
+    page.locator('.bank-summary').wait_for()
+    assert '5 счетов' in page.locator('.bank-summary').inner_text() or '5\u00a0счетов' in page.locator('.bank-summary').inner_text()
+    assert 'ждёт подтверждения' in page.locator('.bank-summary').inner_text()      # одно сообщение во входящих
+    page.locator('.bank-summary').click()
+    page.locator('.bank-hero').wait_for()
+    assert page.locator(f'{nav} a[href="#projects"].active').count() == 1      # банки — часть «Финансов»
+    assert page.locator('.bank-group').count() == 4 and page.locator('.bank-account').count() == 5
+    assert page.locator('.bank-account.off').count() == 1                      # наличные не в общем балансе
+    assert page.locator('.inbox-item').count() == 1
+    fits(page)
+    page.locator('.bank-account').first.click()
+    page.locator('#dialog input[name="bank"]').wait_for()
+    assert page.locator('#dialog select[name="currency"]').is_disabled()       # валюту счёта менять нельзя
+    assert page.locator('#dialog input[name="last4"]').input_value() == '1234'
+    fits(page)
+    close_dialog(page)
+    page.locator('[data-action="bank-inbox-assign"]').click()
+    page.locator('#dialog select[name="account"]').wait_for()
+    close_dialog(page)
+    page.locator('.page-head [data-action="bank-sync"]').click()
+    page.locator('#dialog .sync-steps').first.wait_for()
+    assert 'SMS' in page.locator('#dialog .sync-steps').first.inner_text()
+    fits(page)
+    close_dialog(page)
+    page.locator('.page-head [data-action="bank-add"]').click()
+    page.locator('#dialog input[name="bank"]').wait_for()
+    assert page.locator('#dialog input[name="bank"]').input_value() == ''
+    close_dialog(page)
+
+
 def station_sections(page, nav):
-    """Главная Станции и новые разделы: активности, вишлисты, заметки, календарь."""
+    """Главная Platformer, круг жизни, активности, планы (задачи, календарь, заметки, желания) и настройки."""
     page.locator(f'{nav} a[href="#overview"]').click()
     page.locator('.home-grid').wait_for()
-    assert page.locator('.home-card').count() == 4
-    assert page.locator('.home-chip').count() == 6
+    assert page.locator('.greet').count() == 1 and page.locator('.greet-title').inner_text().strip()
+    assert page.locator('.home-card').count() == 6          # круг, финансы, активности, дела, ближайшее, желания
+    assert page.locator('.home-chip').count() == 7
+    assert page.locator('.home-circle .circle-seg').count() == 6
+    assert page.locator('.home-circle .insight').count() >= 3
     assert page.locator('.page-head [data-action="onboard-open"]').count() == 0, "на главной не навязываем счёт"
+    fits(page)
+    # число в приветствии «набегает» и приходит к итогу
+    page.wait_for_function("[...document.querySelectorAll('.greet .count-up')].every(e => e.textContent === formatCount(Number(e.dataset.to), e.dataset.format))")
+    # настройка главной: скрыть карточку и вернуть
+    page.locator('[data-action="home-settings"]').click()
+    page.locator('#dialog [data-pref-row]').first.wait_for()
+    assert page.locator('#dialog [data-pref-row][data-group="home"]').count() == 6
+    close_dialog(page)
+    # круг жизни открывается из карточки и ведёт в сферы
+    page.locator('.home-circle a.text-link').click()
+    page.locator('.circle-hero .circle-ring').wait_for()
+    assert page.locator('.sphere-row').count() == 6 and page.locator('.insight').count() >= 3
+    assert page.locator(f'{nav} a[href="#overview"].active').count() == 1
+    assert page.locator('.circle-core b').inner_text().strip().isdigit()
     fits(page)
     page.locator(f'{nav} a[href="#activity"]').click()
     page.locator('.act-grid').wait_for()
     glider_on_active(page, nav)
     assert page.locator('.act-card').count() == 6
-    steps = '[data-ui-key="act-chart-steps"] .act-bars rect'
+    steps = '[data-ui-key="act-chart-steps"] .act-bars .bar'
     assert page.locator(steps).count() == 30
+    assert page.locator('.auto-tag').count() >= 1, "записи с телефона помечены «авто»"
     assert page.locator('.act-entry').count() > 0
     page.locator('.act-days [data-value="7"]').click()
     page.wait_for_function("s => document.querySelectorAll(s).length === 7", arg=steps)
@@ -305,9 +356,30 @@ def station_sections(page, nav):
     assert page.locator('#dialog .act-fields-daily').is_visible() and page.locator('#dialog .act-fields-workout').is_hidden()
     fits(page)
     close_dialog(page)
-    page.locator(f'{nav} a[href="#lists"]').click()
-    page.locator('.wish-grid').wait_for()
+    page.locator('.act-entry-main').first.click()           # запись можно исправить
+    page.locator('#dialog input[name="day"]').wait_for()
+    close_dialog(page)
+    page.locator('[data-action="activity-sync"]').first.click()
+    page.locator('#dialog .sync-steps').first.wait_for()
+    assert page.locator('#dialog .sync-code').count() >= 1
+    page.locator('#dialog [data-sync-os="android"]').click()
+    assert page.locator('#dialog [data-sync-guide="android"]').is_visible()
+    fits(page)
+    close_dialog(page)
+    page.locator(f'{nav} a[href="#plans"]').click()
+    page.locator('.task-quick').wait_for()
     glider_on_active(page, nav)
+    assert page.locator('.task-group').count() >= 3
+    assert page.locator('.task-group.late .task').count() == 1
+    # в предпросмотре изменения отключены: галочка сразу отзывается, сервер откажет понятным сообщением
+    page.locator('.task-group.today .wish-check').first.click()
+    page.locator('.task-group.today .task.done').wait_for()
+    page.locator('.task').first.locator('.wish-title').click()
+    page.locator('#dialog [data-due-set]').first.wait_for()
+    close_dialog(page)
+    fits(page)
+    page.locator('.lists-tabs [data-value="wish"]').click()
+    page.locator('.wish-grid').wait_for()
     assert page.locator('.wish-list').count() == 2
     assert page.locator('.wish-items li.done').count() == 1
     fits(page)
@@ -323,10 +395,15 @@ def station_sections(page, nav):
     assert page.locator('.cal-cell.today').count() == 1
     page.locator('[data-action="cal-month"][data-value="1"]').click()
     page.wait_for_function("document.querySelector('.cal-cell.today') === null")
-    page.locator('[data-action="cal-month"][data-value="-1"]').click()
+    page.locator('[data-action="cal-today"]').click()
     page.locator('.cal-cell.today').wait_for()
     page.locator('.cal-cell.today').click()
     assert page.locator('.cal-day-panel h2').inner_text() == 'Сегодня'
+    fits(page)
+    # настройки Platformer — в общих «Настройках»
+    page.locator('#settings-link').click()
+    page.locator('.station-settings').wait_for()
+    assert page.locator('.station-row').count() == 5
     fits(page)
 
 
@@ -334,8 +411,8 @@ def projects_ui(page, nav):
     page.locator(f'{nav} a[href="#projects"]').click()
     page.locator('.project-card').first.wait_for()
     assert page.locator(f'{nav} a[data-tab]').count() == 5
-    assert page.locator('.project-card').count() == 3  # TagMarket плюс два preview-проекта
-    assert 'Плюс за' in page.locator('.project-card.system-project').inner_text()
+    assert page.locator('.project-card').count() == 4  # TagMarket, банки плюс два preview-проекта
+    assert 'Плюс за' in page.locator('.project-card.system-project').first.inner_text()
     # доходность проекта: процент или фиксированная сумма
     page.locator('[data-action="project-create"]').first.click()
     page.locator('.project-form [name="income_mode"]').wait_for()
@@ -509,11 +586,12 @@ def projects_ui(page, nav):
     private_card=page.locator('.project-card').filter(has_text='Private Invest')
     assert 'Бонус завершён' in private_card.inner_text(), private_card.inner_text()
     # доходность везде в день, в том числе у TagMarket
-    cards = page.locator('.project-card')
+    cards = page.locator('.project-card:not(.bank-summary)')      # у карточки банков дохода в день нет
     for i in range(cards.count()):
         assert '/ день' in cards.nth(i).inner_text(), cards.nth(i).inner_text()
-    assert 'Открыть счета' not in page.locator('.system-project').inner_text()
-    assert 'только по будням' in page.locator('.system-project').inner_text()
+    tag_card = page.locator('.system-project:not(.bank-summary)')
+    assert 'Открыть счета' not in tag_card.inner_text()
+    assert 'только по будням' in tag_card.inner_text()
     page.locator('a.forecast-link').click()
     page.locator('.forecast-result').wait_for()
     assert page.locator('.forecast-summary-values').count() == 1
@@ -592,7 +670,7 @@ def projects_ui(page, nav):
         page.wait_for_function("!document.querySelector('#main').getAnimations({subtree:true}).some(a=>a.playState==='running')")
         page.screenshot(path=str(Path(tempfile.gettempdir()) / 'tagmarkets-mobile-projects.png'), full_page=True)
     page.evaluate("state.projects=[];render()")
-    assert page.locator('.project-card').count() == 1  # торговые счета остаются отдельной карточкой
+    assert page.locator('.project-card').count() == 2  # торговые счета и банки остаются отдельными карточками
     assert page.locator('[data-action="project-create"]').count() == 1
     fits(page)
 
@@ -811,7 +889,7 @@ def main():
                     assert page.locator('#currency-menu [data-currency]').count() == 3
                     page.locator('#currency-menu [data-currency="BYN"]').click()
                     page.wait_for_function("state.displayCurrency==='BYN'")
-                    assert page.locator('#currency-code').inner_text() == 'BYN'
+                    assert page.locator('#currency-code').text_content() == 'BYN'
                     assert page.locator('#currency-menu').is_hidden()
                     page.locator('#currency-btn').click()
                     page.keyboard.press('Escape')
@@ -993,7 +1071,7 @@ def main():
                     assert page.locator('[data-action="glass"]').count() == 0
                     assert page.evaluate("getComputedStyle(document.querySelector('.topbar')).backdropFilter") != 'none'
                     page.locator('[data-action="shortcut"]').click()
-                    assert page.locator('#dialog-title').inner_text() == 'Ярлык Станции'
+                    assert page.locator('#dialog-title').inner_text() == 'Ярлык Platformer'
                     close_dialog(page)
                     page.locator('[data-action="broadcast"]').click()
                     area = page.locator('#dialog textarea[name="text"]')
@@ -1127,6 +1205,7 @@ def main():
                         page.wait_for_timeout(500)
                         page.screenshot(path=str(screenshots / "tagmarkets-mobile-velvet-smoke.png"), full_page=True)
                     station_sections(page, nav)
+                    banks_ui(page, nav)
                     projects_ui(page, nav)
                     compact_ui_and_quiet_refresh(page, url)
                     modal_scroll_and_deferred_refresh(page, url)

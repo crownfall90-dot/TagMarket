@@ -30,9 +30,11 @@ from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarku
 os.environ["TRADES_SOURCE"] = "store"
 import accounts
 import activity
+import banks
 import bot as logic
 import coordination
 import fx
+import insights
 import lists
 import partner
 import projects
@@ -297,6 +299,8 @@ async def bootstrap(request):
     currencies = {a["totals"]["cur"].upper() for a in items
                   if a["totals"]}
     project_currencies = {p[0] for p in db.execute("SELECT currency FROM projects WHERE owner_id=?", (str(uid),))}
+    # валюты банковских счетов тоже нужны курсу: баланс в BYN или RUB показывается в валюте отображения
+    project_currencies |= {a["currency"] for a in banks.accounts(db, uid)}
     display_currency = partner.kv_get(db, f"display_currency:{uid}", "USD")
     unsupported = currencies - {"USD", "RUB", "BYN"}
     byn_per_unit = fx_info = None
@@ -353,6 +357,9 @@ async def bootstrap(request):
                 "updated_at": fx_info["updated_at"]}
                if byn_per_unit else None), "fx_error": fx_error,
         "display_currency": display_currency,
+        "station": station_prefs(db, uid),
+        "insights": insights_for(db, uid, display_currency, byn_per_unit,
+                                 (totals["USD"]["month"], totals["USD"]["today"], "USD") if totals.get("USD") else None),
         "onboarding": {"needed": not own_accounts,
                         "later": partner.kv_get(db, f"onboard:{uid}:later") == "1",
                         "registration_url": registration_url,
@@ -1258,7 +1265,7 @@ FAQ_IMAGES = ("faq-neo-card.jpg", "faq-neo-stats.jpg", "faq-sonic-card.jpg", "fa
 
 async def static(request):
     name = request.match_info.get("file", "index.html") or "index.html"
-    if name not in ("index.html", "app.js", "style.css", "brand.svg", "preview.json", *FAQ_IMAGES):
+    if name not in ("index.html", "app.js", "style.css", "preview.json", *FAQ_IMAGES):
         raise web.HTTPNotFound()
     response = web.FileResponse(STATIC / name)
     response.headers["Cache-Control"] = "no-cache"
@@ -1390,14 +1397,122 @@ async def activity_api(request):
     if request.method == "GET":
         raw = request.query.get("days", "30")
         days = int(raw) if raw.isdigit() else -1
-        return web.json_response(_section_call(lambda: activity.overview(db, uid, days)))
+        result = _section_call(lambda: activity.overview(db, uid, days))
+        return web.json_response({**result, "sync": activity.sync_status(db, uid)})
     if request.method == "DELETE":
         _section_call(lambda: activity.delete(db, uid, entry_id))
         return web.json_response({"ok": True})
     data = await json_object(request)
+    if request.method == "PATCH":
+        return web.json_response(_section_call(lambda: activity.replace(db, uid, entry_id, data)))
     if request.path.endswith("/goals"):
         return web.json_response({"goals": _section_call(lambda: activity.set_goals(db, uid, data))})
     return web.json_response(_section_call(lambda: activity.add(db, uid, data)), status=201)
+
+
+def sync_url(request):
+    """Адрес для автоматизации на телефоне — тот же, по которому открыт Mini App."""
+    base = os.getenv("MINI_APP_URL", "").strip()
+    if base.startswith("https://"):
+        return base.rstrip("/").rsplit("/app", 1)[0] + "/api/activity/sync"
+    return str(request.url.with_path("/api/activity/sync").with_query(None))
+
+
+async def activity_sync(request):
+    """Приём показателей с телефона: без Telegram, по личному ключу.
+
+    Ключ — заголовок «Authorization: Bearer …», «X-Sync-Key» или параметр
+    ?key=… (не во всех автоматизаторах удобно задавать заголовки). Тело — JSON
+    или обычная форма: «Команды» iOS умеют и то и другое.
+    """
+    auth = request.headers.get("Authorization", "")
+    key = (auth[7:].strip() if auth.lower().startswith("bearer ") else
+           request.headers.get("X-Sync-Key") or request.query.get("key"))
+    db = request.app["db"]
+    owner = activity.owner_for(db, key)
+    if owner is None or partner.kv_get(db, f"left:{owner}") == "1":
+        raise web.HTTPUnauthorized(text="Ключ синхронизации не подходит — создайте новый в приложении")
+    now = time.monotonic()
+    start, count = _rates.pop(f"sync:{owner}", (now, 0))
+    if now - start >= 60:
+        start, count = now, 0
+    _rates[f"sync:{owner}"] = (start, count + 1)
+    if count >= 30:
+        raise web.HTTPTooManyRequests(text="Слишком часто — достаточно раза в несколько минут")
+    if request.content_type in ("application/x-www-form-urlencoded", "multipart/form-data"):
+        payload = {k: v for k, v in (await request.post()).items() if isinstance(v, str)}
+    else:
+        payload = await request.json()
+    return web.json_response(_section_call(lambda: activity.ingest(db, owner, payload)))
+
+
+async def activity_sync_key(request):
+    """Ключ синхронизации владельца: GET — состояние, POST — новый ключ, DELETE — отключить."""
+    uid, _ = authorize(request)
+    db = request.app["db"]
+    if request.method == "POST":
+        key = activity.create_token(db, uid)
+        return web.json_response({**activity.sync_status(db, uid), "key": key, "url": sync_url(request)})
+    if request.method == "DELETE":
+        activity.revoke_token(db, uid)
+    return web.json_response({**activity.sync_status(db, uid), "url": sync_url(request)})
+
+
+async def banks_api(request):
+    """Банки и счета: список, создание, правка, удаление, история и входящие сообщения."""
+    uid, _ = authorize(request)
+    db = request.app["db"]
+    info, method, path = request.match_info, request.method, request.path
+    data = await json_object(request) if method in {"POST", "PATCH"} else {}
+    if path == "/api/banks":
+        if method == "GET":
+            return web.json_response({**banks.overview(db, uid), "sync": activity.sync_status(db, uid),
+                                      "sync_url": sync_url(request).replace("/activity/sync", "/banks/sync")})
+        return web.json_response(_section_call(lambda: banks.save_account(db, uid, data)), status=201)
+    if "/inbox/" in path:
+        item_id = info["item_id"]
+        if method == "DELETE":
+            _section_call(lambda: banks.dismiss_inbox(db, uid, item_id))
+            return web.json_response({"ok": True})
+        return web.json_response(_section_call(lambda: banks.resolve_inbox(db, uid, item_id, data)))
+    account_id = info["account_id"]
+    if path.endswith("/ops"):
+        return web.json_response({"operations": _section_call(lambda: banks.operations(db, uid, account_id))})
+    if method == "DELETE":
+        _section_call(lambda: banks.delete_account(db, uid, account_id))
+        return web.json_response({"ok": True})
+    if method == "GET":
+        return web.json_response(_section_call(lambda: banks.account(db, uid, account_id)))
+    return web.json_response(_section_call(lambda: banks.save_account(db, uid, data, account_id)))
+
+
+async def banks_sync(request):
+    """Пересылка SMS/пуша банка с телефона: тот же личный ключ, что у шагов."""
+    key = request.query.get("key") or request.headers.get("X-Sync-Key") or ""
+    auth = request.headers.get("Authorization", "")
+    if auth.lower().startswith("bearer "):
+        key = auth[7:].strip()
+    db = request.app["db"]
+    owner = activity.owner_for(db, key)
+    if owner is None or partner.kv_get(db, f"left:{owner}") == "1":
+        raise web.HTTPUnauthorized(text="Ключ синхронизации не подходит — создайте новый в приложении")
+    now = time.monotonic()
+    start, count = _rates.pop(f"bank:{owner}", (now, 0))
+    if now - start >= 60:
+        start, count = now, 0
+    _rates[f"bank:{owner}"] = (start, count + 1)
+    if count >= 60:
+        raise web.HTTPTooManyRequests(text="Слишком часто")
+    if request.content_type in ("application/x-www-form-urlencoded", "multipart/form-data"):
+        body = {k: v for k, v in (await request.post()).items() if isinstance(v, str)}
+    else:
+        body = await request.json()
+    if isinstance(body, str):
+        body = {"text": body}
+    if not isinstance(body, dict):
+        raise ValueError("Ожидается JSON-объект")
+    message = next((body[k] for k in ("text", "message", "sms", "body", "content") if isinstance(body.get(k), str)), None)
+    return web.json_response(_section_call(lambda: banks.ingest(db, owner, message)))
 
 
 async def lists_api(request):
@@ -1408,6 +1523,7 @@ async def lists_api(request):
     data = await json_object(request) if method in {"POST", "PATCH"} else {}
     if path == "/api/lists":
         return web.json_response({"wishlists": lists.wishlists(db, uid), "notes": lists.notes(db, uid),
+                                  "tasks": lists.tasks(db, uid), "areas": lists.AREAS,
                                   "upcoming": lists.upcoming(db, uid)})
     if path.startswith("/api/wishlists"):
         list_id, item_id = info.get("list_id"), info.get("item_id")
@@ -1420,6 +1536,12 @@ async def lists_api(request):
             return web.json_response({"ok": True})
         else:
             result = _section_call(lambda: lists.save_wishlist(db, uid, data, list_id))
+    elif path.startswith("/api/tasks"):
+        task_id = info.get("task_id")
+        if method == "DELETE":
+            _section_call(lambda: lists.delete_task(db, uid, task_id))
+            return web.json_response({"ok": True})
+        result = _section_call(lambda: lists.save_task(db, uid, data, task_id))
     elif path.startswith("/api/notes"):
         note_id = info.get("note_id")
         if method == "DELETE":
@@ -1436,6 +1558,120 @@ async def lists_api(request):
             return web.json_response({"ok": True})
         result = _section_call(lambda: lists.save_event(db, uid, data, event_id))
     return web.json_response(result, status=201 if method == "POST" else 200)
+
+
+# Что показывать в Platformer — у каждого своё и одинаково на всех устройствах:
+# карточки главной и их порядок, быстрые кнопки, показатели «Активностей»
+STATION_CHOICES = {
+    "home": ("circle", "finance", "activity", "tasks", "events", "wish"),
+    "quick": ("task", "steps", "weight", "workout", "sleep", "water", "event", "note", "wish"),
+    "metrics": ("steps", "weight", "workout", "sleep", "water", "pulse"),
+}
+STATION_DEFAULTS = {"home": list(STATION_CHOICES["home"]),
+                    "quick": ["task", "steps", "weight", "workout", "event", "note", "wish"],
+                    "metrics": list(STATION_CHOICES["metrics"])}
+
+
+_tag_cache = OrderedDict()      # uid -> (month, today, currency): TagMarket для круга жизни между обновлениями
+
+
+def insights_for(db, uid, display="USD", rates=None, tag=None):
+    """Круг жизни пользователя по его данным; любой сбой не должен ломать приложение."""
+    def conv(value, cur):
+        if value is None:
+            return None
+        if cur == display:
+            return float(value)
+        if rates and rates.get(cur) and rates.get(display):
+            return float(value) * rates[cur] / rates[display]
+        return None
+    try:
+        projects = []
+        for p in projects_list(db, uid):
+            daily = p["daily_income"] if not p["calculation_limited"] else None
+            projects.append({"name": p["name"], "paused": p["paused"], "income_starts": p["income_starts"],
+                             "daily_income": conv(daily, p["currency"]) if daily is not None else None})
+        if tag is not None:
+            _tag_cache[str(uid)] = tag
+            while len(_tag_cache) > 4096:
+                _tag_cache.popitem(last=False)
+        month, today_net, cur = _tag_cache.get(str(uid), (None, None, "USD"))
+        tag_part = None if month is None else {"month": conv(month, cur) or 0, "today": conv(today_net, cur)}
+        summary = activity.overview(db, uid, 30)
+        sync = activity.sync_status(db, uid)
+        sync["stale"] = bool(sync["connected"] and sync["last_sync"] and
+                             datetime.now(timezone.utc) - datetime.fromisoformat(sync["last_sync"]) > timedelta(hours=36))
+        now = lists.today()
+        events = lists.events_between(db, uid, now.isoformat(), (now + timedelta(days=7)).isoformat())["events"]
+        bank_total = 0.0
+        bank_known = False
+        for a in banks.accounts(db, uid):
+            if a["counted"]:
+                value = conv(a["balance"], a["currency"])
+                if value is not None:
+                    bank_total += value
+                    bank_known = True
+        return insights.analyze({
+            "finance": {"currency": display, "projects": projects, "tag": tag_part,
+                        "banks": bank_total if bank_known else None},
+            "activity": {**summary, "sync": sync}, "tasks": lists.tasks(db, uid), "events": events,
+            "wishlists": lists.wishlists(db, uid), "friends": len(logic.guests_of(db, uid))},
+            now, hour=int(datetime.now(timezone(timedelta(hours=3))).strftime("%H")))
+    except Exception:
+        logging.getLogger("miniapp").exception("insights failed")
+        return None
+
+
+def projects_list(db, uid):
+    return projects.list_for(db, uid)
+
+
+def station_prefs(db, uid):
+    try:
+        saved = json.loads(partner.kv_get(db, f"station_prefs:{uid}") or "{}")
+    except (TypeError, ValueError):
+        saved = {}
+    out = {}
+    for key, allowed in STATION_CHOICES.items():
+        value = saved.get(key) if isinstance(saved, dict) else None
+        out[key] = ([v for v in value if v in allowed] if isinstance(value, list)
+                    else list(STATION_DEFAULTS[key]))
+    return out
+
+
+async def station_preferences(request):
+    uid, _ = authorize(request)
+    db = request.app["db"]
+    if request.method == "GET":
+        return web.json_response(station_prefs(db, uid))
+    data = await json_object(request)
+    if set(data) - set(STATION_CHOICES):
+        raise ValueError("Неизвестная настройка")
+    current = station_prefs(db, uid)
+    for key, value in data.items():
+        if (not isinstance(value, list) or len(value) != len(set(value))
+                or any(v not in STATION_CHOICES[key] for v in value)):
+            raise ValueError(f"Некорректный список: {key}")
+        current[key] = value
+    partner.kv_set(db, f"station_prefs:{uid}", json.dumps(current))
+    return web.json_response(current)
+
+
+async def insights_api(request):
+    """Круг жизни без полной перезагрузки: после правки задач, активностей, проектов."""
+    uid, _ = authorize(request)
+    db = request.app["db"]
+    display = partner.kv_get(db, f"display_currency:{uid}", "USD")
+    rates = None
+    if display != "USD":
+        try:
+            rates = (await fx_snapshot(db))["rates"]
+        except fx.FxUnavailable:
+            rates = None
+    result = insights_for(db, uid, display, rates)
+    if result is None:
+        raise web.HTTPServiceUnavailable(text="Не удалось построить круг жизни")
+    return web.json_response(result)
 
 
 async def display_preference(request):
@@ -1456,6 +1692,7 @@ def setup(app):
     _state_db = app["db"]
     projects.setup(app["db"])
     activity.setup(app["db"])
+    banks.setup(app["db"])
     lists.setup(app["db"])
     # Legacy copies lack provenance. Matching only a login is unsafe: an
     # independently added account may use that number with another password.
@@ -1494,10 +1731,27 @@ def setup(app):
     app.router.add_post("/api/projects/{project_id}/accounts", project_api)
     app.router.add_patch("/api/projects/{project_id}/accounts/{account_id}", project_api)
     app.router.add_delete("/api/projects/{project_id}/accounts/{account_id}", project_api)
+    app.router.add_post("/api/activity/sync", activity_sync)
+    app.router.add_get("/api/activity/sync/key", activity_sync_key)
+    app.router.add_post("/api/activity/sync/key", activity_sync_key)
+    app.router.add_delete("/api/activity/sync/key", activity_sync_key)
+    app.router.add_post("/api/banks/sync", banks_sync)
+    app.router.add_get("/api/banks", banks_api)
+    app.router.add_post("/api/banks", banks_api)
+    app.router.add_post("/api/banks/inbox/{item_id}", banks_api)
+    app.router.add_delete("/api/banks/inbox/{item_id}", banks_api)
+    app.router.add_get("/api/banks/{account_id}", banks_api)
+    app.router.add_patch("/api/banks/{account_id}", banks_api)
+    app.router.add_delete("/api/banks/{account_id}", banks_api)
+    app.router.add_get("/api/banks/{account_id}/ops", banks_api)
+    app.router.add_get("/api/insights", insights_api)
     app.router.add_get("/api/activity", activity_api)
     app.router.add_post("/api/activity", activity_api)
     app.router.add_put("/api/activity/goals", activity_api)
     app.router.add_delete("/api/activity/{entry_id}", activity_api)
+    app.router.add_patch("/api/activity/{entry_id}", activity_api)
+    app.router.add_get("/api/preferences/station", station_preferences)
+    app.router.add_put("/api/preferences/station", station_preferences)
     app.router.add_get("/api/lists", lists_api)
     app.router.add_post("/api/wishlists", lists_api)
     app.router.add_patch("/api/wishlists/{list_id}", lists_api)
@@ -1505,6 +1759,9 @@ def setup(app):
     app.router.add_post("/api/wishlists/{list_id}/items", lists_api)
     app.router.add_patch("/api/wishlists/{list_id}/items/{item_id}", lists_api)
     app.router.add_delete("/api/wishlists/{list_id}/items/{item_id}", lists_api)
+    app.router.add_post("/api/tasks", lists_api)
+    app.router.add_patch("/api/tasks/{task_id}", lists_api)
+    app.router.add_delete("/api/tasks/{task_id}", lists_api)
     app.router.add_post("/api/notes", lists_api)
     app.router.add_patch("/api/notes/{note_id}", lists_api)
     app.router.add_delete("/api/notes/{note_id}", lists_api)

@@ -1,4 +1,4 @@
-"""Раздел «Вишлисты»: списки желаний по увлечениям, заметки и календарь событий.
+"""Раздел «Вишлисты»: списки желаний по увлечениям, заметки, задачи и календарь событий.
 
 Всё хранится в серверной SQLite (STATE_DB) и видно только владельцу.
 Календарь принимает событие на любое число; повтор раз в неделю, месяц или
@@ -13,6 +13,7 @@ import uuid
 MAX_AMOUNT = 1_000_000_000_000
 CURRENCIES = {"USD", "RUB", "BYN", "EUR"}
 REPEATS = {"none", "weekly", "monthly", "yearly"}
+AREAS = {"work": "Работа", "personal": "Личное", "home": "Дом", "study": "Учёба"}
 COLORS = {"accent", "green", "purple", "orange", "pink", "blue"}
 MAX_RANGE_DAYS = 400
 TIME_RE = re.compile(r"(?:[01]\d|2[0-3]):[0-5]\d")
@@ -66,6 +67,17 @@ def setup(db):
             created_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS events_owner_day ON events(owner_id, day);
+        CREATE TABLE IF NOT EXISTS tasks (
+            id TEXT PRIMARY KEY,
+            owner_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            note TEXT NOT NULL DEFAULT '',
+            due TEXT,
+            area TEXT NOT NULL DEFAULT 'personal',
+            done_at TEXT,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS tasks_owner ON tasks(owner_id, done_at, due);
     """)
     db.commit()
 
@@ -363,3 +375,54 @@ def upcoming(db, owner, days=14, limit=5):
     """Ближайшие события для главной."""
     start = today()
     return events_between(db, owner, start.isoformat(), (start + timedelta(days=days)).isoformat())["events"][:limit]
+
+
+# ── задачи ──────────────────────────────────────────────────────────────
+
+def _task(r):
+    return {"id": r[0], "title": r[1], "note": r[2], "due": r[3], "area": r[4],
+            "done": r[5] is not None, "done_at": r[5], "created_at": r[6]}
+
+
+def task(db, owner, task_id):
+    row = db.execute("SELECT id,title,note,due,area,done_at,created_at FROM tasks WHERE id=? AND owner_id=?",
+                     (task_id, str(owner))).fetchone()
+    if row is None:
+        raise LookupError("Задача не найдена")
+    return _task(row)
+
+
+def tasks(db, owner, done_days=14):
+    """Открытые задачи (сначала со сроком, по сроку) и выполненные за последние done_days дней."""
+    since = (datetime.now(timezone.utc) - timedelta(days=done_days)).isoformat(timespec="seconds")
+    rows = db.execute("SELECT id,title,note,due,area,done_at,created_at FROM tasks WHERE owner_id=? AND (done_at IS NULL OR done_at>=?) "
+                      "ORDER BY done_at IS NOT NULL, due IS NULL, due, created_at", (str(owner), since)).fetchall()
+    return [_task(r) for r in rows]
+
+
+def save_task(db, owner, data, task_id=None):
+    with db:
+        old = task(db, owner, task_id) if task_id else {"title": "", "note": "", "due": None, "area": "personal", "done": False}
+        merged = _patch(old, data, ("title", "note", "due", "area", "done"))
+        title = text(merged.get("title"), 200, "Задачу", required=True)
+        body = text(merged.get("note"), 2000, "Заметка")
+        due = day_value(merged["due"], "Срок") if merged.get("due") else None
+        area = choice(merged.get("area"), set(AREAS), "personal", "сфера")
+        done = merged.get("done", False)
+        if type(done) is not bool:
+            raise ValueError("Некорректная отметка «готово»")
+        done_at = (old.get("done_at") or now()) if done else None
+        if task_id:
+            db.execute("UPDATE tasks SET title=?,note=?,due=?,area=?,done_at=? WHERE id=? AND owner_id=?",
+                       (title, body, due, area, done_at, task_id, str(owner)))
+        else:
+            task_id = uuid.uuid4().hex
+            db.execute("INSERT INTO tasks (id,owner_id,title,note,due,area,done_at,created_at) VALUES (?,?,?,?,?,?,?,?)",
+                       (task_id, str(owner), title, body, due, area, done_at, now()))
+        return task(db, owner, task_id)
+
+
+def delete_task(db, owner, task_id):
+    with db:
+        task(db, owner, task_id)
+        db.execute("DELETE FROM tasks WHERE id=? AND owner_id=?", (task_id, str(owner)))

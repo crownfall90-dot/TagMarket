@@ -19,9 +19,9 @@ from dotenv import dotenv_values, set_key
 
 ROOT = Path("/opt/tagmarkets")
 FILES = {"accounts.py", "account_lock.py", "agent.py", "bot.py", "coordination.py", "fx.py",
-         "ibportal.py", "miniapp.py", "partner.py", "projects.py", "activity.py", "lists.py", "store.py", "trades.py", "webhook_server.py",
+         "ibportal.py", "miniapp.py", "partner.py", "projects.py", "activity.py", "lists.py", "banks.py", "insights.py", "store.py", "trades.py", "webhook_server.py",
          "requirements.txt", "README.md", "docs/MINIAPP.md", "docs/todo.md", "web/index.html",
-         "web/app.js", "web/style.css", "web/brand.svg", "web/preview.json", "tests/selfcheck.py",
+         "web/app.js", "web/style.css", "web/preview.json", "tests/selfcheck.py",
          "tests/test_miniapp.py", "tools/deploy_miniapp.py", "tools/rollback_miniapp.py",
          "tools/audit.py", "docs/AUDIT_HOWTO.md",
          # картинки раздела «Частые вопросы» (в откате — необязательные)
@@ -149,7 +149,7 @@ def main():
             raise RuntimeError("API unexpectedly allows unsigned access")
         run("systemctl", "is-active", *SERVICES)
         public = "https://crownfail.shop/tagmarkets/app/"
-        for name in ("index.html", "app.js", "style.css", "brand.svg"):
+        for name in ("index.html", "app.js", "style.css"):
             url = public if name == "index.html" else urljoin(public, name) + f"?release={stamp}"
             expected = (ROOT / "web" / name).read_bytes()
             for attempt in range(3):
