@@ -365,6 +365,13 @@ def station_sections(page, nav):
     assert page.locator('[data-action="activity-sync"]').count() == 0, "синхронизации здоровья больше нет"
     page.locator(f'{nav} a[href="#plans"]').click()
     page.locator('.task-quick').wait_for()
+    # «Планы» — мобильное приложение: «+» внизу экрана на телефоне, кнопка в шапке — на широком экране
+    phone = page.viewport_size['width'] <= 740
+    assert page.locator('.fab').is_visible() == phone
+    assert page.locator('.plans-hero .head-primary').is_visible() == (not phone)
+    assert page.locator('.plan-tabs [role="tab"]').count() == 4
+    assert 'enter' not in page.locator('.task-quick input').get_attribute('placeholder').lower()
+    assert 'enter' not in page.locator('#main').inner_text().lower(), "компьютерных подсказок быть не должно"
     glider_on_active(page, nav)
     assert page.locator('.task-group').count() >= 3
     assert page.locator('.task-group.late .task').count() == 1
