@@ -2397,17 +2397,20 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         for bad in ("", "?until=garbage", "?until=2000-01-01"):
             self.assertEqual((await self.call("GET", "/api/tagmarket/forecast" + bad)).status, 400)
 
-    async def test_shared_observation_does_not_count_as_guests_capital(self):
+    async def test_shared_account_counts_like_own_and_says_who_issued_it(self):
+        # выданный счёт у гостя выглядит как свой: в итогах, обзоре и без онбординга
+        partner.kv_set(self.app["db"], "user_name:1", "Иван Петров")
         accounts.share([123], 1, 2)
         home = await (await self.call("GET", "/api/bootstrap", uid=2)).json()
         observed = next(a for a in home["accounts"] if a["login"] == 123)
         self.assertTrue(observed["shared"])
-        self.assertEqual(home["totals"], {})
+        self.assertEqual(observed["shared_by_name"], "Иван Петров")
+        self.assertRegex(observed["shared_at"], r"^\d{4}-\d{2}-\d{2}$")
+        self.assertEqual(home["totals"]["USD"]["balance"], observed["totals"]["now"])
+        self.assertFalse(home["onboarding"]["needed"])
         report = await self.call("GET", "/api/overview/report?period=all&currency=USD", uid=2)
         self.assertEqual(report.status, 200, await report.text())
-        data = await report.json()
-        self.assertEqual(data["accounts"], 0)
-        self.assertEqual(data["summary"]["net_income"], 0)
+        self.assertEqual((await report.json())["accounts"], 1)
 
     async def test_shared_account_balance_uses_inviter_current_capital_settings(self):
         accounts.share([123], 1, 2)

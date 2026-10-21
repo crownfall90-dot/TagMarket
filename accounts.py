@@ -18,6 +18,7 @@
 """
 
 import json
+from datetime import datetime, timedelta, timezone
 import logging
 import os
 import re
@@ -544,6 +545,8 @@ def share(logins: list, from_owner, to_owner) -> list[str]:
         copy = dict(src)
         copy["shared_by"] = str(from_owner)
         copy["shared_origin"] = "explicit"
+        # когда выдан — показывается гостю мелкой подписью у счёта (дата по Москве)
+        copy["shared_at"] = (datetime.now(timezone.utc) + timedelta(hours=3)).date().isoformat()
         copy["owner"] = int(to_owner)
         # у получателя может быть свой счёт с таким же названием
         taken = {a["name"] for a in data if str(a["owner"]) == str(to_owner)}

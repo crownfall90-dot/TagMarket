@@ -256,6 +256,16 @@ def current_account_settings(acc):
     return {**acc, **{key: source.get(key) for key in ("multiplier", "base", "base_at")}}
 
 
+_state_db = None     # партнёрская KV, где лежат имена пользователей; задаётся в setup()
+
+
+def person_name(uid):
+    """Имя пользователя Telegram: запомненное при входе в Mini App или имя гостя."""
+    if _state_db is None:
+        return ""
+    return partner.kv_get(_state_db, f"user_name:{uid}") or partner.kv_get(_state_db, f"guest_name:{uid}") or ""
+
+
 def public_account(acc, db):
     result = {k: acc.get(k) for k in ("login", "name", "strategy", "cabinet", "holder",
               "server", "enabled", "notify", "demo", "base", "base_at")}
@@ -264,6 +274,10 @@ def public_account(acc, db):
     # молча ничего не делало
     result["login"] = int(acc["login"])
     result["shared"] = bool(acc.get("shared_by"))
+    if result["shared"]:
+        # выданный счёт выглядит как свой; кем и когда выдан — мелкой подписью
+        result["shared_at"] = acc.get("shared_at")
+        result["shared_by_name"] = person_name(acc["shared_by"]) or acc.get("holder") or ""
     state = store.get_state(db, acc["login"])
     result["synced"] = (state or {}).get("synced")
     result["status"] = "pending"
@@ -278,6 +292,9 @@ def public_account(acc, db):
 async def bootstrap(request):
     uid, user = authorize(request)
     db = request.app["db"]
+    name = " ".join(str(user.get(k) or "").strip() for k in ("first_name", "last_name")).strip()[:64]
+    if name and partner.kv_get(db, f"user_name:{uid}") != name:
+        partner.kv_set(db, f"user_name:{uid}", name)
     items = [public_account(a, request.app["trades"]) for a in accounts.dedup(accounts.load(uid))]
     # Show the single public copy-trading account without cloning it into
     # every invited user's personal cabinet.
@@ -292,7 +309,7 @@ async def bootstrap(request):
                 except (TypeError, ValueError, json.JSONDecodeError): pass
             items.append(demo_view)
     currencies = {a["totals"]["cur"].upper() for a in items
-                  if not a["demo"] and not a.get("shared") and a["totals"]}
+                  if not a["demo"] and a["totals"]}
     project_currencies = {p[0] for p in db.execute("SELECT currency FROM projects WHERE owner_id=?", (str(uid),))}
     display_currency = partner.kv_get(db, f"display_currency:{uid}", "USD")
     unsupported = currencies - {"USD", "RUB", "BYN"}
@@ -309,14 +326,14 @@ async def bootstrap(request):
     # Personal totals are shown in USD when a current official quote is available.
     totals = {}
     trading_days = [a["totals"]["last_trade_day"] for a in items
-                    if not a["demo"] and not a.get("shared") and a.get("totals")
+                    if not a["demo"] and a.get("totals")
                     and a["totals"].get("last_trade_day")]
     latest_trading_day = max(trading_days, default=None)
     trading_day_usd = 0.0
     trading_day_partial = False
     for a in items:
         t = a["totals"]
-        if a["demo"] or a.get("shared") or not t:
+        if a["demo"] or not t:
             continue
         currency = t["cur"].upper()
         factor = usd_factor(currency, byn_per_unit) if byn_per_unit else (1 if currency == "USD" else None)
@@ -338,7 +355,8 @@ async def bootstrap(request):
         bucket.update({"trading_day": latest_trading_day,
                        "trading_day_net": round(trading_day_usd, 2),
                        "trading_day_partial": trading_day_partial})
-    own_accounts = [a for a in items if not a["demo"] and not a.get("shared")]
+    # выданный счёт считается своим: онбординг не нужен, если счета уже есть
+    own_accounts = [a for a in items if not a["demo"]]
     inviter = partner.kv_get(db, f"guest_by:{uid}")
     registration_url = (logic.partner_link(db, inviter) if inviter else logic.partner_registration_url())
     return web.json_response({"user": {"id": user["id"], "name": user.get("first_name", "Инвестор")},
@@ -484,8 +502,7 @@ async def overview_report(request):
     uid, _ = authorize(request)
     title, since, until = report_period(request.query)
     db = request.app["trades"]
-    personal = [a for a in accounts.dedup(accounts.load(uid))
-                if not a.get("demo") and not a.get("shared_by")]
+    personal = [a for a in accounts.dedup(accounts.load(uid)) if not a.get("demo")]
     currencies = {((store.get_state(db, a["login"]) or {}).get("currency") or "USD").upper()
                   for a in personal}
     unsupported = currencies - {"USD", "RUB", "BYN"}
@@ -502,8 +519,6 @@ async def overview_report(request):
     current_capital = weighted = 0
     timelines = []
     for acc in personal:
-        if acc.get("demo") or acc.get("shared_by"):
-            continue
         state = store.get_state(db, acc["login"])
         if not state:
             pending_count += 1
@@ -512,7 +527,7 @@ async def overview_report(request):
             1 if state["currency"].upper() == "USD" else None)
         if factor is None:
             continue
-        trades.use(acc)
+        trades.use(current_account_settings(acc))
         cap = trades.capital()
         current_capital += max(0, cap) * factor
         rows = trades.fetch(since, until)
@@ -1346,8 +1361,7 @@ async def tagmarket_forecast(request):
     if target < start or target > start + timedelta(days=3660):
         raise web.HTTPBadRequest(text="Дата прогноза должна быть в пределах 10 лет")
     db = request.app["trades"]
-    personal = [a for a in accounts.dedup(accounts.load(uid))
-                if not a.get("demo") and not a.get("shared_by")]
+    personal = [current_account_settings(a) for a in accounts.dedup(accounts.load(uid)) if not a.get("demo")]
     states = {a["login"]: store.get_state(db, a["login"]) for a in personal}
     currencies = {(s["currency"] or "USD").upper() for s in states.values() if s}
     byn_per_unit = None
@@ -1405,6 +1419,8 @@ async def display_preference(request):
 
 
 def setup(app):
+    global _state_db
+    _state_db = app["db"]
     projects.setup(app["db"])
     # Legacy copies lack provenance. Matching only a login is unsafe: an
     # independently added account may use that number with another password.
