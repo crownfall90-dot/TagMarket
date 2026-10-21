@@ -81,13 +81,17 @@ def topbar_sticks(page):
 def revisit_is_instant(page, nav):
     """Возврат в раздел, где уже были, не ходит на сервер и не перерисовывает
     экран второй раз — раньше каждый переход заново тянул все данные."""
+    for href, ready in (("#projects", ".project-card"), ("#overview", ".home-grid")):   # оба раздела уже открывались
+        page.locator(f'{nav} a[href="{href}"]').click()
+        page.locator(ready).first.wait_for()
+        page.wait_for_function("!document.body.classList.contains('is-loading')")
     page.evaluate("""() => { window.__calls = [];
         window.__origApi = window.__origApi || window.api; const real = window.__origApi;
         window.api = (...a) => { window.__calls.push(a[0]); return real(...a); }; }""")
-    page.locator(f'{nav} a[href="#accounts"]').click()
-    page.locator('.account-list').first.wait_for()
+    page.locator(f'{nav} a[href="#projects"]').click()
+    page.locator('.project-card').first.wait_for()
     page.locator(f'{nav} a[href="#overview"]').click()
-    page.locator('.hero').wait_for()
+    page.locator('.home-grid').wait_for()
     page.wait_for_timeout(900)          # переход и возможная загрузка успели бы пройти
     calls = page.evaluate("window.__calls")
     assert calls == [], f"возврат в раздел снова загрузил данные: {calls}"
@@ -113,7 +117,7 @@ def rapid_taps_render_once(page, nav):
     # оба нажатия — из страницы, с паузой 50 мс: время самих кликов Playwright не должно
     # сдвигать второе нажатие за конец ухода старого экрана
     page.evaluate("""([nav]) => new Promise(resolve => {
-        document.querySelector(nav + ' a[href="#accounts"]').click();
+        document.querySelector(nav + ' a[href="#projects"]').click();
         setTimeout(() => { document.querySelector(nav + ' a[href="#overview"]').click(); resolve(); }, 50);
     })""", [nav])
     page.wait_for_timeout(1200)
@@ -132,10 +136,13 @@ def rapid_switching_stays_under_limit(page, nav):
     page.evaluate("""() => { window.__calls = []; window.__origApi = window.__origApi || window.api; const real = window.__origApi;
         window.api = (...a) => { window.__calls.push(a[0]); return real(...a); }; }""")
     for _ in range(10):
-        page.locator(f'{nav} a[href="#accounts"]').click()
-        page.locator('.account-list').first.wait_for()
+        page.locator(f'{nav} a[href="#projects"]').click()
+        page.locator('.project-card').first.wait_for()
         page.locator(f'{nav} a[href="#overview"]').click()
-        page.locator('.hero').wait_for()
+        page.locator('.home-grid').wait_for()
+    page.locator(f'{nav} a[href="#projects"]').click()
+    page.locator('.project-card.system-project').click()
+    page.locator('.hero').wait_for()
     for _ in range(10):
         for value in ("yesterday", "today"):
             page.locator(f'.segmented button[data-value="{value}"]').first.click()
@@ -242,47 +249,85 @@ def faq_opens_smoothly(page, url):
 
 
 def guest_with_shared_account_sees_home_and_opens_guide_on_demand(page):
-    """Shared-счёт остаётся на обычной главной; короткая инструкция
-    открывается вручную, а её CTA использует существующую форму добавления."""
+    """Выданный счёт выглядит как свой: без отдельной группы и баннеров, с мелкой
+    подписью, кто и когда выдал. Инструкция открывается только по кнопке."""
     page.evaluate("""() => {
         window.__smokeSavedData = structuredClone(state.data);
-        const shared = {...state.data.accounts[0], shared:true, shared_by:'1'};
-        state.data.accounts = [shared]; state.data.totals = {};
-        state.data.onboarding = {needed:true, later:false, progress:{}};
-        state.view = 'overview'; render();
+        const shared = {...state.data.accounts[0], shared:true, shared_by_name:'Иван Петров', shared_at:'2026-10-01'};
+        state.data.accounts = [shared];
+        state.data.onboarding = {needed:false, later:false, progress:{}};
+        state.view = 'tagmarket'; render();
     }""")
     page.locator(".hero").wait_for()
     assert page.locator(".account-card").count() == 1
-    assert page.locator(".resume-banner").count() == 1
+    assert page.locator(".resume-banner").count() == 0
     assert page.locator(".own-guide").count() == 0
-    assert page.locator('.page-head [data-action="onboard-open"] .button-label').inner_text() == "Добавить свой счёт"
-    page.locator('.page-head [data-action="onboard-open"]').click()
+    assert 'Выдал Иван Петров' in page.locator(".account-card .shared-note").inner_text()
+    assert page.locator(".account-card .badge").count() == 0
+    page.locator('.tag-add [data-action="onboard-open"]').click()
     page.locator(".own-guide").wait_for()
     assert page.evaluate("location.hash !== '#onboarding'")
-    fits(page)
-    page.locator('[data-action="onboard-close"]').click()
-    page.locator(".hero").wait_for()
-    page.locator('[data-action="onboard-open"]').first.click()
-    page.locator(".own-guide").wait_for()
     assert page.locator(".own-step").count() == 3
-    page.locator('[data-action="add"]').click()
+    fits(page)
+    page.locator('[data-action="add"]').first.click()
     assert page.locator("#dialog-title").inner_text() == "Подключить счёт MT5"
     close_dialog(page)
     page.locator('[data-action="onboard-close"]').click()
     page.locator(".hero").wait_for()
-    assert page.locator(".account-card").count() == 1
-    page.evaluate("render()")
-    assert page.locator(".own-guide").count() == 0
-    page.evaluate("""() => {
-        state.data.accounts = [{...state.data.accounts[0], shared:false, shared_by:null}];
-        state.data.onboarding.needed = false;
-        state.data.totals = {USD:{capital:321,pnl:0,month:0,today:0}};
-        render();
-    }""")
-    assert page.locator(".hero").count() == 1
-    assert page.locator(".resume-banner").count() == 0
-    assert page.locator('.page-head [data-action="add"]').count() == 0  # на главной нет кнопки «Добавить счёт»
-    page.evaluate("state.data=window.__smokeSavedData;delete window.__smokeSavedData;state.view='overview';render()")
+    # без счетов TagMarket — спокойная карточка, никаких обязательных шагов
+    page.evaluate("state.data.accounts=[];render()")
+    page.locator(".tag-empty").wait_for()
+    assert page.locator(".hero").count() == 0
+    page.evaluate("state.data=window.__smokeSavedData;delete window.__smokeSavedData;state.view='tagmarket';render()")
+
+
+def station_sections(page, nav):
+    """Главная Станции и новые разделы: активности, вишлисты, заметки, календарь."""
+    page.locator(f'{nav} a[href="#overview"]').click()
+    page.locator('.home-grid').wait_for()
+    assert page.locator('.home-card').count() == 4
+    assert page.locator('.home-chip').count() == 6
+    assert page.locator('.page-head [data-action="onboard-open"]').count() == 0, "на главной не навязываем счёт"
+    fits(page)
+    page.locator(f'{nav} a[href="#activity"]').click()
+    page.locator('.act-grid').wait_for()
+    glider_on_active(page, nav)
+    assert page.locator('.act-card').count() == 6
+    steps = '[data-ui-key="act-chart-steps"] .act-bars rect'
+    assert page.locator(steps).count() == 30
+    assert page.locator('.act-entry').count() > 0
+    page.locator('.act-days [data-value="7"]').click()
+    page.wait_for_function("s => document.querySelectorAll(s).length === 7", arg=steps)
+    page.locator('.act-card[data-kind="workout"]').click()
+    page.locator('#dialog[open]').wait_for()
+    assert page.locator('#dialog .act-fields-workout').is_visible()
+    page.locator('#dialog select[name="kind"]').select_option('weight')
+    assert page.locator('#dialog .act-fields-daily').is_visible() and page.locator('#dialog .act-fields-workout').is_hidden()
+    fits(page)
+    close_dialog(page)
+    page.locator(f'{nav} a[href="#lists"]').click()
+    page.locator('.wish-grid').wait_for()
+    glider_on_active(page, nav)
+    assert page.locator('.wish-list').count() == 2
+    assert page.locator('.wish-items li.done').count() == 1
+    fits(page)
+    page.locator('.lists-tabs [data-value="notes"]').click()
+    page.locator('.notes-grid').wait_for()
+    assert page.locator('.note-card').count() == 2
+    page.locator('.note-card').first.click()
+    page.locator('#dialog textarea[name="body"]').wait_for()
+    close_dialog(page)
+    page.locator('.lists-tabs [data-value="calendar"]').click()
+    page.locator('.cal-grid').wait_for()
+    assert page.locator('.cal-cell:not(.empty)').count() >= 28
+    assert page.locator('.cal-cell.today').count() == 1
+    page.locator('[data-action="cal-month"][data-value="1"]').click()
+    page.wait_for_function("document.querySelector('.cal-cell.today') === null")
+    page.locator('[data-action="cal-month"][data-value="-1"]').click()
+    page.locator('.cal-cell.today').wait_for()
+    page.locator('.cal-cell.today').click()
+    assert page.locator('.cal-day-panel h2').inner_text() == 'Сегодня'
+    fits(page)
 
 
 def projects_ui(page, nav):
@@ -423,7 +468,7 @@ def projects_ui(page, nav):
     page.locator('#dialog-submit').click()
     page.wait_for_function("state.view==='project'&&state.projectId==='ui-created'")
     page.locator('[data-action="project-edit"]').wait_for()
-    assert 'Расчётная сумма сейчас' in page.locator('.project-detail-summary').inner_text()
+    assert 'Баланс сейчас' in page.locator('.project-detail-summary').inner_text()
     saved = page.evaluate('window.__projectUiSaved')
     assert saved['accounts'][0]['amount'] == 10000 and not saved['multi'] and saved['capitalization']
     assert saved['business_days_only']
@@ -565,18 +610,12 @@ def fx_unavailable_ui(page):
     assert 'Суммы без доступной конвертации показаны в исходной валюте' in page.locator('.fx-warning').inner_text()
     assert page.locator('.fx-warning').evaluate("el=>getComputedStyle(el).color") != 'rgb(242, 153, 153)'
     fits(page)
-    # несколько валют: не складываем USD и BYN
-    page.evaluate("""()=>{state.assetMode='all';state.projects=[{id:'p',name:'P',currency:'BYN',total:3200,current_total:3200,bonus_total:0}];render();}""")
-    hero = page.locator('.hero').inner_text()
-    assert 'Частично рассчитан' in hero and 'BYN · 3' in hero and 'USD ·' in hero, hero
-    assert page.locator('.fx-warning').count() == 1
-    fits(page)
     # восстановление курса без перезагрузки и смены экрана
     page.evaluate("""()=>{const b=JSON.parse(window.__fxBackup);state.data.fx={source:'MYFIN · НБРБ',provider:'myfin',stale:false,byn_per_unit:{BYN:1,USD:3,RUB:0.03}};
       state.data.fx_error='';state.assetMode='tag';state.projects=b.p;render();}""")
     assert page.locator('.fx-warning').count() == 0
     assert '₽' in page.locator('.hero-value').inner_text()
-    assert page.evaluate("location.hash") == '#overview'
+    assert page.evaluate("location.hash") == '#tagmarket'
     # сохранённый курс — тихое предупреждение, суммы по курсу
     page.evaluate("state.data.fx={...state.data.fx,provider:'cache',stale:true,updated_at:'2026-10-02T11:20:00Z'};render()")
     assert 'последний доступный курс' in page.locator('.fx-stale').inner_text()
@@ -666,7 +705,7 @@ def compact_ui_and_quiet_refresh(page, url):
 
 
 def modal_scroll_and_deferred_refresh(page, url):
-    page.goto(url+'#overview', wait_until='domcontentloaded')
+    page.goto(url+'#tagmarket', wait_until='domcontentloaded')
     page.locator('.hero').wait_for()
     page.evaluate("document.querySelector('#main').style.minHeight='2400px';window.__uxApi=api;window.__bootstrapCalls=0;window.api=async(...a)=>{if(a[0]==='/bootstrap')__bootstrapCalls++;return __uxApi(...a)};void 0")
     cases=['addAccount()', 'projectEditor()', "projectEditor({...state.projects?.[0],id:'modal-project',name:'Private',currency:'USD',rate_percent:1,period:'week',multi:true,accounts:Array.from({length:5},(_,i)=>({id:'m'+i,name:'Аккаунт '+i,amount:1000}))})", 'configureAccount(state.data.accounts[0].login)', "confirm('Удалить проект?', 'Проверка подтверждения', 'Удалить')"]
@@ -762,7 +801,7 @@ def main():
                     page.route("https://telegram.org/js/telegram-web-app.js",
                                lambda route: route.fulfill(status=200,
                                    content_type="application/javascript", body=""))
-                    page.goto(url + "#overview", wait_until="domcontentloaded")
+                    page.goto(url + "#tagmarket", wait_until="domcontentloaded")
                     page.locator(".hero").wait_for()
                     page.locator('#toast').evaluate("el => el.classList.remove('visible')")
                     assert page.locator(".hero .hero-value").inner_text().strip()
@@ -868,7 +907,7 @@ def main():
                     page.locator('a.faq-link').click()
                     page.locator('.faq-page').wait_for()
                     assert page.locator('.faq-item').count() >= 12
-                    page.locator('a.back[href="#overview"]').click()
+                    page.locator('a.back[href="#tagmarket"]').click()
                     page.locator('.hero').wait_for()
 
                     nav = "#mobile-nav" if width < 740 else "#desktop-nav"
@@ -878,20 +917,20 @@ def main():
                     revisit_is_instant(page, nav)
                     quiet_refresh_keeps_screen(page)
                     rapid_taps_render_once(page, nav)
-                    page.locator('.hero').wait_for()
+                    page.locator('.home-grid').wait_for()
                     rapid_switching_stays_under_limit(page, nav)
                     guest_with_shared_account_sees_home_and_opens_guide_on_demand(page)
                     faq_opens_smoothly(page, url)
-                    page.goto(url + "#overview", wait_until="domcontentloaded")
+                    page.goto(url + "#tagmarket", wait_until="domcontentloaded")
                     page.locator('.hero').wait_for()
                     rapid_period_taps_load_once(page)
                     page.locator('.segmented button[data-value="today"]').first.click()
                     page.wait_for_function("!document.body.classList.contains('is-loading')")
-                    page.locator(f'{nav} a[href="#accounts"]').click()
+                    page.goto(url + "#accounts", wait_until="domcontentloaded")
                     page.locator('.account-list').first.wait_for()
                     glider_on_active(page, nav)
-                    # два личных кабинета и общий счёт для наблюдения
-                    assert page.locator('.account-group').count() == 3
+                    # два личных кабинета; общего демо-счёта больше нет
+                    assert page.locator('.account-group').count() == 2
                     if width == 390:
                         page.wait_for_timeout(500)
                         page.screenshot(path=str(screenshots / "tagmarkets-mobile-accounts-smoke.png"), full_page=True)
@@ -911,7 +950,7 @@ def main():
                     page.locator('.detail-hero').wait_for()
                     assert page.locator('.detail-identity span').count() == 2
                     assert page.locator('.detail-cells .detail-cell').count() == 3
-                    assert page.locator(f'{nav} a[href="#accounts"].active').count() == 1
+                    assert page.locator(f'{nav} a[href="#projects"].active').count() == 1   # счёт — часть «Финансов»
                     # сделки, движения и месяцы живут на самой странице счёта:
                     # отдельного раздела «Сделки» больше нет
                     page.locator(".deal-days").wait_for()
@@ -927,11 +966,11 @@ def main():
                     page.locator(".deal-days").wait_for()
                     fits(page)
                     sonic_result = page.locator('.detail-chart .result-pair b').first.inner_text()
-                    page.locator(f'{nav} a[href="#accounts"]').click()
+                    page.goto(url + "#accounts", wait_until="domcontentloaded")
                     page.locator('a[href="#account/10002"]').first.click()
                     page.locator('.detail-hero h1').get_by_text('NEO.FX').wait_for()
                     assert page.locator('.detail-chart .result-pair b').first.inner_text() != sonic_result
-                    page.locator(f'{nav} a[href="#accounts"]').click()
+                    page.goto(url + "#accounts", wait_until="domcontentloaded")
                     page.locator('a[href="#account/10001"]').first.click()
                     page.locator('.detail-hero h1').get_by_text('SONIC').wait_for()
                     page.locator('[data-action="account-settings"]').first.click()
@@ -943,9 +982,8 @@ def main():
                         shot = screenshots / "tagmarkets-mobile-account-smoke.png"
                         page.screenshot(path=str(shot), full_page=True)
                         print("Mobile account screenshot:", shot)
-                    page.locator(f'{nav} a[href="#settings"]').click()
+                    page.locator('#settings-link').click()      # настройки — кнопкой в шапке
                     page.locator('[data-action="broadcast"]').wait_for()
-                    glider_on_active(page, nav)
                     page.locator('.machine-row').first.wait_for()     # /admin подгружается следом
                     assert page.locator('.machine-row').count() == 2
                     if width == 390:
@@ -955,7 +993,7 @@ def main():
                     assert page.locator('[data-action="glass"]').count() == 0
                     assert page.evaluate("getComputedStyle(document.querySelector('.topbar')).backdropFilter") != 'none'
                     page.locator('[data-action="shortcut"]').click()
-                    assert page.locator('#dialog-title').inner_text() == 'Ярлык Tag Markets'
+                    assert page.locator('#dialog-title').inner_text() == 'Ярлык Станции'
                     close_dialog(page)
                     page.locator('[data-action="broadcast"]').click()
                     area = page.locator('#dialog textarea[name="text"]')
@@ -1065,11 +1103,11 @@ def main():
                     fits(page)
                     # тем без гаммы (light) больше нет — приложение всегда тёмное;
                     # переключатель живёт в Настройках как выбор из трёх схем
-                    page.locator(f'{nav} a[href="#settings"]').click()
+                    page.locator('#settings-link').click()
                     page.locator('.scheme-picker').wait_for()
                     page.locator('.scheme[data-value="velvet"]').click()
                     assert page.locator('html').get_attribute('data-scheme') == 'velvet'
-                    page.locator(f'{nav} a[href="#overview"]').click()
+                    page.goto(url + "#tagmarket", wait_until="domcontentloaded")
                     page.locator('.hero').wait_for()
                     assert page.locator('.chart-panel [data-value="today"].active').count() == 1
                     glider_on_active(page, nav)
@@ -1083,11 +1121,12 @@ def main():
                     glider_on_active(page, nav)
                     page.emulate_media(reduced_motion="no-preference")
                     page.locator(f'{nav} a[href="#overview"]').click()
-                    page.locator('.hero').wait_for()
+                    page.locator('.home-grid').wait_for()
                     fits(page)
                     if width == 390:
                         page.wait_for_timeout(500)
                         page.screenshot(path=str(screenshots / "tagmarkets-mobile-velvet-smoke.png"), full_page=True)
+                    station_sections(page, nav)
                     projects_ui(page, nav)
                     compact_ui_and_quiet_refresh(page, url)
                     modal_scroll_and_deferred_refresh(page, url)

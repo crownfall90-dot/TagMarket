@@ -23,7 +23,6 @@
      "deposits": true,
      "withdrawals": true
     },
-    "demo": false,
     "shared": false,
     "base": null,
     "base_at": null,
@@ -55,7 +54,6 @@
      "deposits": true,
      "withdrawals": true
     },
-    "demo": false,
     "shared": false,
     "base": null,
     "base_at": null,
@@ -87,7 +85,6 @@
      "deposits": true,
      "withdrawals": true
     },
-    "demo": false,
     "shared": false,
     "base": null,
     "base_at": null,
@@ -103,38 +100,6 @@
      "month_trades": 68,
      "cur": "USD",
      "roi": 15.67
-    }
-   },
-   {
-    "login": 90001,
-    "name": "Копитрейдинг · 45k$",
-    "strategy": "Копитрейдинг · 45k$",
-    "holder": "Публичная стратегия",
-    "cabinet": "DEMO",
-    "server": "TMFinancials-Server",
-    "enabled": true,
-    "notify": {
-     "all": true,
-     "trades": true,
-     "deposits": true,
-     "withdrawals": true
-    },
-    "demo": true,
-    "shared": false,
-    "base": null,
-    "base_at": null,
-    "synced": "2026-09-16T11:15:00",
-    "status": "fresh",
-    "totals": {
-     "now": 45000,
-     "pnl": 6724.89,
-     "kept": 3026.2005000000004,
-     "month_pct": 4.744000000000001,
-     "month_net": 2134.8,
-     "today_net": 45.31,
-     "month_trades": 68,
-     "cur": "USD",
-     "roi": 14.94
     }
    }
   ],
