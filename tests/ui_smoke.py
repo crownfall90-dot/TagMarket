@@ -315,7 +315,7 @@ def banks_ui(page, nav):
 
 
 def station_sections(page, nav):
-    """Главная Станции, круг жизни, активности, планы (задачи, календарь, заметки, желания) и настройки."""
+    """Главная Platformer, круг жизни, активности, планы (задачи, календарь, заметки, желания) и настройки."""
     page.locator(f'{nav} a[href="#overview"]').click()
     page.locator('.home-grid').wait_for()
     assert page.locator('.greet').count() == 1 and page.locator('.greet-title').inner_text().strip()
@@ -400,7 +400,7 @@ def station_sections(page, nav):
     page.locator('.cal-cell.today').click()
     assert page.locator('.cal-day-panel h2').inner_text() == 'Сегодня'
     fits(page)
-    # настройки Станции — в общих «Настройках»
+    # настройки Platformer — в общих «Настройках»
     page.locator('#settings-link').click()
     page.locator('.station-settings').wait_for()
     assert page.locator('.station-row').count() == 5
@@ -889,7 +889,7 @@ def main():
                     assert page.locator('#currency-menu [data-currency]').count() == 3
                     page.locator('#currency-menu [data-currency="BYN"]').click()
                     page.wait_for_function("state.displayCurrency==='BYN'")
-                    assert page.locator('#currency-code').inner_text() == 'BYN'
+                    assert page.locator('#currency-code').text_content() == 'BYN'
                     assert page.locator('#currency-menu').is_hidden()
                     page.locator('#currency-btn').click()
                     page.keyboard.press('Escape')
@@ -1071,7 +1071,7 @@ def main():
                     assert page.locator('[data-action="glass"]').count() == 0
                     assert page.evaluate("getComputedStyle(document.querySelector('.topbar')).backdropFilter") != 'none'
                     page.locator('[data-action="shortcut"]').click()
-                    assert page.locator('#dialog-title').inner_text() == 'Ярлык Станции'
+                    assert page.locator('#dialog-title').inner_text() == 'Ярлык Platformer'
                     close_dialog(page)
                     page.locator('[data-action="broadcast"]').click()
                     area = page.locator('#dialog textarea[name="text"]')

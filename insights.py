@@ -1,6 +1,6 @@
 """Круг жизни: оценки сфер и живые наблюдения по данным пользователя.
 
-Чистая функция над тем, что уже лежит в Станции: проекты и TagMarket,
+Чистая функция над тем, что уже лежит в Platformer: проекты и TagMarket,
 активности, задачи, календарь, вишлисты, друзья. Никаких внешних сервисов —
 считается мгновенно на каждом обновлении приложения. Оценка сферы 0–100 —
 не приговор, а «насколько тут всё в порядке» по понятным правилам; если
@@ -209,7 +209,7 @@ def analyze(data, today, hour=12):
     scores["people"] = min(100, 30 + 20 * friends)
     birthdays = [e for e in events if any(w in e["title"].lower() for w in ("др", "день рождения", "birthday"))]
     if friends == 0:
-        out.append((70, "people", "info", "Пригласите друзей — у каждого будет своя Станция", "#people"))
+        out.append((70, "people", "info", "Пригласите друзей — у каждого будет свой Platformer", "#people"))
     people_status = (f"{friends} {plural(friends, 'друг', 'друга', 'друзей')}" if friends else "пока один") + (
         f" · дней рождения: {len(birthdays)}" if birthdays else "")
 

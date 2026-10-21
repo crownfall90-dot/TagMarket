@@ -1290,7 +1290,7 @@ dialog::backdrop{background:#000a;backdrop-filter:blur(6px);-webkit-backdrop-fil
 .pa-pause small{color:var(--muted);font-size:12px}
 /* выданный счёт: кто и когда выдал — мелко, без отдельного бейджа */
 .shared-note{display:block;font-size:11px;color:var(--muted);margin-top:2px;line-height:1.3}
-/* ── Станция: главная, активности, вишлисты, заметки, календарь ── */
+/* ── Platformer: главная, активности, вишлисты, заметки, календарь ── */
 #settings-link{display:grid;place-items:center;text-decoration:none;color:inherit}
 .button.ghost{background:none;border:1px solid transparent;color:var(--muted)}.button.ghost:hover{color:var(--text);border-color:var(--line)}
 .c-accent{--c:var(--accent)}.c-green{--c:#8fd694}.c-purple{--c:var(--purple)}.c-orange{--c:#f0b46b}.c-pink{--c:#f29ac0}.c-blue{--c:#7ab8f5}
@@ -1353,7 +1353,7 @@ a.home-card{transition:border-color var(--dur) var(--ease),transform .2s var(--e
 /* на узком экране в шапке не хватает места: данные и так обновляются сами раз в минуту */
 @media(max-width:480px){#refresh{display:none}}
 
-/* ═════ Станция · визуальная система главной, активностей, планов и круга жизни ═════
+/* ═════ Platformer · визуальная система главной, активностей, планов и круга жизни ═════
    Всё на токенах темы (--accent, --purple, --panel…): гаммы Лайм, Сапфир и Золото
    подхватываются сами. Анимации выключаются при «уменьшить движение». */
 @keyframes st-rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
@@ -1438,7 +1438,7 @@ a.home-card{transition:border-color var(--dur) var(--ease),transform .2s var(--e
 .sync-banner p{margin:2px 0 0;color:var(--muted);font-size:13px}.sync-banner-icon{display:grid;place-items:center;width:44px;height:44px;border-radius:14px;background:rgb(var(--accent-rgb) / .14)}.sync-banner-icon svg{width:20px;height:20px;stroke:var(--accent);fill:none;stroke-width:1.8}
 @media(max-width:620px){.sync-banner{grid-template-columns:44px minmax(0,1fr)}.sync-banner .button{grid-column:1/-1}}
 
-/* настройки Станции и окна */
+/* настройки Platformer и окна */
 .pref-hint{color:var(--muted);margin:0 0 12px}
 .pref-list{display:grid;gap:4px;margin:8px 0 16px}
 .pref-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 10px;border-radius:12px;background:var(--raised)}.pref-row .check{margin:0}
@@ -1570,3 +1570,7 @@ li.done>.wish-check{background:var(--accent);border-color:var(--accent)}
 .project-finance-row.attention b{color:var(--purple)}
 .bank-summary:hover .bank-stack i{filter:brightness(1.15)}
 @media(prefers-reduced-motion:reduce){.spark i,.spark i.last,.bank-stack i,.share-ring .ring-fg{animation:none!important}}
+/* длинное название Platformer в шапке телефона: компактнее, чтобы все кнопки помещались */
+@media(max-width:480px){.mobile-brand .brand-wordmark strong{font-size:17px;letter-spacing:.01em}.mobile-brand .brand-wordmark small{font-size:7.5px;letter-spacing:.14em}.topbar .currency-btn{padding-inline:8px}.top-actions{gap:6px}}
+@media(max-width:350px){.mobile-brand .brand-wordmark{display:none}}
+@media(max-width:420px){.topbar .cur-code{display:none}.topbar .currency-btn{gap:4px}}

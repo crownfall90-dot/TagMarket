@@ -1560,7 +1560,7 @@ async def lists_api(request):
     return web.json_response(result, status=201 if method == "POST" else 200)
 
 
-# Что показывать в Станции — у каждого своё и одинаково на всех устройствах:
+# Что показывать в Platformer — у каждого своё и одинаково на всех устройствах:
 # карточки главной и их порядок, быстрые кнопки, показатели «Активностей»
 STATION_CHOICES = {
     "home": ("circle", "finance", "activity", "tasks", "events", "wish"),
