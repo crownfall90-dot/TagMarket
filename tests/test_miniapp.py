@@ -32,6 +32,7 @@ import fx
 import bot
 import coordination
 import miniapp
+import activity
 import projects
 import partner
 import store
@@ -1515,6 +1516,73 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         api = await (await self.call("POST", f"/api/projects/{pid}/pause", json={"paused": True})).json()
         self.assertTrue(api["paused"])
         self.assertEqual((await self.call("POST", f"/api/projects/{pid}/pause", json={"paused": "1"})).status, 400)
+
+    async def test_activity_daily_values_replace_and_workouts_add_up(self):
+        day = activity.today().isoformat()
+        first = await self.call("POST", "/api/activity", json={"kind": "steps", "value": 4000})
+        self.assertEqual(first.status, 201, await first.text())
+        await self.call("POST", "/api/activity", json={"kind": "steps", "value": 8200, "day": day})
+        await self.call("POST", "/api/activity", json={"kind": "weight", "value": 72.46})
+        for minutes in (30, 45):
+            response = await self.call("POST", "/api/activity", json={"kind": "workout", "minutes": minutes, "title": "Бег"})
+            self.assertEqual(response.status, 201, await response.text())
+        data = await (await self.call("GET", "/api/activity?days=7")).json()
+        steps = data["summary"]["steps"]
+        self.assertEqual(steps["today"], 8200)          # второе значение за день заменило первое
+        self.assertEqual(len([e for e in data["entries"] if e["kind"] == "steps"]), 1)
+        self.assertEqual(data["summary"]["weight"]["last"], 72.5)
+        self.assertEqual(data["summary"]["workout"]["today"], 75)
+        self.assertEqual(data["summary"]["workout"]["week_count"], 2)
+        self.assertEqual(data["goals"]["steps"], 10000)
+        goals = await (await self.call("PUT", "/api/activity/goals", json={"steps": 12000, "weight": 70})).json()
+        self.assertEqual(goals["goals"]["steps"], 12000)
+        # чужие записи не видны и не удаляются; неверные данные — 400
+        other = await (await self.call("GET", "/api/activity", uid=2)).json()
+        self.assertEqual(other["entries"], [])
+        entry = data["entries"][0]["id"]
+        self.assertEqual((await self.call("DELETE", f"/api/activity/{entry}", uid=2)).status, 404)
+        self.assertEqual((await self.call("DELETE", f"/api/activity/{entry}")).status, 200)
+        for bad in ({"kind": "steps", "value": -1}, {"kind": "mood", "value": 1},
+                    {"kind": "workout", "minutes": 0}, {"kind": "steps", "value": 1, "day": "2999-01-01"},
+                    {"kind": "weight", "value": True}):
+            self.assertEqual((await self.call("POST", "/api/activity", json=bad)).status, 400, bad)
+        self.assertEqual((await self.call("GET", "/api/activity?days=0")).status, 400)
+
+    async def test_wishlists_notes_and_calendar(self):
+        created = await (await self.call("POST", "/api/wishlists", json={"title": "Фото", "emoji": "📷"})).json()
+        lid = created["id"]
+        listed = await (await self.call("POST", f"/api/wishlists/{lid}/items",
+                                         json={"title": "Объектив 50mm", "price": 299.99, "url": "https://example.com/lens"})).json()
+        item = listed["items"][0]
+        self.assertEqual(listed["totals"], {"USD": 299.99})
+        done = await (await self.call("PATCH", f"/api/wishlists/{lid}/items/{item['id']}", json={"done": True})).json()
+        self.assertEqual((done["open"], done["done"], done["totals"]), (0, 1, {}))
+        self.assertEqual((await self.call("POST", f"/api/wishlists/{lid}/items", json={"title": "x", "url": "javascript:alert(1)"})).status, 400)
+        self.assertEqual((await self.call("PATCH", f"/api/wishlists/{lid}", json={"title": "Чужой"}, uid=2)).status, 404)
+        note = await (await self.call("POST", "/api/notes", json={"title": "Идеи", "body": "Поход в горы"})).json()
+        pinned = await (await self.call("PATCH", f"/api/notes/{note['id']}", json={"pinned": True})).json()
+        self.assertTrue(pinned["pinned"])
+        self.assertEqual((await self.call("POST", "/api/notes", json={"title": " ", "body": ""})).status, 400)
+        self.assertEqual((await self.call("PATCH", f"/api/notes/{note['id']}", json={"owner_id": "2"})).status, 400)
+        # день рождения 31 января повторяется каждый год; 31-е число раз в месяц — последний день короткого месяца
+        await self.call("POST", "/api/events", json={"day": "2020-01-31", "title": "ДР Маши", "repeat": "yearly"})
+        await self.call("POST", "/api/events", json={"day": "2026-01-31", "title": "Оплата", "repeat": "monthly", "time": "09:30"})
+        await self.call("POST", "/api/events", json={"day": "2026-02-10", "title": "Врач"})
+        month = await (await self.call("GET", "/api/events?from=2026-01-01&to=2026-03-31")).json()
+        dates = [(e["date"], e["title"]) for e in month["events"]]
+        self.assertIn(("2026-01-31", "ДР Маши"), dates)
+        self.assertIn(("2026-02-28", "Оплата"), dates)
+        self.assertIn(("2026-03-31", "Оплата"), dates)
+        self.assertIn(("2026-02-10", "Врач"), dates)
+        self.assertEqual(len([d for d in dates if d[1] == "ДР Маши"]), 1)
+        self.assertEqual((await self.call("GET", "/api/events?from=2026-01-01&to=2028-01-01")).status, 400)
+        self.assertEqual((await self.call("POST", "/api/events", json={"day": "2026-02-30", "title": "x"})).status, 400)
+        self.assertEqual((await self.call("POST", "/api/events", json={"day": "2026-02-03", "title": "x", "time": "25:00"})).status, 400)
+        overview = await (await self.call("GET", "/api/lists")).json()
+        self.assertEqual(len(overview["wishlists"]), 1)
+        self.assertEqual(len(overview["notes"]), 1)
+        self.assertEqual((await (await self.call("GET", "/api/lists", uid=2)).json())["wishlists"], [])
+        self.assertEqual((await self.call("DELETE", f"/api/wishlists/{lid}")).status, 200)
 
     async def test_daily_rate_can_skip_weekends_without_changing_other_periods(self):
         friday, monday = date(2026, 10, 2), date(2026, 10, 5)
