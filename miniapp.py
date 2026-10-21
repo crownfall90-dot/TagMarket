@@ -327,12 +327,14 @@ async def bootstrap(request):
                 trading_day_usd += (t.get("last_trade_net") or 0) * factor
         if factor is None:
             continue
-        bucket = totals.setdefault("USD", {"capital": 0, "pnl": 0, "month": 0, "today": 0, "kept": 0})
-        for key, source in (("capital", "now"), ("pnl", "pnl"), ("month", "month_net"),
+        bucket = totals.setdefault("USD", {"capital": 0, "balance": 0, "pnl": 0, "month": 0, "today": 0, "kept": 0})
+        # balance — что показываем (капитал вместе с невыведенным результатом сделок),
+        # capital — база процентов
+        for key, source in (("capital", "capital"), ("balance", "now"), ("pnl", "pnl"), ("month", "month_net"),
                             ("today", "today_net"), ("kept", "kept")):
-            bucket[key] += t[source] * factor if factor is not None else t[source]
+            bucket[key] += t.get(source, t["now"]) * factor if factor is not None else t[source]
     if latest_trading_day:
-        bucket = totals.setdefault("USD", {"capital": 0, "pnl": 0, "month": 0, "today": 0, "kept": 0})
+        bucket = totals.setdefault("USD", {"capital": 0, "balance": 0, "pnl": 0, "month": 0, "today": 0, "kept": 0})
         bucket.update({"trading_day": latest_trading_day,
                        "trading_day_net": round(trading_day_usd, 2),
                        "trading_day_partial": trading_day_partial})

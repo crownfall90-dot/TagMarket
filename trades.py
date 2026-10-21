@@ -454,8 +454,8 @@ def capital_around(row: dict) -> tuple[float, float]:
                 and (r["time"], r.get("ticket", 0)) > mark)
     became = capital() - after
     own = own_amount(row)
-    # вывод прибыли капитал не трогает — до и после он один и тот же
-    if is_profit_side(row):     # прибыль капитал не трогает
+    # сделка и вывод прибыли капитал не трогают — до и после он один и тот же
+    if not row["is_balance"] or is_profit_side(row):
         return became, became
     return became - own, became
 
@@ -1568,6 +1568,14 @@ def fmt_account_event(acc: dict, row: dict, cur: str, day_net: float = None,
     return (f"{tag}\n{THIN}\n{body}", f"{title} · {event_label(row, pair)}", feed_body(body))
 
 
+def balance_line(around: dict, cur: str) -> str:
+    """Баланс счёта до и после операции: капитал вместе с невыведенным результатом сделок."""
+    if abs(around["became"] - around["was"]) < 0.01:
+        return f"💰 Баланс счёта: <b>{amount(around['became'], cur)}</b>"
+    return (f"💰 Баланс счёта: {amount(around['was'], cur)} → "
+            f"<b>{amount(around['became'], cur)}</b>")
+
+
 def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int = None,
                      total_net: float = None, pair: dict = None) -> str:
     """Уведомление о событии на счёте. Про открытие позиций не пишем.
@@ -1581,7 +1589,6 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
 
     if row["is_balance"]:
         own = own_amount(row)           # реальные деньги: капитал ÷плечо, прибыль ×1
-        cap = capital()                 # баланс стратегии = вложенный капитал
         is_profit = is_profit_side(row)
         # Adjust — это списание из профита в пару к Upgrade: те же деньги через
         # секунду вернутся капиталом. Называть это «выводом» неверно
@@ -1593,16 +1600,12 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
         if is_profit and is_transfer(row) and moved_in and pair is not None:
             # обе половины сразу: профит списан и в тот же момент добавлен
             # в капитал — раньше это были два отдельных, спорящих сообщения
-            was, became = capital_around(pair)
             around = strategy_around(pair)
             # деньги никуда не уходят: профит стал капиталом — сумма без знака «минус»
             out = [f"🕒 <b>{when}</b>", "♻️ <b>Реинвест профита</b>", THIN,
                    f"<b>{amount(abs(own), cur)}</b>",
                    "🔁 Профит добавлен в капитал и дальше работает вместе с ним"]
-            out.append(f"💰 Капитал: было {amount(was, cur)} → стало "
-                       f"<b>{amount(became, cur)}</b>")
-            out.append(f"📊 На стратегии: <b>{amount(around['became'], cur)}</b> <i>(всего не изменилось: "
-                       f"профит стал капиталом)</i>")
+            out.append(f"💰 Баланс счёта: <b>{amount(around['became'], cur)}</b> <i>(не изменился)</i>")
             return "\n".join(out)
 
         if is_profit and is_transfer(row):
@@ -1615,11 +1618,7 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
                    f"<b>{money(own)}{sign(cur)}</b>", where]
             if note:
                 out.append(note)
-            around = strategy_around(row)
-            out.append(f"💰 На стратегии: было {amount(around['was'], cur)} → стало "
-                       f"<b>{amount(around['became'], cur)}</b>")
-            out.append(f"<i>капитал {amount(around['cap_became'], cur)} + профит "
-                       f"{amount(around['kept_became'], cur)}</i>")
+            out.append(balance_line(strategy_around(row), cur))
             return "\n".join(out)
 
         if is_transfer(row):
@@ -1637,15 +1636,10 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
                      if out_of
                      else "⬅️ Добавлено в капитал (профит списан предыдущим сообщением)"
                      if is_upgrade else "⬅️ Заведено на стратегию — капитал вырос")
-            was, became = capital_around(row)   # состояние ровно на момент операции
             out = [f"🕒 <b>{when}</b>", head, THIN, f"<b>{money(own)}{sign(cur)}</b>", where]
             if note:
                 out.append(note)
-            around = strategy_around(row)
-            out.append(f"💰 На стратегии: было {amount(around['was'], cur)} → стало "
-                       f"<b>{amount(around['became'], cur)}</b>")
-            out.append(f"<i>капитал {amount(around['cap_became'], cur)} + профит "
-                       f"{amount(around['kept_became'], cur)}</i>")
+            out.append(balance_line(strategy_around(row), cur))
             return "\n".join(out)
 
         # плата платформы — просто издержка
@@ -1692,13 +1686,9 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
     if n > 1:
         out.append(f"💵 За день: <b>{money(day_profit)}{sign(cur)}</b> <i>({n} {plural(n, 'сделка', 'сделки', 'сделок')})</i>")
 
-    # Накопленный профит — это всё, что заработано и не выведено, а не результат одной
-    # сделки: прежние плюсы и минусы входят в него, поэтому показываем «было → стало».
+    # результат сделки сразу в балансе счёта: отдельного «накопленного профита» нет
     around = strategy_around(row)
-    if around["became"] or around["kept_became"]:
-        if abs(around["kept_became"] - around["kept_was"]) >= 0.01:
-            out.append(f"📈 Накоплено профита: {amount(around['kept_was'], cur, signed=True)} → "
-                       f"<b>{amount(around['kept_became'], cur, signed=True)}</b>")
-        out.append(f"📊 На стратегии: <b>{amount(around['became'], cur)}</b>")
+    if around["became"] or around["was"]:
+        out.append(balance_line(around, cur))
     out.append(late_note(row))
     return "\n".join(out)

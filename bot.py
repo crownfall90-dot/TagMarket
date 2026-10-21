@@ -397,7 +397,9 @@ def account_totals(acc: dict) -> dict | None:
     # shared portfolio date (today, otherwise the most recent day with trades).
     last_trade_day = max(all_by_day, default=None)
 
-    return {"now": my, "pnl": earned, "kept": trades.retained(),
+    kept = trades.retained()
+    # отдельного профита больше нет: результат сделок сразу в балансе, вывод его уменьшает
+    return {"now": my + kept, "capital": my, "pnl": earned, "kept": kept,
             "days": [trades.net_of_fee(trades.mine(by_day[d])) for d in sorted(by_day)],
             "month_pct": trades.growth_pct(month_rows, rows),
             "roi": trades.growth_all(),
@@ -424,13 +426,12 @@ def dashboard(owner) -> tuple[str, InlineKeyboardMarkup]:
 
     blocks, rows = [], app_rows
     grand_now = grand_pnl = grand_month = 0.0
-    grand_weighted = grand_weighted_roi = grand_kept = 0.0
+    grand_weighted = grand_weighted_roi = 0.0
     cur = "USD"
     for cab, info in sorted(groups.items()):
         now = pnl = month = 0.0
         month_trades = dead = 0
         weighted = weighted_roi = 0.0   # проценты кабинета — средние по счетам
-        kept = 0.0                      # профит, не выведенный со стратегии
         days: list = []
         for acc in info["accounts"]:
             t = account_totals(acc)
@@ -438,7 +439,6 @@ def dashboard(owner) -> tuple[str, InlineKeyboardMarkup]:
                 dead += 1
                 continue
             now += t["now"]
-            kept += t["kept"]
             pnl += t["pnl"]
             month += t["month_net"]
             month_trades += t["month_trades"]
@@ -454,7 +454,6 @@ def dashboard(owner) -> tuple[str, InlineKeyboardMarkup]:
         grand_now += now
         grand_pnl += pnl
         grand_month += month
-        grand_kept += kept
         grand_weighted += weighted
         grand_weighted_roi += weighted_roi
         roi = weighted_roi / now if now else 0.0
@@ -475,10 +474,8 @@ def dashboard(owner) -> tuple[str, InlineKeyboardMarkup]:
         mark = "▲" if month >= 0 else "▼"
         blocks.append(
             f"👤 <b>{html.escape(who)}</b>\n"
-            # рядом с капиталом — профит, который лежит нетронутым: без него
-            # непонятно, сколько денег на стратегии на самом деле
-            f"<blockquote>💎 <b>{trades.amount(now, cur, whole=True)}</b>"
-            f" + <b>{trades.amount(kept, cur)}</b> <i>профит</i>\n"
+            # баланс: капитал вместе с результатом сделок, которые ещё не вывели
+            f"<blockquote>💎 <b>{trades.amount(now, cur, whole=True)}</b> <i>баланс</i>\n"
             f"{mark} {MONTHS[trades.clock().month].lower()} <b>{trades.amount(month, cur, signed=True)}</b>"
             f" · <i>{trades.pct(month_pct)}</i>\n"
             f"◆ всего <b>{trades.amount(pnl, cur, signed=True)}</b> · <i>{trades.pct(roi)}</i>\n"
@@ -494,8 +491,7 @@ def dashboard(owner) -> tuple[str, InlineKeyboardMarkup]:
         total_roi = grand_weighted_roi / grand_now if grand_now else 0.0
         month_pct = grand_weighted / grand_now if grand_now else 0.0
         mark = "▲" if grand_month >= 0 else "▼"
-        head += (f"\n<blockquote>💎 <b>{trades.amount(grand_now, cur, whole=True)}</b>"
-                 f" + <b>{trades.amount(grand_kept, cur)}</b> <i>профит</i>\n"
+        head += (f"\n<blockquote>💎 <b>{trades.amount(grand_now, cur, whole=True)}</b> <i>баланс</i>\n"
                  f"{mark} {now_month.lower()} <b>{trades.amount(grand_month, cur, signed=True)}</b>"
                  f" · <i>{trades.pct(month_pct)}</i>\n"
                  f"◆ всего <b>{trades.amount(grand_pnl, cur, signed=True)}</b>"
@@ -1471,9 +1467,6 @@ def build_all(name: str, owner=None, cabinet: str = None) -> str:
     """Сводка по счетам: одного кабинета, если он задан, иначе по всем."""
     title, since, until, subtitle = period(name)
     lines, totals, cur = [], {}, ""
-    # профит — величина «на сейчас». Рядом с прошлой неделей или месяцем он
-    # читался бы как профит того периода, чем он не является
-    now_view = name == "today"
     scope = accounts.dedup(accounts.in_cabinet(owner, cabinet) if cabinet
                           else accounts.load(owner))
     for acc in scope:
@@ -1498,9 +1491,7 @@ def build_all(name: str, owner=None, cabinet: str = None) -> str:
         total["period"] += per
         total["ever"] += ever
         mark = "▲" if per > 0 else ("▼" if per < 0 else "•")
-        on_top = (f" + {trades.amount(abs(kept), cur)} профит"
-                  if now_view and abs(kept) >= 0.01 else "")
-        lines.append(f"{mark} <b>{html.escape(label)}</b> · {trades.amount(my, cur, whole=True)}{on_top}\n"
+        lines.append(f"{mark} <b>{html.escape(label)}</b> · {trades.amount(my + kept, cur, whole=True)}\n"
                      f"<i>период {trades.amount(per, cur, signed=True)} · "
                      f"всего {trades.amount(ever, cur, signed=True)}</i>")
 
@@ -1548,22 +1539,16 @@ def build_all(name: str, owner=None, cabinet: str = None) -> str:
     currency_keys = sorted(totals) or [cur]
     if len(currency_keys) == 1:
         amounts = totals.get(currency_keys[0], {"my": 0.0, "period": 0.0, "ever": 0.0, "kept": 0.0})
-        split = (f"\n<i>капитал {trades.amount(amounts['my'], cur)} · "
-                 f"профит {trades.amount(amounts['kept'], cur, signed=True)}</i>"
-                 if abs(amounts["kept"]) >= 0.01 else "")
         head = (f"👤 <b>{html.escape(where)}</b>\n"
-                f"💎 <b>{trades.amount(amounts['my'] + amounts['kept'], cur, whole=True)}</b> на стратегии{split}\n"
+                f"💎 <b>{trades.amount(amounts['my'] + amounts['kept'], cur, whole=True)}</b> баланс\n"
                 f"◆ <i>всего заработано {trades.amount(amounts['ever'], cur, signed=True)}</i>")
         totals_period = [(cur, amounts["period"])]
     else:
         blocks, totals_period = [], []
         for currency in currency_keys:
             amounts = totals[currency]
-            split = (f" · капитал {trades.amount(amounts['my'], currency)} · "
-                     f"профит {trades.amount(amounts['kept'], currency, signed=True)}"
-                     if abs(amounts["kept"]) >= 0.01 else "")
             blocks.append(f"💎 <b>{trades.amount(amounts['my'] + amounts['kept'], currency, whole=True)}</b> "
-                          f"на стратегии · <i>{html.escape(currency)}</i>{split}\n"
+                          f"баланс · <i>{html.escape(currency)}</i>\n"
                           f"◆ <i>всего заработано {trades.amount(amounts['ever'], currency, signed=True)}</i>")
             totals_period.append((currency, amounts["period"]))
         head = f"👤 <b>{html.escape(where)}</b>\n" + "\n".join(blocks)

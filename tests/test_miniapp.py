@@ -282,8 +282,8 @@ class BuildAllCurrencyTests(unittest.TestCase):
         self.assertIn("+200.00" + trades.NBSP + "₽", text)
         self.assertIn("Январь · USD", text)
         self.assertIn("Январь · RUB", text)
-        self.assertIn("<b>100" + trades.NBSP + "$</b> на стратегии · <i>USD</i>", text)
-        self.assertIn("<b>100" + trades.NBSP + "₽</b> на стратегии · <i>RUB</i>", text)
+        self.assertIn("<b>100" + trades.NBSP + "$</b> баланс · <i>USD</i>", text)
+        self.assertIn("<b>100" + trades.NBSP + "₽</b> баланс · <i>RUB</i>", text)
         self.assertIn("+0.00" + trades.NBSP + "$", text)
         self.assertIn("+0.00" + trades.NBSP + "₽", text)
 
@@ -2686,7 +2686,8 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(second_trade["became"], trades.capital() + trades.retained(), places=6,
                                msg="после последней операции — ровно то, что на стратегии сейчас")
         text, title, body = trades.fmt_account_event(accounts.load(1)[0], rows[3], "USD")
-        self.assertIn("На стратегии: было", text)
+        self.assertIn("Баланс счёта: ", text)
+        self.assertNotIn("профит 1", text)      # отдельной строки «капитал + профит» нет
         self.assertIn("Вывод профита", title)
 
     async def test_broker_comment_cannot_break_notification_markup(self):
