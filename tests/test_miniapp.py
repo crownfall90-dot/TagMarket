@@ -295,11 +295,13 @@ def SNAP(rates, provider="myfin", stale=False):
 
 MYFIN_HTML = ("<table><tbody><tr><td>Доллар США</td><td>3.0000</td><td>3.0</td><td>USD</td><td>1</td></tr>"
               "<tr><td>Российский рубль</td><td>3.6000</td><td>3.6</td><td>RUB</td><td>100</td></tr></tbody></table>")
+# дата курса — сегодняшняя: validate_rates отвергает слишком старые курсы
+_RATE_DAY = datetime.now(timezone.utc).date().isoformat() + "T00:00:00"
 NBRB_JSON = [{"Cur_Abbreviation": "USD", "Cur_Scale": 1, "Cur_OfficialRate": 3.0,
-              "Date": "2026-10-02T00:00:00"},
+              "Date": _RATE_DAY},
              {"Cur_Abbreviation": "RUB", "Cur_Scale": 100, "Cur_OfficialRate": 3.6,
-              "Date": "2026-10-02T00:00:00"}, {"Cur_Abbreviation": "EUR", "Cur_Scale": 1,
-              "Cur_OfficialRate": 3.5, "Date": "2026-10-02T00:00:00"}]
+              "Date": _RATE_DAY}, {"Cur_Abbreviation": "EUR", "Cur_Scale": 1,
+              "Cur_OfficialRate": 3.5, "Date": _RATE_DAY}]
 GOOD = {"BYN": 1.0, "USD": 3.0, "RUB": 0.036}
 
 
