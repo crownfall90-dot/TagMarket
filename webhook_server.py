@@ -504,11 +504,7 @@ async def agent_accounts(request):
         # гость держит копию enabled и опрос продолжается вопреки паузе владельца
         for a in accounts.dedup(sorted((a for a in accounts.load()), key=lambda a: bool(a.get("shared_by"))), by_owner=False)
         for command in (store.get_command_record(db, a["login"]),)
-        # общий демо-счёт опрашивается всегда: он один на всех, и галочка
-        # «Показывать общий счёт» у владельца (пишет enabled в саму запись)
-        # остановила опрос для всех — с 20.09.2026 сделок не было ни у кого.
-        # Показ и уведомления у каждого свои, данные должны идти всегда
-        if a.get("enabled", True) or a.get("demo")
+        if a.get("enabled", True)
     ])
 
 

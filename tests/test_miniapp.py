@@ -1024,15 +1024,13 @@ class BroadcastFormatTests(unittest.TestCase):
 
     def test_dashboard_opens_miniapp_first_with_or_without_accounts(self):
         with patch.dict(os.environ, {"MINI_APP_URL": "https://crownfail.shop/tagmarkets/app/"}):
-            with patch.object(accounts, "cabinets", return_value={}), \
-                    patch.object(miniapp.logic, "demo_button", return_value=None):
+            with patch.object(accounts, "cabinets", return_value={}):
                 _, markup = miniapp.logic.dashboard(1)
                 self.assertEqual(markup.inline_keyboard[0][0].web_app.url,
                                  "https://crownfail.shop/tagmarkets/app/")
             with patch.object(accounts, "cabinets", return_value={"CU1": {
                 "holder": "Test", "accounts": [{}]
-            }}), patch.object(miniapp.logic, "account_totals", return_value=None), \
-                    patch.object(miniapp.logic, "demo_button", return_value=None):
+            }}), patch.object(miniapp.logic, "account_totals", return_value=None):
                 _, markup = miniapp.logic.dashboard(1)
                 self.assertEqual(markup.inline_keyboard[0][0].web_app.url,
                                  "https://crownfail.shop/tagmarkets/app/")
@@ -1190,7 +1188,6 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         partner.kv_set(self.db, "partner_link:1", "https://exfusion.ibportal.io/auth/register?e=test-link&a=1")
         self.tdb = store.open_db(str(Path(self.tmp.name) / "trades.db"))
         trades._db = self.tdb
-        miniapp.logic.DEMO_ON = False
         miniapp._rates.clear()
         self.acc = {"owner":"1", "name":"SONIC", "strategy":"SONIC", "login":123,
                     "password":"never-in-api", "server":"Demo", "multiplier":24,
@@ -2056,7 +2053,6 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         guest_accounts = [
             {"owner": 5, "name": "own", "login": 501, "strategy": "OWN"},
             {"owner": 5, "name": "shared", "login": 123, "strategy": "SONIC", "shared_by": "1"},
-            {"owner": 5, "name": "demo", "login": 777, "demo": True},
             {"owner": 5, "name": "inviter", "login": 456, "strategy": "NEO"}]
         seen = []
         with patch.object(bot.accounts, "load", return_value=guest_accounts),                 patch.object(bot, "connect", side_effect=lambda a: seen.append(a["login"]) or False):
@@ -2278,44 +2274,6 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                             json={"name":"stolen","login":123,"password":"wrong","server":"Demo"})
         self.assertEqual(r.status,409)
         self.assertEqual(accounts.load(2),[])
-
-    async def test_demo_protected_and_excluded_from_money(self):
-        accounts.add({**self.acc,"login":456,"name":"Demo","strategy":"Demo","demo":True})
-        store.save_state(self.tdb,456,240000,240000,"USD","Demo",10000)
-        r = await self.call("GET","/api/bootstrap")
-        self.assertEqual((await r.json())["totals"]["USD"]["capital"],100)
-        for method,body in (("DELETE",None),("PATCH",{"base":100}),("PATCH",{"name":"x"})):
-            r = await self.call(method,"/api/accounts/456",json=body)
-            self.assertEqual(r.status,403)
-
-    async def test_demo_login_is_always_a_number_in_api(self):
-        # Production data: the shared demo copies keep "login" as a string, and
-        # the strict === lookup in the UI made «Настроить» a silent no-op.
-        accounts.add({**self.acc, "login": "51164384", "name": "Demo", "strategy": "", "demo": True})
-        store.save_state(self.tdb, 51164384, 240000, 240000, "USD", "Demo", 10000)
-        boot = await (await self.call("GET", "/api/bootstrap")).json()
-        for a in boot["accounts"]:
-            self.assertIs(type(a["login"]), int, a)
-
-    async def test_demo_settings_button_saves_for_owner_and_for_guest(self):
-        # Exactly what the «Настроить» button sends for the copy-trading account.
-        ui = {"enabled": False, "notify": {"all": True, "trades": False,
-                                            "deposits": True, "withdrawals": True}}
-        accounts.add({**self.acc, "login": 456, "name": "Demo", "strategy": "Demo", "demo": True})
-        store.save_state(self.tdb, 456, 240000, 240000, "USD", "Demo", 10000)
-        miniapp.logic.DEMO_ON = True
-        miniapp.logic.DEMO_LOGIN = 456
-        try:
-            for uid in (1, 2):      # 1 owns the record, 2 only sees the public copy
-                partner.kv_set(self.db, "guest:2", "1")
-                r = await self.call("PATCH", "/api/accounts/456", uid=uid, json=ui)
-                self.assertEqual(r.status, 200, f"uid={uid}: {await r.text()}")
-                boot = await (await self.call("GET", "/api/bootstrap", uid=uid)).json()
-                demo = next(a for a in boot["accounts"] if a["demo"])
-                self.assertFalse(demo["enabled"], f"uid={uid}")
-                self.assertFalse(demo["notify"]["trades"], f"uid={uid}")
-        finally:
-            miniapp.logic.DEMO_ON = False
 
     async def test_report_and_pagination(self):
         now = trades.clock()
@@ -2645,7 +2603,19 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(miniapp.logic.invite_check(self.db, 7, token, set())[0], "ok")
         self.assertEqual(miniapp.logic.invite_personal(self.db, 1), token)
 
-    async def test_owner_can_open_own_accounts_to_a_guest_but_not_shared_or_demo(self):
+    async def test_shared_demo_copies_are_hidden_and_purged(self):
+        # общего демо-счёта больше нет: старые копии не видны нигде и удаляются из файла
+        accounts.add({**self.acc, "login": 456, "name": "Demo", "strategy": "Demo", "demo": True})
+        accounts.add({**self.acc, "owner": "2", "login": 456, "name": "Demo", "strategy": "Demo", "demo": True})
+        self.assertEqual([a["login"] for a in accounts.load(1)], [123])
+        home = await (await self.call("GET", "/api/bootstrap")).json()
+        self.assertEqual([a["login"] for a in home["accounts"]], [123])
+        self.assertEqual((await self.call("GET", "/api/accounts/456/report?period=all")).status, 404)
+        self.assertEqual(accounts.purge_demo(), 2)
+        self.assertFalse(any(a.get("demo") for a in accounts._read()))
+        self.assertEqual(accounts.purge_demo(), 0)
+
+    async def test_owner_can_open_own_accounts_to_a_guest_but_not_shared(self):
         partner.kv_set(self.db, "guest:2", "1")
         partner.kv_set(self.db, "guest_by:2", "1")
         r = await self.call("POST", "/api/guests/2", json={"action": "share", "logins": [123]})
@@ -2842,23 +2812,6 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status, 200)
         self.assertEqual(accounts.load(2), [])
         self.assertIsNone(partner.kv_get(self.db, "guest_by:2"))
-
-    async def test_inferred_demo_copy_does_not_block_revoke(self):
-        # Боевой случай: у гостя всего одна запись — копия общего демо-счёта,
-        # помеченная inferred старым кодом. В интерфейсе он «0 счетов», а
-        # отзыв падал с 409: демо есть у каждого гостя и спорить о его
-        # происхождении не о чем.
-        partner.kv_set(self.db, "guest:2", "1")
-        partner.kv_set(self.db, "guest_by:2", "1")
-        demo = {**self.acc, "login": 555, "name": "Demo", "strategy": "Demo", "demo": True}
-        accounts.add(demo)
-        accounts.add({**demo, "owner": "2", "shared_by": "1", "shared_origin": "inferred"})
-        response = await self.call("POST", "/api/guests/2", json={"action": "revoke"})
-        self.assertEqual(response.status, 200, await response.text())
-        self.assertEqual(accounts.load(2), [])
-        self.assertIsNone(partner.kv_get(self.db, "guest_by:2"))
-        # у пригласившего собственный демо-счёт остался нетронутым
-        self.assertEqual([int(a["login"]) for a in accounts.load(1)], [123, 555])
 
     async def test_fenced_sync_does_not_mutate_data(self):
         coordination.claim(self.db,"main","session-aaaaaaaaaaaaaaaa","primary")
@@ -3072,15 +3025,6 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(r.headers["Content-Type"], "image/jpeg")
                 self.assertIn("web/" + name, deploy.FILES)
         self.assertEqual((await self.client.get("/app/secret.jpg")).status, 404)
-
-    async def test_public_demo_is_polled_even_when_owner_hides_it(self):
-        # «Показывать общий счёт» у владельца пишет enabled в саму запись —
-        # это остановило опрос для всех, и сделки перестали приходить
-        accounts.add({**self.acc, "login": 456, "name": "Demo", "strategy": "Demo", "demo": True})
-        r = await self.call("PATCH", "/api/accounts/456", json={"enabled": False})
-        self.assertEqual(r.status, 200, await r.text())
-        r = await self.client.get("/agent/accounts", headers={"X-Token": "agent-test"})
-        self.assertIn(456, [int(a["login"]) for a in await r.json()])
 
     async def test_guest_cannot_toggle_shared_account_polling(self):
         accounts.share([123],1,2)
