@@ -1460,6 +1460,7 @@ async def lists_api(request):
     data = await json_object(request) if method in {"POST", "PATCH"} else {}
     if path == "/api/lists":
         return web.json_response({"wishlists": lists.wishlists(db, uid), "notes": lists.notes(db, uid),
+                                  "tasks": lists.tasks(db, uid), "areas": lists.AREAS,
                                   "upcoming": lists.upcoming(db, uid)})
     if path.startswith("/api/wishlists"):
         list_id, item_id = info.get("list_id"), info.get("item_id")
@@ -1472,6 +1473,12 @@ async def lists_api(request):
             return web.json_response({"ok": True})
         else:
             result = _section_call(lambda: lists.save_wishlist(db, uid, data, list_id))
+    elif path.startswith("/api/tasks"):
+        task_id = info.get("task_id")
+        if method == "DELETE":
+            _section_call(lambda: lists.delete_task(db, uid, task_id))
+            return web.json_response({"ok": True})
+        result = _section_call(lambda: lists.save_task(db, uid, data, task_id))
     elif path.startswith("/api/notes"):
         note_id = info.get("note_id")
         if method == "DELETE":
@@ -1607,6 +1614,9 @@ def setup(app):
     app.router.add_post("/api/wishlists/{list_id}/items", lists_api)
     app.router.add_patch("/api/wishlists/{list_id}/items/{item_id}", lists_api)
     app.router.add_delete("/api/wishlists/{list_id}/items/{item_id}", lists_api)
+    app.router.add_post("/api/tasks", lists_api)
+    app.router.add_patch("/api/tasks/{task_id}", lists_api)
+    app.router.add_delete("/api/tasks/{task_id}", lists_api)
     app.router.add_post("/api/notes", lists_api)
     app.router.add_patch("/api/notes/{note_id}", lists_api)
     app.router.add_delete("/api/notes/{note_id}", lists_api)

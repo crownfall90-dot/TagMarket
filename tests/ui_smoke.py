@@ -293,7 +293,7 @@ def station_sections(page, nav):
     page.locator('.act-grid').wait_for()
     glider_on_active(page, nav)
     assert page.locator('.act-card').count() == 6
-    steps = '[data-ui-key="act-chart-steps"] .act-bars rect'
+    steps = '[data-ui-key="act-chart-steps"] .act-bars .bar'
     assert page.locator(steps).count() == 30
     assert page.locator('.act-entry').count() > 0
     page.locator('.act-days [data-value="7"]').click()

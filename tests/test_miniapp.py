@@ -33,6 +33,7 @@ import bot
 import coordination
 import miniapp
 import activity
+import lists
 import projects
 import partner
 import store
@@ -1608,6 +1609,22 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         await self.call("DELETE", "/api/activity/sync/key")
         self.assertFalse((await (await self.call("GET", "/api/activity/sync/key")).json())["connected"])
         self.assertEqual((await self.client.post("/api/activity/sync?key=" + "x" * 32, json={"steps": 1})).status, 401)
+
+    async def test_tasks_with_due_dates_areas_and_done(self):
+        today = lists.today().isoformat()
+        made = await self.call("POST", "/api/tasks", json={"title": "Отчёт", "due": today, "area": "work"})
+        self.assertEqual(made.status, 201, await made.text())
+        task = await made.json()
+        self.assertEqual((task["area"], task["done"]), ("work", False))
+        await self.call("POST", "/api/tasks", json={"title": "Купить лампу"})
+        done = await (await self.call("PATCH", f"/api/tasks/{task['id']}", json={"done": True})).json()
+        self.assertTrue(done["done"] and done["done_at"])
+        listed = (await (await self.call("GET", "/api/lists")).json())["tasks"]
+        self.assertEqual([t["title"] for t in listed], ["Купить лампу", "Отчёт"])   # открытые раньше выполненных
+        for bad in ({"title": ""}, {"title": "x", "area": "casino"}, {"title": "x", "due": "31.12.2026"}, {"title": "x", "done": "yes"}):
+            self.assertEqual((await self.call("POST", "/api/tasks", json=bad)).status, 400, bad)
+        self.assertEqual((await self.call("PATCH", f"/api/tasks/{task['id']}", json={"done": False}, uid=2)).status, 404)
+        self.assertEqual((await self.call("DELETE", f"/api/tasks/{task['id']}")).status, 200)
 
     async def test_station_preferences_are_per_user_and_validated(self):
         home = await (await self.call("GET", "/api/bootstrap")).json()
