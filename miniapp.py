@@ -1,7 +1,7 @@
 """Telegram Mini App API. Shares accounts, reports and preferences with the bot.
 
 Handlers do not yield while using the legacy trades calculation context.
-Only signed Telegram initData is accepted; no browser/demo authentication bypass.
+Only signed Telegram initData is accepted; no browser authentication bypass.
 """
 import hashlib
 import hmac
@@ -237,10 +237,6 @@ def mt5_login(value) -> int:
 def owned(uid, login):
     acc = next((a for a in accounts.load(uid) if int(a["login"]) == int(login)), None)
     if not acc:
-        # The public copy-trading account is read-only shared data. It is
-        # visible to every cabinet without creating a personal account row.
-        acc = next((a for a in accounts.load() if a.get("demo") and int(a["login"]) == int(login)), None)
-    if not acc:
         raise web.HTTPNotFound(text="Счёт не найден")
     return acc
 
@@ -270,7 +266,7 @@ def person_name(uid):
 
 def public_account(acc, db):
     result = {k: acc.get(k) for k in ("login", "name", "strategy", "cabinet", "holder",
-              "server", "enabled", "notify", "demo", "base", "base_at")}
+              "server", "enabled", "notify", "base", "base_at")}
     # У копий общего демо-счёта номер в accounts.json лежит строкой, у остальных —
     # числом. Интерфейс сравнивает его строго, и «Настроить» на такой записи
     # молча ничего не делало
@@ -298,20 +294,8 @@ async def bootstrap(request):
     if name and partner.kv_get(db, f"user_name:{uid}") != name:
         partner.kv_set(db, f"user_name:{uid}", name)
     items = [public_account(a, request.app["trades"]) for a in accounts.dedup(accounts.load(uid))]
-    # Show the single public copy-trading account without cloning it into
-    # every invited user's personal cabinet.
-    if logic.DEMO_ON and not any(a.get("demo") for a in items):
-        source = next((a for a in accounts.load() if a.get("demo") and int(a.get("login", 0)) == int(logic.DEMO_LOGIN)), None)
-        if source:
-            demo_view = public_account(source, request.app["trades"])
-            demo_view["enabled"] = logic.kv_get(db, f"public_demo:{uid}:enabled") != "0"
-            saved_notify = logic.kv_get(db, f"public_demo:{uid}:notify")
-            if saved_notify:
-                try: demo_view["notify"] = {**(demo_view.get("notify") or {}), **json.loads(saved_notify)}
-                except (TypeError, ValueError, json.JSONDecodeError): pass
-            items.append(demo_view)
     currencies = {a["totals"]["cur"].upper() for a in items
-                  if not a["demo"] and a["totals"]}
+                  if a["totals"]}
     project_currencies = {p[0] for p in db.execute("SELECT currency FROM projects WHERE owner_id=?", (str(uid),))}
     display_currency = partner.kv_get(db, f"display_currency:{uid}", "USD")
     unsupported = currencies - {"USD", "RUB", "BYN"}
@@ -328,14 +312,14 @@ async def bootstrap(request):
     # Personal totals are shown in USD when a current official quote is available.
     totals = {}
     trading_days = [a["totals"]["last_trade_day"] for a in items
-                    if not a["demo"] and a.get("totals")
+                    if a.get("totals")
                     and a["totals"].get("last_trade_day")]
     latest_trading_day = max(trading_days, default=None)
     trading_day_usd = 0.0
     trading_day_partial = False
     for a in items:
         t = a["totals"]
-        if a["demo"] or not t:
+        if not t:
             continue
         currency = t["cur"].upper()
         factor = usd_factor(currency, byn_per_unit) if byn_per_unit else (1 if currency == "USD" else None)
@@ -358,7 +342,7 @@ async def bootstrap(request):
                        "trading_day_net": round(trading_day_usd, 2),
                        "trading_day_partial": trading_day_partial})
     # выданный счёт считается своим: онбординг не нужен, если счета уже есть
-    own_accounts = [a for a in items if not a["demo"]]
+    own_accounts = items
     inviter = partner.kv_get(db, f"guest_by:{uid}")
     registration_url = (logic.partner_link(db, inviter) if inviter else logic.partner_registration_url())
     return web.json_response({"user": {"id": user["id"], "name": user.get("first_name", "Инвестор")},
@@ -504,7 +488,7 @@ async def overview_report(request):
     uid, _ = authorize(request)
     title, since, until = report_period(request.query)
     db = request.app["trades"]
-    personal = [a for a in accounts.dedup(accounts.load(uid)) if not a.get("demo")]
+    personal = accounts.dedup(accounts.load(uid))
     currencies = {((store.get_state(db, a["login"]) or {}).get("currency") or "USD").upper()
                   for a in personal}
     unsupported = currencies - {"USD", "RUB", "BYN"}
@@ -853,31 +837,12 @@ async def change_account(request):
 
 def _change_account(uid, login, method, data, db=None):
     acc = owned(uid, login)
-    public_demo = acc.get("demo") and not any(int(a.get("login", 0)) == int(login) and str(a.get("owner")) == str(uid) for a in accounts.load(uid))
-    if public_demo:
-        if method == "DELETE":
-            raise web.HTTPForbidden(text="Публичный счёт нельзя удалить")
-        if set(data) - {"enabled", "notify"}:
-            raise ValueError("unknown field")
-        if "enabled" in data:
-            if type(data["enabled"]) is not bool: raise ValueError("enabled")
-            logic.kv_set(db, f"public_demo:{uid}:enabled", "1" if data["enabled"] else "0")
-        if "notify" in data:
-            values = data["notify"]
-            if not isinstance(values, dict) or set(values) - {"all", *accounts.NOTIFY_KINDS} or any(type(v) is not bool for v in values.values()):
-                raise ValueError("notify")
-            logic.kv_set(db, f"public_demo:{uid}:notify", json.dumps(values))
-        return web.json_response({"ok": True})
     if method == "DELETE":
-        if acc.get("demo"):
-            raise web.HTTPForbidden(text="Демо-счёт можно скрыть, но нельзя удалить")
         accounts.remove(acc["name"], uid)
     else:
         if set(data) - {"name", "enabled", "notify", "base"}:
             raise ValueError("unknown field")
         if "name" in data:
-            if acc.get("demo"):
-                raise web.HTTPForbidden(text="Демо-счёт доступен только для наблюдения")
             bounded_text(data, "name", 48, True)
         changes = {}
         if "enabled" in data:
@@ -892,7 +857,7 @@ def _change_account(uid, login, method, data, db=None):
                 raise ValueError("notify")
             changes["notify"] = {**acc["notify"], **values}
         if "base" in data:
-            if acc.get("demo") or acc.get("shared_by"):
+            if acc.get("shared_by"):
                 raise web.HTTPForbidden(text="Капитал этого счёта доступен только для чтения")
             if data["base"] is None:
                 changes.update(base=None, base_at=None)
@@ -914,7 +879,7 @@ async def people(request):
     guests = [{"id": guest, "name": name, "since": logic.when_joined(db, guest),
                "accounts": [{"login": a["login"], "name": a.get("strategy") or a["name"],
                              "shared": str(a.get("shared_by", "")) == uid and a.get("shared_origin") != "inferred"}
-                            for a in accounts.load(guest) if not a.get("demo")]}
+                            for a in accounts.load(guest)]}
               for guest, name in logic.guests_of(db, uid)]
     username = os.getenv("TELEGRAM_BOT_USERNAME", "tagmarketgold_bot")
     partner_url = logic.partner_link(db, uid)
@@ -923,7 +888,7 @@ async def people(request):
                               "shareable": [{"login": a["login"], "name": a.get("strategy") or a["name"],
                                              "cabinet": a.get("cabinet")}
                                             for a in accounts.load(uid)
-                                            if not a.get("demo") and not a.get("shared_by")]})
+                                            if not a.get("shared_by")]})
 
 
 async def cabinet_report(request):
@@ -996,7 +961,7 @@ async def guest_action(request):
         logins = list(dict.fromkeys(mt5_login(x) for x in raw))
         for login in logins:
             acc = owned(uid, login)
-            if acc.get("demo") or acc.get("shared_by"):
+            if acc.get("shared_by"):
                 raise web.HTTPForbidden(text="Делиться можно только собственными счетами")
         try:
             added = accounts.share(logins, uid, guest) if logins else []
@@ -1034,7 +999,7 @@ async def action(request):
     kind = data.get("action")
     if kind == "restart":
         acc = owned(uid, mt5_login(data.get("login")))
-        if acc.get("demo") or acc.get("shared_by"):
+        if acc.get("shared_by"):
             raise web.HTTPForbidden(text="Общий терминал недоступен для управления гостю")
         store.set_command(request.app["trades"], acc["login"], "restart_terminal")
         partner.kv_set(db, f"restart_asked:{uid}", "1")
@@ -1363,7 +1328,7 @@ async def tagmarket_forecast(request):
     if target < start or target > start + timedelta(days=3660):
         raise web.HTTPBadRequest(text="Дата прогноза должна быть в пределах 10 лет")
     db = request.app["trades"]
-    personal = [current_account_settings(a) for a in accounts.dedup(accounts.load(uid)) if not a.get("demo")]
+    personal = [current_account_settings(a) for a in accounts.dedup(accounts.load(uid))]
     states = {a["login"]: store.get_state(db, a["login"]) for a in personal}
     currencies = {(s["currency"] or "USD").upper() for s in states.values() if s}
     byn_per_unit = None

@@ -106,6 +106,8 @@ def load(owner=None) -> list[dict]:
                 log.error("accounts.json: запись %s (владелец %s) пропущена — не заполнено %s",
                           acc.get("login", "?"), acc.get("owner", "?"), ", ".join(missing))
             continue
+        if acc.get("demo"):
+            continue        # общего демо-счёта больше нет; старые копии убирает purge_demo()
         data.append(acc)
     for acc in data:
         acc.setdefault("multiplier", 1)
@@ -115,7 +117,6 @@ def load(owner=None) -> list[dict]:
         acc.setdefault("strategy", "")    # название стратегии, напр. SONIC 1
         acc.setdefault("base", None)      # мои деньги на дату base_at (из портала)
         acc.setdefault("base_at", None)
-        acc.setdefault("demo", False)     # чужой счёт для наблюдения, не в счёт капитала владельца
         acc["notify"] = {**DEFAULT_NOTIFY, **(acc.get("notify") or {})}
     if owner is None:
         return data
@@ -157,17 +158,9 @@ def dedup(accs: list[dict], by_owner: bool = True) -> list[dict]:
 
 
 def cabinets(owner) -> dict[str, dict]:
-    """Кабинеты пользователя: {customer_no: {holder, accounts:[...]}}.
-
-    Демо-счета (demo=True) сюда не попадают: через эту функцию считаются
-    деньги на дашборде и в сводках, а демо — чужой счёт для наблюдения, его
-    капитал не должен подмешиваться к капиталу владельца. У демо-счёта свой
-    отдельный вход в интерфейсе (см. bot.py: DEMO_CABINET, demo_button()).
-    """
+    """Кабинеты пользователя: {customer_no: {holder, accounts:[...]}}."""
     out: dict[str, dict] = {}
     for acc in dedup(load(owner)):
-        if acc.get("demo"):
-            continue
         key = acc.get("cabinet") or NO_CABINET
         group = out.setdefault(key, {"holder": acc.get("holder", ""), "accounts": []})
         if acc.get("holder") and not group["holder"]:
@@ -342,12 +335,18 @@ def add(acc: dict) -> None:
 
 
 @transaction
+def purge_demo() -> int:
+    """Удаляет копии общего демо-счёта у всех пользователей. Возвращает, сколько убрано."""
+    data = _read()
+    left = [a for a in data if not a.get("demo")]
+    if len(left) != len(data):
+        save(left)
+    return len(data) - len(left)
+
+
+@transaction
 def remove(name: str, owner) -> bool:
     data = _read()
-    target = next((a for a in data
-                   if a["name"] == name and str(a["owner"]) == str(owner)), None)
-    if target and target.get("demo"):
-        return False    # демо-счёт можно только скрыть (enabled), не удалить
     left = [a for a in data
             if not (a["name"] == name and str(a["owner"]) == str(owner))]
     if len(left) == len(data):
@@ -370,8 +369,6 @@ def remove_login(login, owner, shared_by=None) -> str:
                      and a.get("shared_origin") != "inferred")))
 
     target = next((a for a in data if matches(a)), None)
-    if target and target.get("demo"):
-        return ""       # демо-счёт можно только скрыть (enabled), не удалить
     left = [a for a in data if not matches(a)]
     if len(left) == len(data):
         return ""
@@ -402,15 +399,11 @@ def unshare(from_owner, to_owner) -> int:
     longer belongs to from_owner at all, so there is nothing left for it to
     be confused with; the ambiguity that protected it from bulk revoke was
     specifically about a login still live on the inviter's own side.
-
-    The shared demo account is never ambiguous either: it is public, every
-    guest holds a copy of it and it carries no private data, so an inferred
-    demo copy is revoked like any other instead of blocking the whole revoke.
     """
     data = _read()
     mine = {int(a["login"]) for a in data if str(a["owner"]) == str(from_owner)}
     def ambiguous(a):
-        return (a.get("shared_origin") == "inferred" and not a.get("demo")
+        return (a.get("shared_origin") == "inferred"
                 and int(a["login"]) in mine)
 
     left = [a for a in data if not (str(a["owner"]) == str(to_owner)
