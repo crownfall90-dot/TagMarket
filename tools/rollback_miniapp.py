@@ -34,14 +34,14 @@ FILES = (
     "ibportal.py", "miniapp.py", "partner.py", "store.py", "trades.py",
     "webhook_server.py", "requirements.txt", "README.md", "docs/MINIAPP.md",
     "docs/todo.md", "web/index.html", "web/app.js", "web/style.css",
-    "web/brand.svg", "web/preview.json", "tests/selfcheck.py",
+    "web/preview.json", "tests/selfcheck.py",
     "tests/test_miniapp.py", "tools/deploy_miniapp.py",
 )
 # Копируются, если есть в снимке, но не требуются для совместимости — старые
 # бэкапы без них всё ещё годны для отката (в отличие от FILES).
 # картинки «Частых вопросов» появились позже: снимки до них должны оставаться
 # пригодными для отката, поэтому они необязательны, как и audit.py
-OPTIONAL_FILES = ("fx.py", "projects.py", "activity.py", "lists.py", "banks.py", "insights.py", "tools/audit.py", "docs/AUDIT_HOWTO.md",
+OPTIONAL_FILES = ("web/brand.svg", "fx.py", "projects.py", "activity.py", "lists.py", "banks.py", "insights.py", "tools/audit.py", "docs/AUDIT_HOWTO.md",
                   "web/faq-neo-card.jpg", "web/faq-neo-stats.jpg", "web/faq-sonic-card.jpg",
                   "web/faq-sonic-stats.jpg", "web/faq-license.jpg", "web/faq-mt5.jpg", "web/faq-neo-myfxbook.jpg")
 # Раскладка до переноса тестов и документов в tests/ и docs/: старые копии остаются пригодными.
