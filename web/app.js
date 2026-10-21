@@ -85,6 +85,7 @@ function composerValidate(values){
 function broadcastPreview(text){return esc(text).replace(/&lt;(\/?)(b|i|code|blockquote)&gt;/g,'<$1$2>');}
 function fileSize(bytes){return `${number(bytes/1024/1024)} МБ`;}
 async function mediaKind(file){const b=new Uint8Array(await file.slice(0,12).arrayBuffer());if(b[0]===255&&b[1]===216&&b[2]===255)return 'photo';if([137,80,78,71,13,10,26,10].every((v,i)=>b[i]===v))return 'photo';if(b[4]===102&&b[5]===116&&b[6]===121&&b[7]===112)return 'video';return null;}
+paths.upload='M12 15V4 M7 9l5-5 5 5 M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4';
 paths.projects='M3 7h7l2 2h9v11H3z M3 7V4h7l2 3 M7 13h10 M7 16h6';
 paths.activity='M3 12h4l3-8 4 16 3-8h4';paths.lists='M12 21s-7-4.4-9.3-9A5.2 5.2 0 0 1 12 6.6 5.2 5.2 0 0 1 21.3 12C19 16.6 12 21 12 21z';paths.calendar='M4 6h16v14H4z M4 10h16 M8 3v5 M16 3v5';paths.note='M5 3h10l4 4v14H5z M15 3v4h4 M8 12h8 M8 16h6';paths.bank='M3 10l9-6 9 6 M5 10v8 M9.5 10v8 M14.5 10v8 M19 10v8 M3 20h18';paths.plans='M4 6h16v14H4z M4 10h16 M8 3v5 M16 3v5 M9 15l2 2 4-4';paths.circle='M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z M12 7.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9z M12 11a1 1 0 1 0 0 2 1 1 0 0 0 0-2z';
 // Platformer: разделы жизни — главная, финансы (проекты и TagMarket), активности, вишлисты, друзья.
@@ -602,7 +603,7 @@ function schemeSwatch(id,[bg,accent,second]){
  return `<svg class="swatch" viewBox="0 0 100 60" aria-hidden="true"><defs><radialGradient id="${g}-glow" cx="85%" cy="10%" r="70%"><stop offset="0" stop-color="${accent}" stop-opacity=".35"/><stop offset="1" stop-color="${accent}" stop-opacity="0"/></radialGradient><linearGradient id="${g}-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${accent}" stop-opacity=".38"/><stop offset="1" stop-color="${accent}" stop-opacity="0"/></linearGradient></defs><rect width="100" height="60" rx="9" fill="${bg}"/><rect width="100" height="60" rx="9" fill="url(#${g}-glow)"/><rect x="8" y="8" width="84" height="44" rx="7" fill="#1a1e21" stroke="#ffffff14"/><rect x="14" y="14" width="20" height="5" rx="2.5" fill="${second}"/><rect x="14" y="22" width="32" height="3" rx="1.5" fill="#ffffff2e"/><path d="M14 45 L25 39 L36 42 L48 31 L60 34 L72 23 L86 26 L86 48 L14 48Z" fill="url(#${g}-fill)"/><path d="M14 45 L25 39 L36 42 L48 31 L60 34 L72 23 L86 26" fill="none" stroke="${accent}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="86" cy="26" r="3" fill="${accent}" stroke="#1a1e21" stroke-width="1.5"/><rect x="66" y="13" width="20" height="7" rx="3.5" fill="${accent}"/></svg>`;
 }
 function schemePicker(){const cur=currentScheme();return `<div class="scheme-picker" role="radiogroup" aria-label="Цветовая гамма">${SCHEMES.map(([id,name,,sw])=>`<button type="button" role="radio" aria-checked="${cur===id}" class="scheme ${cur===id?'active':''}" data-action="scheme" data-value="${id}" style="--sw:${sw[1]}">${schemeSwatch(id,sw)}<b>${name}</b><span class="scheme-check" aria-hidden="true">${icon('check')}</span></button>`).join('')}</div>`;}
-function settingsView(){const personal=state.data.accounts;return header('Настройки')+`<div class="two-column"><section class="panel"><span class="eyebrow">ЦВЕТОВАЯ ГАММА</span>${schemePicker()}<button class="shortcut-card" type="button" data-action="shortcut"><span class="shortcut-tile">${icon('overview')}</span><span class="shortcut-copy"><b>Ярлык на экран</b><small>Открывать Platformer в один тап</small></span><span class="pill">Добавить</span></button></section><section class="panel"><div class="panel-head"><h2>Мои счета</h2><span class="badge">${personal.length}</span></div>${personal.map(a=>`<button type="button" class="settings-row settings-account-row compact-row" data-ui-key="account-${esc(a.login)}" data-action="account-settings" data-login="${esc(a.login)}"><span class="settings-account-info"><b>${esc(a.strategy||a.name)}</b><small>${esc(a.cabinet||'Без кабинета')}${a.holder?` · ${esc(a.holder)}`:''}</small></span><span class="settings-balance">${a.totals?money(a.totals.now,a.totals.cur):'—'}</span>${icon('chevron')}</button>`).join('')||'<p class="muted mt">Счетов пока нет.</p>'}</section></div><section class="panel station-settings"><span class="eyebrow">PLATFORMER</span>${[['home-settings','overview','Главная','Карточки и быстрые кнопки'],['bank-add','bank','Банки и счета','Добавить карту или счёт в общий баланс'],['bank-sync','refresh','Обновление из SMS банка','Баланс сам — по SMS, которые вы пересылаете'],['activity-settings','activity','Активности','Показатели и цели'],['activity-sync','refresh','Автосинхронизация здоровья','Шаги, вес и сон с телефона — без ручного ввода']].map(([action,ico,title,sub])=>`<button type="button" class="settings-row station-row" data-action="${action}"><span class="home-icon">${icon(ico)}</span><span class="settings-account-info"><b>${title}</b><small>${sub}</small></span>${icon('chevron')}</button>`).join('')}</section>${state.data.founder?servicePanel():`<section class="panel leave-card"><div><b>Доступ</b><small>Счета и данные будут удалены</small></div><button type="button" class="leave-btn" data-action="leave">${icon('exit')}<span>Отключить мой доступ</span></button></section>`}`;}
+function settingsView(){const personal=state.data.accounts;return header('Настройки')+`<div class="two-column"><section class="panel"><span class="eyebrow">ЦВЕТОВАЯ ГАММА</span>${schemePicker()}<button class="shortcut-card" type="button" data-action="shortcut"><span class="shortcut-tile">${icon('overview')}</span><span class="shortcut-copy"><b>Ярлык на экран</b><small>Открывать Platformer в один тап</small></span><span class="pill">Добавить</span></button></section><section class="panel"><div class="panel-head"><h2>Мои счета</h2><span class="badge">${personal.length}</span></div>${personal.map(a=>`<button type="button" class="settings-row settings-account-row compact-row" data-ui-key="account-${esc(a.login)}" data-action="account-settings" data-login="${esc(a.login)}"><span class="settings-account-info"><b>${esc(a.strategy||a.name)}</b><small>${esc(a.cabinet||'Без кабинета')}${a.holder?` · ${esc(a.holder)}`:''}</small></span><span class="settings-balance">${a.totals?money(a.totals.now,a.totals.cur):'—'}</span>${icon('chevron')}</button>`).join('')||'<p class="muted mt">Счетов пока нет.</p>'}</section></div><section class="panel station-settings"><span class="eyebrow">PLATFORMER</span>${[['home-settings','overview','Главная','Какие карточки и в каком порядке'],['bank-add','bank','Банки и счета','Добавить карту или счёт в общий баланс'],['bank-sync','refresh','Обновление из SMS банка','Баланс сам — по SMS, которые вы пересылаете'],['activity-settings','activity','Активности','Показатели и цели']].map(([action,ico,title,sub])=>`<button type="button" class="settings-row station-row" data-action="${action}"><span class="home-icon">${icon(ico)}</span><span class="settings-account-info"><b>${title}</b><small>${sub}</small></span>${icon('chevron')}</button>`).join('')}</section>${state.data.founder?servicePanel():`<section class="panel leave-card"><div><b>Доступ</b><small>Счета и данные будут удалены</small></div><button type="button" class="leave-btn" data-action="leave">${icon('exit')}<span>Отключить мой доступ</span></button></section>`}`;}
 // отпечаток всего, из чего строится экран; server_time меняется на каждом
 // запросе и на вид не влияет — без него одинаковые данные дают одинаковый ключ
 let paintedKey='';
@@ -1056,14 +1057,14 @@ function projectView(){
 // Показатели здоровья приходят с телефона сами (см. activity.py: автосинхронизация),
 // вручную можно добавить или поправить что угодно. Что показывать — настройки пользователя
 // на сервере (state.data.station), одинаковые на всех устройствах.
-const ACT_KINDS={steps:['Шаги','шагов','activity'],weight:['Вес','кг','chart'],workout:['Тренировки','мин','up'],sleep:['Сон','ч','clock'],water:['Вода','л','refresh'],pulse:['Пульс покоя','уд/мин','bell']};
+// Шаги, сон и пульс убраны: их должен присылать телефон, а вводить руками — не дело.
+const ACT_KINDS={weight:['Вес','кг','chart'],workout:['Тренировки','мин','up']};
 const ACT_DAYS=[[7,'7 дней'],[30,'30 дней'],[90,'90 дней']];
 const NOTE_COLORS=[['accent','Акцент'],['green','Зелёный'],['purple','Сиреневый'],['orange','Оранжевый'],['pink','Розовый'],['blue','Синий']];
 const REPEATS=[['none','Не повторять'],['weekly','Каждую неделю'],['monthly','Каждый месяц'],['yearly','Каждый год']];
 const MONTH_NAMES=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
 const HOME_CARDS={circle:'Круг жизни',finance:'Финансы',activity:'Активности',tasks:'Дела на сегодня',events:'Ближайшие события',wish:'Вишлисты и заметки'};
-const QUICK={task:['Задача','plans','task-add',''],steps:['Шаги','activity','activity-add','data-kind="steps"'],weight:['Вес','chart','activity-add','data-kind="weight"'],workout:['Тренировка','up','activity-add','data-kind="workout"'],sleep:['Сон','clock','activity-add','data-kind="sleep"'],water:['Вода','refresh','activity-add','data-kind="water"'],event:['Событие','calendar','event-add',''],note:['Заметка','note','note-add',''],wish:['Желание','lists','wish-item-add','']};
-const STATION_DEFAULTS={home:Object.keys(HOME_CARDS),quick:['task','steps','weight','workout','event','note','wish'],metrics:Object.keys(ACT_KINDS)};
+const STATION_DEFAULTS={home:Object.keys(HOME_CARDS),metrics:Object.keys(ACT_KINDS)};
 state.activity=null;state.activityError='';state.activityDays=30;
 state.lists=null;state.listsError='';state.events=null;state.listsTab='tasks';state.circle=null;
 state.calMonth=projectToday().slice(0,7);state.calDay=projectToday();
@@ -1079,9 +1080,9 @@ function shortDay(day){const today=projectToday();if(day===today)return 'Сег�
 function actValue(kind,value){if(value==null)return '—';const unit=ACT_KINDS[kind]?.[1]||'';return `${number(kind==='steps'?Math.round(value):value)} ${unit}`;}
 function sectionError(text,retry){return `<section class="panel">${empty('Не удалось загрузить',text,button(retry,'Попробовать снова','secondary','refresh'))}</section>`;}
 function agoText(iso){if(!iso)return '';const min=Math.max(0,Math.round((Date.now()-Date.parse(iso))/60000));if(min<1)return 'только что';if(min<60)return `${min} мин назад`;const h=Math.round(min/60);if(h<24)return `${h} ч назад`;return `${shortDay(new Date(Date.parse(iso)+3*36e5).toISOString().slice(0,10)).toLowerCase()}`;}
+function mskMinutes(){const t=new Intl.DateTimeFormat('ru-RU',{hour:'2-digit',minute:'2-digit',hour12:false,timeZone:'Europe/Moscow'}).format(new Date()).split(':');return Number(t[0])*60+Number(t[1]);}
 function mskHour(){return Number(new Intl.DateTimeFormat('ru-RU',{hour:'numeric',hour12:false,timeZone:'Europe/Moscow'}).format(new Date()));}
 // Серия дней подряд с выполненной целью: сегодня ещё не закончился и серию не рвёт
-function stepStreak(series,goal){if(!goal)return 0;const by=new Map(series.map(p=>[p.day,p.value]));let day=projectToday(),n=0;if(!((by.get(day)||0)>=goal))day=addDaysIso(day,-1);while((by.get(day)||0)>=goal){n++;day=addDaysIso(day,-1);}return n;}
 
 // Числа «набегают» при входе в раздел; при «уменьшить движение» — сразу итог
 function countUp(value,format){return `<span class="count-up" data-to="${Number(value)||0}" data-format="${esc(format)}">${esc(formatCount(value,format))}</span>`;}
@@ -1111,74 +1112,72 @@ function dayIcon(hour){
  return `<svg class="sky moon" viewBox="0 0 48 48" aria-hidden="true"><path d="M30 8a16 16 0 1 0 10 28A13 13 0 0 1 30 8z"/><circle class="star s1" cx="10" cy="12" r="1.4"/><circle class="star s2" cx="40" cy="10" r="1.1"/><circle class="star s3" cx="16" cy="40" r="1"/></svg>`;
 }
 function overview(){
- const d=state.data,p=stationPrefs(),name=(d.user?.name||'').split(' ')[0],portfolio=portfolioTotals(),act=state.activity?.summary,goals=state.activity?.goals||{},lists=state.lists,hour=mskHour();
+ const d=state.data,p=stationPrefs(),name=(d.user?.name||'').split(' ')[0],portfolio=portfolioTotals(),act=state.activity?.summary,lists=state.lists,hour=mskHour();
  const greeting=hour<5?'Доброй ночи':hour<12?'Доброе утро':hour<18?'Добрый день':'Добрый вечер';
  const today=new Intl.DateTimeFormat('ru-RU',{weekday:'long',day:'numeric',month:'long',timeZone:'Europe/Moscow'}).format(new Date());
- const todayEvents=(lists?.upcoming||[]).filter(e=>e.date===projectToday()),steps=act?.steps?.today||0,goal=goals.steps||10000;
+ const todayEvents=(lists?.upcoming||[]).filter(e=>e.date===projectToday());
  const hints=[];
  if(todayEvents.length)hints.push(`сегодня ${countLabel(todayEvents.length,['событие','события','событий'])}`);
- if(act&&p.metrics.includes('steps'))hints.push(steps>=goal?'цель по шагам выполнена 🎉':`до цели ${number(goal-steps)} шагов`);
  const sub=hints.length?hints.join(' · ').replace(/^./,c=>c.toUpperCase()):'Хорошего дня!';
+ const openTasks=(lists?.tasks||[]).filter(t=>!t.done),today3=projectToday();
+ const dueToday=openTasks.filter(t=>t.due&&t.due<=today3).length;
+ const minutes=mskMinutes(),dayPct=Math.round(minutes/14.4)/100;
  const stats=[];
- if(p.metrics.includes('steps'))stats.push(`<a href="#activity" class="greet-stat greet-ring">${ring(steps,goal,64,'Шаги')}<span><b>${act?countUp(steps,'int'):'—'}</b><small>шагов</small></span></a>`);
- if(p.home.includes('finance'))stats.push(`<a href="#projects" class="greet-stat"><span><b>${portfolio.own==null?'—':countUp(portfolio.own,`money:${state.displayCurrency}`)}</b><small>все активы</small></span></a>`);
- stats.push(`<a href="#plans/calendar" class="greet-stat" data-action="lists-open" data-value="calendar"><span><b>${todayEvents.length}</b><small>${countLabel(todayEvents.length,['событие','события','событий']).split(' ').slice(1).join(' ')} сегодня</small></span></a>`);
- const hero=`<section class="greet" data-ui-key="greet"><div class="greet-aurora" aria-hidden="true"><i></i><i></i><i></i></div><div class="greet-top"><span class="greet-sky">${dayIcon(hour)}</span><span class="greet-date">${esc(today.charAt(0).toUpperCase()+today.slice(1))}</span><button type="button" class="icon-btn small greet-settings" data-action="home-settings" aria-label="Настроить главную" title="Настроить главную">${icon('settings')}</button></div><h1 class="greet-title">${greeting}${name?`,<br><em>${esc(name)}</em>`:''}</h1><p class="greet-sub">${esc(sub)}</p><div class="greet-stats">${stats.join('')}</div></section>`;
- const quick=p.quick.filter(id=>QUICK[id]).map(id=>{const [label,ico,action,attrs]=QUICK[id];return `<button type="button" class="home-chip" data-action="${action}" ${attrs}>${icon(ico)}<span>${label}</span></button>`;}).join('');
+ if(p.home.includes('finance'))stats.push(`<a href="#projects" class="greet-stat"><span class="greet-stat-icon">${icon('projects')}</span><span><b>${portfolio.own==null?'—':countUp(portfolio.own,`money:${state.displayCurrency}`)}</b><small>все активы</small></span></a>`);
+ stats.push(`<a href="#plans/tasks" class="greet-stat" data-action="lists-open" data-value="tasks"><span class="greet-stat-icon">${icon('plans')}</span><span><b>${countUp(dueToday,'int')}</b><small>${dueToday?`${countLabel(dueToday,['дело','дела','дел']).split(' ').slice(1).join(' ')} на сегодня`:'дел на сегодня'}</small></span></a>`);
+ stats.push(`<a href="#plans/calendar" class="greet-stat" data-action="lists-open" data-value="calendar"><span class="greet-stat-icon">${icon('calendar')}</span><span><b>${countUp(todayEvents.length,'int')}</b><small>${countLabel(todayEvents.length,['событие','события','событий']).split(' ').slice(1).join(' ')} сегодня</small></span></a>`);
+ const hero=`<section class="greet" data-ui-key="greet"><div class="greet-aurora" aria-hidden="true"><i></i><i></i><i></i></div><span class="greet-sheen" aria-hidden="true"></span><div class="greet-top"><span class="greet-sky">${dayIcon(hour)}</span><span class="greet-date">${esc(today.charAt(0).toUpperCase()+today.slice(1))}</span><button type="button" class="icon-btn small greet-settings" data-action="home-settings" aria-label="Настроить главную" title="Настроить главную">${icon('settings')}</button></div><h1 class="greet-title">${greeting}${name?`,<br><em>${esc(name)}</em>`:''}</h1><p class="greet-sub">${esc(sub)}</p><div class="greet-day" aria-hidden="true" title="Сколько дня прошло"><i style="--p:${dayPct}"></i></div><div class="greet-stats">${stats.join('')}</div></section>`;
  const cards={
   circle:()=>circleCard(),
   tasks:()=>tasksCard(),
   finance:()=>`<a href="#projects" class="panel home-card home-finance" data-ui-key="home-finance"><div class="home-card-head"><span class="home-icon">${icon('projects')}</span><span class="eyebrow">Финансы</span>${icon('arrow')}</div><b class="home-big">${portfolio.own==null?'—':countUp(portfolio.own,`money:${state.displayCurrency}`)}</b><small>${state.projects?countLabel(activeProjects().length,['проект','проекта','проектов']):'Проекты'}${d.accounts.length?` · TagMarket ${portfolio.tag==null?'—':money(portfolio.tag,state.displayCurrency)}`:''}</small>${projectsIncomeLine()}</a>`,
-  activity:()=>{const s=act?.steps,w=act?.weight,wo=act?.workout,streak=s?stepStreak(s.series,goal):0;return `<a href="#activity" class="panel home-card home-activity" data-ui-key="home-activity"><div class="home-card-head"><span class="home-icon">${icon('activity')}</span><span class="eyebrow">Активности</span>${syncDot()}${icon('arrow')}</div>${act?`<div class="home-activity-body">${ring(s?.today,goal,74,'Шаги')}<div><b class="home-big">${number(s?.today||0)}</b><small>из ${number(goal)} шагов${streak>1?` · <span class="streak">🔥 ${streak} ${countLabel(streak,['день','дня','дней']).split(' ')[1]}</span>`:''}</small><small>${[w?.last!=null?`вес ${actValue('weight',w.last)}`:'',wo?.week_count?`${countLabel(wo.week_count,['тренировка','тренировки','тренировок'])} за неделю`:''].filter(Boolean).join(' · ')}</small></div></div>`:state.activityError?'<small>Не удалось загрузить</small>':skeleton('list',1)}</a>`;},
+  activity:()=>{const w=act?.weight,wo=act?.workout,mins=wo?.week_minutes||0,count=wo?.week_count||0;return `<a href="#activity" class="panel home-card home-activity" data-ui-key="home-activity"><div class="home-card-head"><span class="home-icon">${icon('activity')}</span><span class="eyebrow">Активности</span>${icon('arrow')}</div>${act?`<div class="home-activity-body"><div><b class="home-big">${countUp(count,'int')} <small>${countLabel(count,['тренировка','тренировки','тренировок']).split(' ').slice(1).join(' ')} за неделю</small></b><small>${mins?`${number(mins)} мин движения`:'На этой неделе пока без тренировок'}</small><small>${w?.last!=null?`вес ${actValue('weight',w.last)}${w.last_day?` · ${esc(shortDay(w.last_day))}`:''}`:'Вес ещё не записан'}</small></div><div class="act-dots" aria-hidden="true">${weekDots(wo?.series)}</div></div>`:state.activityError?'<small>Не удалось загрузить</small>':skeleton('list',1)}</a>`;},
   events:()=>{const upcoming=lists?.upcoming||[];return `<section class="panel home-card home-events" data-ui-key="home-events"><div class="home-card-head"><span class="home-icon">${icon('calendar')}</span><span class="eyebrow">Ближайшее</span><button type="button" class="icon-btn small" data-action="event-add" aria-label="Добавить событие">${icon('plus')}</button></div>${upcoming.length?`<ul class="home-events-list">${upcoming.map(e=>`<li><button type="button" data-action="lists-open" data-value="calendar" data-day="${esc(e.date)}"><span class="ev-dot c-${esc(e.color)}"></span><b>${esc(e.title)}</b><small>${esc(shortDay(e.date))}${e.time?` · ${esc(e.time)}`:''}</small></button></li>`).join('')}</ul>`:'<p class="muted home-empty">На ближайшие две недели ничего не запланировано.</p>'}</section>`;},
   wish:()=>{const wishes=lists?.wishlists||[],open=wishes.reduce((n,l)=>n+l.open,0),pinned=(lists?.notes||[]).filter(n=>n.pinned).slice(0,2);return `<a href="#plans/wish" class="panel home-card home-wish" data-ui-key="home-wish" data-action="lists-open" data-value="wish"><div class="home-card-head"><span class="home-icon">${icon('lists')}</span><span class="eyebrow">Вишлисты</span>${icon('arrow')}</div><b class="home-big">${open} <small>${countLabel(open,['желание','желания','желаний']).split(' ').slice(1).join(' ')}</small></b><small>${wishes.length?countLabel(wishes.length,['список','списка','списков']):'Списков пока нет'}${(lists?.notes||[]).length?` · ${countLabel(lists.notes.length,['заметка','заметки','заметок'])}`:''}</small>${pinned.length?`<span class="home-notes">${pinned.map(n=>`<i class="c-${esc(n.color)}">${esc(n.title||n.body.slice(0,60))}</i>`).join('')}</span>`:''}</a>`;}};
  const grid=p.home.filter(id=>cards[id]).map(id=>cards[id]()).join('');
- return `<div class="home">${hero}${quick?`<div class="home-quick" role="group" aria-label="Быстро добавить">${quick}</div>`:''}${grid?`<div class="home-grid">${grid}</div>`:''}</div>`;
+ return `<div class="home">${hero}${grid?`<div class="home-grid">${grid}</div>`:''}</div>`;
 }
 function projectsIncomeLine(){const cur=state.displayCurrency;let daily=0,known=false;for(const p of activeProjects()){const inc=projectDailyIncome(p),v=inc==null||p.calculation_limited?null:displayAmount(inc,p.currency);if(v!=null){daily+=v;known=true;}}return known&&daily?`<small class="positive">≈ ${money(daily,cur,true)} в день по проектам</small>`:'';}
+function weekDots(series){
+ const by=new Map((series||[]).map(p=>[p.day,p.value])),end=projectToday();
+ return Array.from({length:7},(_,k)=>{const day=addDaysIso(end,k-6),v=by.get(day)||0;return `<i class="${v?'on':''}" style="--k:${k}" title="${esc(shortDay(day))}${v?`: ${number(v)} мин`:''}"></i>`;}).join('');
+}
 function syncDot(){const s=state.activity?.sync;if(!s?.connected)return '';const fresh=s.last_sync&&Date.now()-Date.parse(s.last_sync)<36*36e5;return `<span class="sync-dot${fresh?' on':''}" title="${fresh?`Синхронизировано ${esc(agoText(s.last_sync))}`:'Ждём синхронизацию с телефона'}"></span>`;}
 async function homeSettings(){
  const p=stationPrefs();
  const rows=(ids,all,group)=>[...ids,...Object.keys(all).filter(id=>!ids.includes(id))].map(id=>`<div class="pref-row" data-pref-row data-group="${group}" data-id="${id}"><label class="check"><input type="checkbox" name="${group}-${id}" ${ids.includes(id)?'checked':''}>${esc(Array.isArray(all[id])?all[id][0]:all[id])}</label><span class="pref-move"><button type="button" class="icon-btn small" data-move="-1" aria-label="Выше">↑</button><button type="button" class="icon-btn small" data-move="1" aria-label="Ниже">↓</button></span></div>`).join('');
- const values=await dialog('Главная',`<p class="pref-hint">Что показывать и в каком порядке.</p><span class="eyebrow">Карточки</span><div class="pref-list">${rows(p.home,HOME_CARDS,'home')}</div><span class="eyebrow">Быстрые кнопки</span><div class="pref-list">${rows(p.quick,QUICK,'quick')}</div>`);
+ const values=await dialog('Главная',`<p class="pref-hint">Что показывать и в каком порядке.</p><span class="eyebrow">Карточки</span><div class="pref-list">${rows(p.home,HOME_CARDS,'home')}</div>`);
  if(!values)return;
  const order=group=>[...$('#dialog-body').querySelectorAll(`[data-pref-row][data-group="${group}"]`)].map(r=>r.dataset.id).filter(id=>values[`${group}-${id}`]==='on');
- await saveStationPrefs({home:order('home'),quick:order('quick')});
+ await saveStationPrefs({home:order('home')});
 }
 document.addEventListener('click',event=>{const btn=event.target.closest?.('#dialog [data-move]');if(!btn)return;event.preventDefault();const row=btn.closest('[data-pref-row]'),dir=Number(btn.dataset.move),sibling=dir<0?row.previousElementSibling:row.nextElementSibling;if(!sibling)return;if(dir<0)sibling.before(row);else sibling.after(row);$('#dialog').dataset.dirty='1';if(!reducedMotion())row.animate([{transform:`translateY(${dir*-12}px)`,opacity:.6},{transform:'none',opacity:1}],{duration:220,easing:'cubic-bezier(.16,1,.3,1)'});});
 
 // ── Активности ──
 function activityView(){
- const p=stationPrefs(),sync=state.activity?.sync;
- const syncLine=!state.activity?'Шаги, вес, сон и тренировки':sync?.connected?(sync.last_sync?`Синхронизировано с телефоном ${agoText(sync.last_sync)}`:'Ждём первую синхронизацию с телефона'):'Шаги, вес, сон и тренировки';
- const head=header('Активности',syncLine,`<div class="head-actions">${button('activity-settings','','secondary icon-only','settings','aria-label="Настроить активности" title="Настроить"')}${button('activity-add','Записать','primary','plus')}</div>`);
+ const p=stationPrefs();
+ const head=header('Активности','Тренировки и вес — то, что вы отмечаете сами',`<div class="head-actions">${button('activity-settings','','secondary icon-only','settings','aria-label="Настроить активности" title="Настроить"')}${button('activity-add','Записать','primary','plus')}</div>`);
  if(!state.activity)return head+(state.activityError?sectionError(state.activityError,'activity-reload'):skeleton('chart'));
- const a=state.activity,s=a.summary,g=a.goals,days=a.days,streak=stepStreak(s.steps.series,g.steps);
- const banner=sync?.connected?'':`<section class="panel sync-banner" data-ui-key="sync-banner"><span class="sync-banner-icon">${icon('refresh')}</span><div><b>Шаги с телефона — сами</b><p>Подключите один раз: «Команды» на iPhone или автоматизатор на Android будут присылать шаги, вес и сон без вашего участия.</p></div>${button('activity-sync','Подключить','primary small','arrow')}</section>`;
+ const a=state.activity,s=a.summary,g=a.goals,days=a.days;
  const tabs=`<div class="segmented act-days">${ACT_DAYS.map(([n,label])=>`<button type="button" data-action="activity-days" data-value="${n}" class="${state.activityDays===n?'active':''}">${label}</button>`).join('')}</div>`;
  const card=(kind,main,sub,extra='',cls='')=>`<button type="button" class="panel act-card ${cls}" data-action="activity-add" data-kind="${kind}" data-ui-key="act-${kind}"><span class="act-card-head"><span class="home-icon">${icon(ACT_KINDS[kind][2])}</span><span class="eyebrow">${ACT_KINDS[kind][0]}</span>${icon('plus','act-plus')}</span>${extra}<b class="act-main">${main}</b><small>${sub}</small></button>`;
  const weightChange=(()=>{const ser=s.weight.series;if(ser.length<2)return '';const diff=Math.round((ser.at(-1).value-ser[0].value)*10)/10;return `${diff>0?'+':''}${number(diff)} кг за период`;})();
- const auto=kind=>a.entries.find(e=>e.kind===kind&&e.day===projectToday())?.source==='auto'?'<i class="auto-tag">авто</i>':'';
+ const week=s.workout.week_count||0;
  const cards={
-  steps:()=>card('steps',`${countUp(s.steps.today||0,'int')}${auto('steps')}`,`из ${number(g.steps||10000)}${streak>1?` · 🔥 ${streak} ${countLabel(streak,['день','дня','дней']).split(' ')[1]} подряд`:` · в среднем ${s.steps.week_avg!=null?number(Math.round(s.steps.week_avg)):'—'}`}`,`<span class="act-ring">${ring(s.steps.today,g.steps,58,'Шаги')}</span>`,'with-ring'),
-  weight:()=>card('weight',`${actValue('weight',s.weight.last)}${auto('weight')}`,s.weight.last_day?`${weightChange||shortDay(s.weight.last_day)}${g.weight?` · цель ${number(g.weight)} кг`:''}`:'Запишите вес — появится динамика'),
-  workout:()=>card('workout',`${s.workout.week_count||0} <small>за неделю</small>`,s.workout.week_minutes?`${number(s.workout.week_minutes)} мин за 7 дней`:'Пока без тренировок'),
-  sleep:()=>card('sleep',`${actValue('sleep',s.sleep.today??s.sleep.last)}${auto('sleep')}`,s.sleep.week_avg!=null?`в среднем ${number(Math.round(s.sleep.week_avg*10)/10)} ч · цель ${number(g.sleep||8)} ч`:`цель ${number(g.sleep||8)} ч`,`<span class="act-progress-wrap">${actProgress(s.sleep.today??0,g.sleep)}</span>`),
-  water:()=>card('water',actValue('water',s.water.today),`цель ${number(g.water||2)} л`,`<span class="act-progress-wrap">${actProgress(s.water.today,g.water)}</span>`),
-  pulse:()=>card('pulse',`${actValue('pulse',s.pulse.last)}${auto('pulse')}`,s.pulse.last_day?shortDay(s.pulse.last_day):'Утром, в покое')};
+  workout:()=>card('workout',`${countUp(week,'int')} <small>за неделю</small>`,s.workout.week_minutes?`${number(s.workout.week_minutes)} мин за 7 дней`:'Пока без тренировок',`<span class="act-week" aria-hidden="true">${weekDots(s.workout.series)}</span>`,'with-week'),
+  weight:()=>card('weight',actValue('weight',s.weight.last),s.weight.last_day?`${weightChange||shortDay(s.weight.last_day)}${g.weight?` · цель ${number(g.weight)} кг`:''}`:'Запишите вес — появится динамика',s.weight.series.length>1?`<span class="act-spark" aria-hidden="true">${actLine(s.weight.series)}</span>`:'','with-spark')};
  const shown=p.metrics.filter(k=>cards[k]);
- const charts=(p.metrics.includes('steps')?`<section class="panel act-chart" data-ui-key="act-chart-steps"><div class="panel-head"><div><h2>Шаги</h2><small class="muted">${s.steps.week_avg!=null?`в среднем ${number(Math.round(s.steps.week_avg))} за неделю`:''}</small></div>${tabs}</div>${actBars(s.steps.series,{goal:g.steps,days,kind:'steps'})}</section>`:'')
-  +(p.metrics.includes('workout')&&s.workout.series.length?`<section class="panel act-chart" data-ui-key="act-chart-workout"><div class="panel-head"><h2>Тренировки, мин</h2>${p.metrics.includes('steps')?'':tabs}</div>${actBars(s.workout.series,{days,kind:'workout'})}</section>`:'')
+ const charts=(p.metrics.includes('workout')&&s.workout.series.length?`<section class="panel act-chart" data-ui-key="act-chart-workout"><div class="panel-head"><div><h2>Тренировки, мин</h2><small class="muted">${s.workout.week_minutes?`${number(s.workout.week_minutes)} мин за последние 7 дней`:''}</small></div>${tabs}</div>${actBars(s.workout.series,{days,kind:'workout'})}</section>`:'')
   +(p.metrics.includes('weight')&&s.weight.series.length>1?`<section class="panel act-chart" data-ui-key="act-chart-weight"><div class="panel-head"><h2>Вес</h2><span class="badge">${actValue('weight',Math.min(...s.weight.series.map(p=>p.value)))} – ${actValue('weight',Math.max(...s.weight.series.map(p=>p.value)))}</span></div>${actLine(s.weight.series)}</section>`:'');
  const byDay={};for(const e of a.entries)if(p.metrics.includes(e.kind))(byDay[e.day]=byDay[e.day]||[]).push(e);
- const history=Object.keys(byDay).length?Object.entries(byDay).slice(0,7).map(([day,list])=>`<div class="act-day"><span class="eyebrow">${esc(shortDay(day))}</span>${list.map(e=>`<div class="act-entry"><button type="button" class="act-entry-main" data-action="activity-edit" data-id="${esc(e.id)}"><span class="home-icon">${icon(ACT_KINDS[e.kind]?.[2]||'chart')}</span><span><b>${esc(e.kind==='workout'?e.title:e.label)}${e.source==='auto'?'<i class="auto-tag">авто</i>':''}</b>${e.note?`<small>${esc(e.note)}</small>`:''}</span><b class="act-entry-value">${e.kind==='workout'?`${number(e.minutes)} мин${e.value?` · ${number(e.value)} ккал`:''}`:esc(actValue(e.kind,e.value))}</b></button><button type="button" class="icon-btn small" data-action="activity-delete" data-id="${esc(e.id)}" aria-label="Удалить запись">×</button></div>`).join('')}</div>`).join(''):'<p class="muted">Записей за этот период нет. Нажмите «Записать» или на карточку показателя.</p>';
- return head+banner+(shown.length?`<div class="act-grid">${shown.map(k=>cards[k]()).join('')}</div>`:'')+charts+`<section class="panel act-history"><div class="panel-head"><h2>Записи</h2>${button('activity-sync',sync?.connected?'Синхронизация':'Автосинхронизация','ghost small','refresh')}</div>${history}</section>`;
+ const history=Object.keys(byDay).length?Object.entries(byDay).slice(0,7).map(([day,list])=>`<div class="act-day"><span class="eyebrow">${esc(shortDay(day))}</span>${list.map(e=>`<div class="act-entry"><button type="button" class="act-entry-main" data-action="activity-edit" data-id="${esc(e.id)}"><span class="home-icon">${icon(ACT_KINDS[e.kind]?.[2]||'chart')}</span><span><b>${esc(e.kind==='workout'?e.title:e.label)}</b>${e.note?`<small>${esc(e.note)}</small>`:''}</span><b class="act-entry-value">${e.kind==='workout'?`${number(e.minutes)} мин${e.value?` · ${number(e.value)} ккал`:''}`:esc(actValue(e.kind,e.value))}</b></button><button type="button" class="icon-btn small" data-action="activity-delete" data-id="${esc(e.id)}" aria-label="Удалить запись">×</button></div>`).join('')}</div>`).join(''):'<p class="muted">Записей за этот период нет. Нажмите «Записать» или на карточку показателя.</p>';
+ return head+(shown.length?`<div class="act-grid">${shown.map(k=>cards[k]()).join('')}</div>`:'')+charts+`<section class="panel act-history"><div class="panel-head"><h2>Записи</h2>${button('activity-add','Записать','ghost small','plus')}</div>${history}</section>`;
 }
 function actProgress(value,goal){const pct=goal?Math.min(100,Math.round((value||0)/goal*100)):0;return `<span class="act-progress${pct>=100?' done':''}" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><i style="--w:${pct}%"></i></span>`;}
-async function activityEditor(kind='steps',entry=null){
+async function activityEditor(kind='weight',entry=null){
  let draft=entry?{kind:entry.kind,day:entry.day,value:entry.kind==='workout'?(entry.value??''):entry.value,minutes:entry.minutes??'',title:entry.title||'',note:entry.note||''}:{kind,day:projectToday(),value:'',minutes:'',title:'',note:''},error='';
  while(true){
-  const k=draft.kind,daily=k!=='workout',unit=ACT_KINDS[daily?k:'steps'][1];
+  const k=draft.kind,daily=k!=='workout',unit=ACT_KINDS[k]?.[1]||'';
   const body=`${error?notice(error,true):''}${entry?`<p class="pref-hint">${esc(ACT_KINDS[k][0])}${entry.source==='auto'?' · пришло с телефона, правка сохранится как ручная':''}</p>`:`<label class="field">Что записать<select name="kind" data-act-kind>${Object.entries(ACT_KINDS).map(([id,[label]])=>`<option value="${id}" ${id===k?'selected':''}>${id==='workout'?'Тренировка':label}</option>`).join('')}</select></label>`}${field('Дата','day','date',draft.day,`max="${projectToday()}" required`)}<div class="act-fields-daily" ${daily?'':'hidden'}>${field(`Значение, ${unit}`,'value','number',daily?draft.value:'','step="any" min="0" inputmode="decimal"')}<p class="project-form-note">Новое значение за тот же день заменит прежнее.</p></div><div class="act-fields-workout" ${daily?'hidden':''}>${field('Тренировка','title','text',draft.title,'maxlength="64" placeholder="Бег, зал, йога…"')}<div class="field-row">${field('Минут','minutes','number',draft.minutes,'min="1" max="1440" step="1" inputmode="numeric"')}${field('Калории','calories','number',daily?'':draft.value,'min="0" step="1" inputmode="numeric" placeholder="необязательно"')}</div></div>${field('Заметка (необязательно)','note','text',draft.note,'maxlength="500"')}`;
   const values=await dialog(entry?'Исправить запись':'Записать активность',body,'Сохранить');if(!values)return;
   const kindNow=entry?entry.kind:values.kind;
@@ -1195,27 +1194,26 @@ async function activitySettings(){
  await ensureActivity();
  const p=stationPrefs(),g=state.activity?.goals||{};
  const rows=[...p.metrics,...Object.keys(ACT_KINDS).filter(k=>!p.metrics.includes(k))].map(id=>`<div class="pref-row" data-pref-row data-group="metrics" data-id="${id}"><label class="check"><input type="checkbox" name="metrics-${id}" ${p.metrics.includes(id)?'checked':''}>${esc(ACT_KINDS[id][0])}</label><span class="pref-move"><button type="button" class="icon-btn small" data-move="-1" aria-label="Выше">↑</button><button type="button" class="icon-btn small" data-move="1" aria-label="Ниже">↓</button></span></div>`).join('');
- const values=await dialog('Активности',`<span class="eyebrow">Показатели</span><div class="pref-list">${rows}</div><span class="eyebrow">Цели</span><div class="field-row">${field('Шагов в день','steps','number',g.steps??'','min="1" step="1" inputmode="numeric"')}${field('Сон, ч','sleep','number',g.sleep??'','min="0.1" max="24" step="0.1" inputmode="decimal"')}</div><div class="field-row">${field('Вода, л','water','number',g.water??'','min="0.1" max="20" step="0.1" inputmode="decimal"')}${field('Желаемый вес, кг','weight','number',g.weight??'','min="1" max="500" step="0.1" inputmode="decimal" placeholder="необязательно"')}</div><button type="button" class="settings-row sync-row" data-action="activity-sync">${icon('refresh')}<span><b>Автосинхронизация с телефона</b><small>${state.activity?.sync?.connected?'Подключена':'Шаги, вес и сон — без ручного ввода'}</small></span>${icon('chevron')}</button>`);
+ const values=await dialog('Активности',`<span class="eyebrow">Показатели</span><div class="pref-list">${rows}</div><span class="eyebrow">Цель</span>${field('Желаемый вес, кг','weight','number',g.weight??'','min="1" max="500" step="0.1" inputmode="decimal" placeholder="необязательно"')}`);
  if(!values)return;
  const metrics=[...$('#dialog-body').querySelectorAll('[data-pref-row]')].map(r=>r.dataset.id).filter(id=>values[`metrics-${id}`]==='on');
- const goals=Object.fromEntries(['steps','sleep','water','weight'].map(k=>[k,values[k]===''?null:Number(values[k])]));
+ const goals={...state.activity?.goals,weight:values.weight===''?null:Number(values.weight)};
  if(!preview)await api('/activity/goals',{method:'PUT',body:JSON.stringify(goals)});
  await saveStationPrefs({metrics});await sectionReload();
 }
 // Автосинхронизация: ключ показывается один раз, в базе только его хэш
 let syncKeyShown=null;
-function syncGuide(link,mode='health'){
- const bank=mode==='bank',sample=bank?`{"text": "Карта *1234: Покупка 25,40 BYN, остаток 1 340,10 BYN"}`:`{"steps": 8123, "weight": 72.4, "sleep": 7.5}`;
- const ios=bank?`<li>Откройте <b>Команды</b> → <b>Автоматизация</b> → <b>+</b> → <b>Сообщение</b>. В «Сообщение содержит» укажите слово из SMS банка, например <b>остаток</b> или название банка, и выберите «Запускать сразу».</li><li>Добавьте действие <b>«Получить содержимое URL»</b>: ссылка ниже, метод <b>POST</b>, тело — JSON, поле <code>text</code> = <b>«Содержимое сообщения»</b>.</li><li>Готово: каждое SMS от банка обновит баланс. Сообщения, которые Platformer не понял, будут ждать вас в «Банках и счетах».</li><li>Пуши из приложения банка iPhone автоматизациям не отдаёт — работают только SMS. Включите SMS-уведомления в банке.</li>`:`<li>Откройте <b>Команды</b> → <b>Автоматизация</b> → <b>+</b> → <b>Время суток</b>. Например, 21:00, ежедневно, «Запускать сразу».</li><li>Добавьте действие <b>«Найти образцы здоровья»</b>: тип — Шаги, дата начала — сегодня. Затем <b>«Вычислить статистику»</b> → Сумма.</li><li>Добавьте <b>«Получить содержимое URL»</b>: ссылка ниже, метод POST, тело — JSON, поле <code>steps</code> = результат статистики.</li><li>По желанию так же: <code>weight</code> (последний вес), <code>sleep</code> (часы сна), <code>pulse</code> (пульс покоя).</li><li>Чтобы шаги обновлялись днём, сделайте ещё 2–3 такие автоматизации на другое время.</li>`;
- const android=bank?`<li>Нужен автоматизатор с событиями <b>SMS</b> и <b>уведомлений</b> и отправкой HTTP-запроса — Tasker или MacroDroid.</li><li>Событие: «SMS получено» от отправителя-банка (или «Уведомление» от приложения банка).</li><li>Действие: <b>HTTP POST</b> на ссылку ниже, тело JSON с полем <code>text</code> — текст сообщения (в Tasker это %SMSRB, в MacroDroid — {sms_message}).</li><li>Баланс счёта обновится сам, а непонятные сообщения подождут вас в приложении.</li>`:`<li>Нужно приложение-автоматизатор, которое умеет читать <b>Health Connect</b> и отправлять HTTP-запрос — например, Tasker или MacroDroid, если ваша версия это поддерживает.</li><li>Создайте задачу по расписанию: прочитать шаги за сегодня из Health Connect.</li><li>Отправьте <b>HTTP POST</b> на ссылку ниже с JSON-телом, как в примере.</li><li>Повторяйте несколько раз в день — повтор просто обновит значение.</li>`;
+function syncGuide(link){
+ const sample=`{"text": "Карта *1234: Покупка 25,40 BYN, остаток 1 340,10 BYN"}`;
+ const ios=`<li>Откройте <b>Команды</b> → <b>Автоматизация</b> → <b>+</b> → <b>Сообщение</b>. В «Сообщение содержит» укажите слово из SMS банка, например <b>остаток</b> или название банка, и выберите «Запускать сразу».</li><li>Добавьте действие <b>«Получить содержимое URL»</b>: ссылка ниже, метод <b>POST</b>, тело — JSON, поле <code>text</code> = <b>«Содержимое сообщения»</b>.</li><li>Готово: каждое SMS от банка обновит баланс. Сообщения, которые Platformer не понял, будут ждать вас в «Банках и счетах».</li><li>Пуши из приложения банка iPhone автоматизациям не отдаёт — работают только SMS. Включите SMS-уведомления в банке.</li>`;
+ const android=`<li>Нужен автоматизатор с событиями <b>SMS</b> и <b>уведомлений</b> и отправкой HTTP-запроса — Tasker или MacroDroid.</li><li>Событие: «SMS получено» от отправителя-банка (или «Уведомление» от приложения банка).</li><li>Действие: <b>HTTP POST</b> на ссылку ниже, тело JSON с полем <code>text</code> — текст сообщения (в Tasker это %SMSRB, в MacroDroid — {sms_message}).</li><li>Баланс счёта обновится сам, а непонятные сообщения подождут вас в приложении.</li>`;
  return `<div class="sync-tabs segmented"><button type="button" class="active" data-sync-os="ios">iPhone</button><button type="button" data-sync-os="android">Android</button></div>
  <ol class="sync-steps" data-sync-guide="ios">${ios}</ol>
  <ol class="sync-steps" data-sync-guide="android" hidden>${android}</ol>
- <div class="sync-link"><span class="eyebrow">Ваша ссылка</span>${link?`<code class="sync-code">${esc(link)}</code><div class="inline-actions">${button('copy','Скопировать ссылку','secondary small','copy',`data-text="${esc(link)}"`)}</div><small class="muted">Это личный ключ: не показывайте его другим. Он виден только сейчас — потеряете, просто создайте новый.</small>`:`<p class="muted">Ссылка с ключом показывается один раз при создании. Новая ссылка отключает прежнюю — её придётся поставить во всех автоматизациях.</p>${button('sync-key-create','Создать новую ссылку','secondary small','refresh',`data-mode="${mode}"`)}`}</div>
- <details class="sync-more"><summary>Формат данных</summary><p>${bank?'JSON или форма с полем text (или message, sms, body) — текст сообщения банка целиком.':'JSON или форма. Поля по желанию: steps, weight, sleep (часы или минуты), water, pulse, day (по умолчанию сегодня), workouts — список {"type","duration","calories"}.'}</p><code class="sync-code">${esc(sample)}</code></details>`;
+ <div class="sync-link"><span class="eyebrow">Ваша ссылка</span>${link?`<code class="sync-code">${esc(link)}</code><div class="inline-actions">${button('copy','Скопировать ссылку','secondary small','copy',`data-text="${esc(link)}"`)}</div><small class="muted">Это личный ключ: не показывайте его другим. Он виден только сейчас — потеряете, просто создайте новый.</small>`:`<p class="muted">Ссылка с ключом показывается один раз при создании. Новая ссылка отключает прежнюю — её придётся поставить во всех автоматизациях.</p>${button('sync-key-create','Создать новую ссылку','secondary small','refresh')}`}</div>
+ <details class="sync-more"><summary>Формат данных</summary><p>JSON или форма с полем text (или message, sms, body) — текст сообщения банка целиком.</p><code class="sync-code">${esc(sample)}</code></details>`;
 }
-async function activitySync(mode='health'){
- if(mode!=='bank')mode='health';
+async function activitySync(){
  if($('#dialog').open&&!await requestDialogExit($('#dialog')))return;
  await ensureActivity();
  let status=state.activity?.sync||{connected:false};
@@ -1223,16 +1221,16 @@ async function activitySync(mode='health'){
   if(preview){syncKeyShown={url:new URL('../api/activity/sync',location.href).href,key:'preview-key-preview-key'};}
   else{const made=await api('/activity/sync/key',{method:'POST'});syncKeyShown=made;status=made;}
  }
- const base=syncKeyShown?(mode==='bank'?syncKeyShown.url.replace('/activity/sync','/banks/sync'):syncKeyShown.url):'',link=syncKeyShown?`${base}?key=${encodeURIComponent(syncKeyShown.key)}`:'';
+ const base=syncKeyShown?syncKeyShown.url.replace('/activity/sync','/banks/sync'):'',link=syncKeyShown?`${base}?key=${encodeURIComponent(syncKeyShown.key)}`:'';
  const head=status.connected?`<div class="sync-status on">${icon('check')}<span><b>Подключено</b><small>${status.last_sync?`Последняя синхронизация ${esc(agoText(status.last_sync))}${status.last_saved?` · ${esc(status.last_saved)}`:''}`:'Ждём первую отправку с телефона'}</small></span></div>`:'';
- await dialog(mode==='bank'?'Обновление из SMS банка':'Автосинхронизация',`<div class="sync-dialog">${head}<p class="pref-hint">${mode==='bank'?'Platformer не заходит в банк и не хранит пароли. Банк присылает SMS — телефон пересылает текст сюда, а Platformer сам вытаскивает остаток и сумму. Ссылка и ключ общие со «Здоровьем».':'Mini App не может сам читать «Здоровье» на iPhone или Health Connect на Android, поэтому данные присылает сам телефон — один раз настроить, дальше всё автоматически.'}</p>${syncGuide(link,mode)}${status.connected?`<div class="guest-danger">${button('sync-key-delete','Отключить синхронизацию','danger small')}</div>`:''}</div>`,'Готово');
+ await dialog('Обновление из SMS банка',`<div class="sync-dialog">${head}<p class="pref-hint">Platformer не заходит в банк и не хранит пароли. Банк присылает SMS — телефон пересылает текст сюда, а Platformer сам вытаскивает остаток и сумму.</p>${syncGuide(link)}${status.connected?`<div class="guest-danger">${button('sync-key-delete','Отключить синхронизацию','danger small')}</div>`:''}</div>`,'Готово');
  await sectionReload();
 }
 document.addEventListener('click',event=>{const tab=event.target.closest?.('[data-sync-os]');if(!tab)return;event.preventDefault();const box=tab.closest('.sync-dialog');box.querySelectorAll('[data-sync-os]').forEach(b=>b.classList.toggle('active',b===tab));box.querySelectorAll('[data-sync-guide]').forEach(g=>g.hidden=g.dataset.syncGuide!==tab.dataset.syncOs);});
 
 // ── Вишлисты, заметки, календарь ──
 function listsView(){
- const tab=state.listsTab,add={tasks:button('task-add','Задача','primary','plus'),wish:button('wish-list-add','Новый список','primary','plus'),notes:button('note-add','Заметка','primary','plus'),calendar:button('event-add','Событие','primary','plus')}[tab];
+ const tab=state.listsTab,add={tasks:button('task-add','Задача','primary','plus'),wish:button('wish-list-add','Новый список','primary','plus'),notes:`<div class="head-actions">${button('note-import','Импорт','secondary','upload','title="Импортировать заметки с телефона"')}${button('note-add','Заметка','primary','plus')}</div>`,calendar:button('event-add','Событие','primary','plus')}[tab];
  const sub={tasks:'Дела со сроками — ничего не потеряется',calendar:'События на любое число, с повтором',notes:'Идеи, списки и мысли',wish:'Желания по увлечениям'}[tab];
  const tabs=`<div class="segmented lists-tabs">${[['tasks','Задачи'],['calendar','Календарь'],['notes','Заметки'],['wish','Желания']].map(([id,label])=>`<button type="button" data-action="lists-tab" data-value="${id}" class="${tab===id?'active':''}">${label}</button>`).join('')}</div>`;
  const head=header('Планы',sub,add)+tabs;
@@ -1268,9 +1266,61 @@ function wishTab(){
  if(!lists.length)return `<section class="panel lists-empty"><span class="empty-orb">${icon('lists')}</span><b>Соберите первый вишлист</b><p>Списки по увлечениям: фото, путешествия, спорт, дом. Цена и ссылка — по желанию.</p>${button('wish-list-add','Создать список','primary','plus')}</section>`;
  return `<div class="wish-grid">${lists.map(l=>{const total=Object.entries(l.totals).map(([c,v])=>money(v,c)).join(' + '),done=l.items.length?Math.round(l.done/l.items.length*100):0;return `<section class="panel wish-list" data-ui-key="wish-${esc(l.id)}"><div class="wish-head"><span class="wish-emoji">${esc(l.emoji||'✦')}</span><div><h2>${esc(l.title)}</h2><small>${countLabel(l.open,['желание','желания','желаний'])}${l.done?` · исполнено ${l.done}`:''}${total?` · ${total}`:''}</small></div><button type="button" class="icon-btn small" data-action="wish-list-edit" data-id="${esc(l.id)}" aria-label="Изменить список">${icon('settings')}</button></div>${l.items.length?`<span class="wish-meter" aria-hidden="true"><i style="--w:${done}%"></i></span>`:''}<ul class="wish-items">${l.items.map(i=>`<li class="${i.done?'done':''}"><button type="button" class="wish-check" data-action="wish-toggle" data-id="${esc(l.id)}" data-item="${esc(i.id)}" aria-label="${i.done?'Вернуть в список':'Отметить исполненным'}" aria-pressed="${i.done}">${icon('check')}</button><button type="button" class="wish-title" data-action="wish-item-edit" data-id="${esc(l.id)}" data-item="${esc(i.id)}"><b>${esc(i.title)}</b>${i.note?`<small>${esc(i.note)}</small>`:''}</button>${i.price!=null?`<span class="wish-price">${money(i.price,i.currency||'USD')}</span>`:''}${i.url?`<a class="icon-btn small" href="${esc(i.url)}" target="_blank" rel="noopener" aria-label="Открыть ссылку">${icon('link')}</a>`:''}</li>`).join('')}</ul>${button('wish-item-add','Добавить желание','secondary small pa-add','plus',`data-id="${esc(l.id)}"`)}</section>`;}).join('')}</div>`;
 }
+// ── Импорт заметок с телефона: файлы (.txt, .md, Google Keep .json/.html) или вставленный текст ──
+const NOTE_FILES='.txt,.md,.markdown,.json,.html,.htm,text/plain,text/markdown,application/json,text/html';
+function noteFromText(text,name=''){
+ const clean=String(text||'').replace(/\r\n?/g,'\n').trim();if(!clean)return null;
+ const lines=clean.split('\n'),first=lines[0].replace(/^#+\s*/,'').trim(),base=name.replace(/\.[^.]+$/,'').trim();
+ if(base&&!/^(note|notes|заметка|заметки|untitled|без названия|новая заметка)[\s_-]*\d*$/i.test(base))return {title:base.slice(0,120),body:clean};
+ return lines.length>1&&first.length<=120?{title:first,body:lines.slice(1).join('\n').trim()}:{title:'',body:clean};
+}
+function notesFromJson(data){
+ const list=Array.isArray(data)?data:Array.isArray(data?.notes)?data.notes:[data];
+ return list.filter(n=>n&&typeof n==='object'&&!n.isTrashed).map(n=>{
+  const checks=Array.isArray(n.listContent)?n.listContent.map(i=>`${i.isChecked?'☑':'☐'} ${i.text||''}`).join('\n'):'';
+  const body=String(n.textContent??n.body??n.text??n.content??'').trim();
+  return {title:String(n.title||'').trim().slice(0,120),body:[body,checks].filter(Boolean).join('\n')};
+ });
+}
+function noteFromHtml(html,name){
+ const doc=new DOMParser().parseFromString(html,'text/html');doc.querySelectorAll('script,style,head').forEach(e=>e.remove());
+ const title=(doc.querySelector('.title')?.textContent||'').trim(),content=doc.querySelector('.content')||doc.body;if(!content)return null;
+ content.querySelectorAll('br').forEach(b=>b.replaceWith('\n'));content.querySelectorAll('p,div,li,h1,h2,h3').forEach(b=>b.append('\n'));
+ const body=(content.textContent||'').replace(/[ \t]+\n/g,'\n').replace(/\n{3,}/g,'\n\n').trim();
+ return title?{title:title.slice(0,120),body}:noteFromText(body,name);
+}
+async function notesFromFiles(files){
+ const out=[];
+ for(const f of files){const text=await f.text(),n=f.name.toLowerCase();
+  if(n.endsWith('.json')||f.type==='application/json'){try{out.push(...notesFromJson(JSON.parse(text)));continue;}catch{}}
+  out.push(/\.html?$/.test(n)||f.type==='text/html'?noteFromHtml(text,f.name):noteFromText(text,f.name));}
+ return out.filter(x=>x&&(x.title||x.body));
+}
+function notesFromPaste(text){return String(text||'').replace(/\r\n?/g,'\n').split(/\n[ \t]*(?:-{3,}|={3,})[ \t]*\n/).map(c=>noteFromText(c)).filter(Boolean);}
+async function notesImport(){
+ let picked=[];
+ const body=`<p class="pref-hint">Перенесите заметки с телефона одним движением. Те, что уже есть, второй раз не появятся.</p>
+ <label class="note-drop"><input type="file" name="files" multiple accept="${NOTE_FILES}"><span class="note-drop-icon">${icon('upload')}</span><b data-note-pick>Выбрать файлы</b><small>.txt, .md, Google Keep (.json, .html)</small></label>
+ <label class="field">Или вставьте текст<textarea name="text" placeholder="Скопируйте заметку и вставьте сюда. Несколько — разделите строкой ---"></textarea></label>
+ <p class="note-import-count" data-note-count aria-live="polite"></p>
+ <details class="sync-more"><summary>Как выгрузить с телефона</summary><p><b>iPhone, «Заметки»:</b> откройте заметку → «Поделиться» → «Скопировать» и вставьте сюда. Файлы .txt и .md из приложения «Файлы» тоже подойдут — можно выбрать сразу несколько.</p><p><b>Android, Google Keep:</b> на takeout.google.com выберите только Keep, скачайте архив, распакуйте и выберите здесь файлы .json (или .html).</p><p><b>Samsung Notes и другие:</b> «Поделиться» → «Текстовый файл» или скопируйте текст.</p></details>`;
+ const count=async d=>{const text=d.querySelector('textarea[name="text"]').value,n=(await notesFromFiles(picked)).length+notesFromPaste(text).length,el=d.querySelector('[data-note-count]');el.textContent=n?`Найдено ${countLabel(n,['заметка','заметки','заметок'])}`:'';el.classList.toggle('on',n>0);};
+ const values=await dialog('Импорт заметок',body,'Импортировать',{onOpen:d=>{const input=d.querySelector('input[name="files"]'),label=d.querySelector('[data-note-pick]');input.addEventListener('change',()=>{picked=[...input.files];label.textContent=picked.length?countLabel(picked.length,['файл','файла','файлов']):'Выбрать файлы';d.dataset.dirty=picked.length?'1':'';count(d);});d.querySelector('textarea[name="text"]').addEventListener('input',()=>count(d));}});
+ if(!values)return;
+ const notes=[...await notesFromFiles(picked),...notesFromPaste(values.text)];
+ if(!notes.length){toast('Не нашли заметок — выберите файлы или вставьте текст');return;}
+ try{
+  let result;
+  if(preview){const have=new Set(state.lists.notes.map(n=>n.title+'\n'+n.body)),stamp=new Date().toISOString(),fresh=notes.filter(n=>!have.has(n.title+'\n'+n.body));state.lists.notes=[...fresh.map((n,i)=>({id:'imp'+Date.now()+i,title:n.title,body:n.body,pinned:false,color:'accent',created_at:stamp,updated_at:stamp})),...state.lists.notes];result={imported:fresh.length,skipped:notes.length-fresh.length};}
+  else{result=await api('/notes/import',{method:'POST',body:JSON.stringify({notes:notes.slice(0,500)})});state.lists.notes=result.notes;}
+  tg?.HapticFeedback?.notificationOccurred('success');
+  toast(result.imported?`Импортировано: ${countLabel(result.imported,['заметка','заметки','заметок'])}${result.skipped?` · ${result.skipped} уже были`:''}`:'Все эти заметки уже есть');
+  state.listsTab='notes';render();
+ }catch(exc){toast(exc.message);}
+}
 function notesTab(){
  const notes=state.lists.notes;
- if(!notes.length)return `<section class="panel lists-empty"><span class="empty-orb">${icon('note')}</span><b>Заметок пока нет</b><p>Идеи, списки покупок, мысли — всё в одном месте. Важное можно закрепить сверху.</p>${button('note-add','Новая заметка','primary','plus')}</section>`;
+ if(!notes.length)return `<section class="panel lists-empty"><span class="empty-orb">${icon('note')}</span><b>Заметок пока нет</b><p>Идеи, списки покупок, мысли — всё в одном месте. Важное можно закрепить сверху.</p>${button('note-add','Новая заметка','primary','plus')}${button('note-import','Импортировать с телефона','ghost small','upload')}</section>`;
  return `<div class="notes-grid">${notes.map(n=>`<button type="button" class="panel note-card c-${esc(n.color)}" data-action="note-edit" data-id="${esc(n.id)}" data-ui-key="note-${esc(n.id)}">${n.pinned?`<span class="note-pin">Закреплено</span>`:''}${n.title?`<b>${esc(n.title)}</b>`:''}${n.body?`<p>${esc(n.body.length>320?n.body.slice(0,320)+'…':n.body)}</p>`:''}<small>${esc(date(n.updated_at))}</small></button>`).join('')}</div>`;
 }
 function calendarTab(){
@@ -1327,11 +1377,10 @@ async function sectionReload(){const key=viewKey(),[parts,circle]=await Promise.
 async function closeDialogFirst(){return !$('#dialog').open||await requestDialogExit($('#dialog'));}
 async function sectionAction(action,el){
  const wish=id=>state.lists?.wishlists.find(l=>l.id===id);
- if(action==='activity-add')return activityEditor(el.dataset.kind||'steps');
+ if(action==='activity-add')return activityEditor(el.dataset.kind||'weight');
  if(action==='activity-edit')return activityEditor(null,state.activity?.entries.find(e=>e.id===el.dataset.id));
  if(action==='activity-settings')return activitySettings();
- if(action==='activity-sync')return activitySync();
- if(action==='activity-reload'||action==='lists-reload')return sectionReload();
+  if(action==='activity-reload'||action==='lists-reload')return sectionReload();
  if(action==='activity-days'){state.activityDays=Number(el.dataset.value)||30;markChoice(el);return sectionReload();}
  if(action==='activity-delete'){if(await confirm('Удалить запись?','Её можно будет записать заново.','Удалить')){await api('/activity/'+el.dataset.id,{method:'DELETE'});await sectionReload();}return;}
  if(action==='lists-tab'){state.listsTab=el.dataset.value;markChoice(el);render();return;}
@@ -1350,6 +1399,7 @@ async function sectionAction(action,el){
  if(action==='wish-item-delete'){if(!await closeDialogFirst())return;await api(`/wishlists/${el.dataset.id}/items/${el.dataset.item}`,{method:'DELETE'});await sectionReload();return;}
  if(action==='wish-toggle'){const item=wish(el.dataset.id)?.items.find(i=>i.id===el.dataset.item);if(!item)return;el.closest('li')?.classList.toggle('done');await api(`/wishlists/${el.dataset.id}/items/${item.id}`,{method:'PATCH',body:JSON.stringify({done:!item.done})});if(!item.done)tg?.HapticFeedback?.notificationOccurred('success');await sectionReload();return;}
  if(action==='note-add')return noteEditor();
+ if(action==='note-import')return notesImport();
  if(action==='note-edit')return noteEditor(state.lists?.notes.find(n=>n.id===el.dataset.id));
  if(action==='note-delete'){if(!await closeDialogFirst())return;if(await confirm('Удалить заметку?','Восстановить её не получится.','Удалить')){await api('/notes/'+el.dataset.id,{method:'DELETE'});await sectionReload();}return;}
  if(action==='event-add')return eventEditor(null,el.dataset.day||state.calDay||projectToday());
@@ -1358,7 +1408,7 @@ async function sectionAction(action,el){
 }
 async function stationAction(action,el){
  if(action==='home-settings')return homeSettings();
- if(action==='sync-key-create'){const mode=el.dataset.mode||'health';if(preview){syncKeyShown={url:new URL('../api/activity/sync',location.href).href,key:'preview-key-preview-key'};}else syncKeyShown=await api('/activity/sync/key',{method:'POST'});$('#dialog').close('cancel');return activitySync(mode);}
+ if(action==='sync-key-create'){if(preview){syncKeyShown={url:new URL('../api/activity/sync',location.href).href,key:'preview-key-preview-key'};}else syncKeyShown=await api('/activity/sync/key',{method:'POST'});$('#dialog').close('cancel');return activitySync();}
  if(action==='sync-key-delete'){if(!await closeDialogFirst())return;if(await confirm('Отключить синхронизацию?','Ссылка перестанет работать. Уже записанные данные останутся.','Отключить')){if(!preview)await api('/activity/sync/key',{method:'DELETE'});syncKeyShown=null;toast('Синхронизация отключена');await sectionReload();}return;}
 }
 document.addEventListener('change',event=>{const select=event.target.closest?.('[data-act-kind]');if(!select)return;const box=select.closest('#dialog-body'),workout=select.value==='workout';box.querySelector('.act-fields-daily').hidden=workout;box.querySelector('.act-fields-workout').hidden=!workout;const label=box.querySelector('.act-fields-daily .field');if(label&&!workout)label.firstChild.textContent=`Значение, ${ACT_KINDS[select.value][1]}`;});
@@ -1367,12 +1417,15 @@ document.addEventListener('change',event=>{const select=event.target.closest?.('
 function circleData(){return state.circle||state.data?.insights||null;}
 function scoreTone(score){return score==null?'none':score>=70?'good':score>=40?'mid':'low';}
 function circleRing(c,{size=340,compact=false}={}){
- const h=size*.8,cx=size/2,cy=h/2,r=size*.25,w=compact?14:20,C=2*Math.PI*r,seg=C*(54/360),n=c.spheres.length,step=360/n,labelR=r+w/2+10;
+ const h=Math.round(size*.84),cx=size/2,cy=h/2,r=size*.255,w=compact?13:18,n=c.spheres.length||1,step=360/n,sweep=step-(compact?9:7);
+ const C=2*Math.PI*r,seg=C*sweep/360,labelR=r+w/2+(compact?13:17);
  const segs=c.spheres.map((sp,i)=>{
-  const start=-90+i*step+(step-54)/2,mid=start+27,rad=mid*Math.PI/180,tx=cx+labelR*Math.cos(rad),ty=cy+labelR*Math.sin(rad)+4,fill=sp.score==null?0:seg*sp.score/100;
-  const anchor=Math.abs(Math.cos(rad))<.25?'middle':Math.cos(rad)>0?'start':'end';
-  return `<a href="${esc(sp.href)}" class="circle-seg tone-${scoreTone(sp.score)}" style="--i:${i}" aria-label="${esc(sp.label)}: ${sp.score==null?'нет данных':sp.score+' из 100'}. ${esc(sp.status)}"><circle class="seg-track${sp.score==null?' empty':''}" cx="${cx}" cy="${cy}" r="${r}" stroke-width="${w}" stroke-dasharray="${seg.toFixed(2)} ${(C-seg).toFixed(2)}" transform="rotate(${start} ${cx} ${cy})"/>${fill?`<circle class="seg-fill" cx="${cx}" cy="${cy}" r="${r}" stroke-width="${w}" stroke-dasharray="${fill.toFixed(2)} ${(C-fill).toFixed(2)}" transform="rotate(${start} ${cx} ${cy})"/>`:''}<text x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" text-anchor="${anchor}" class="seg-label">${esc(sp.label)}</text></a>`;}).join('');
- return `<div class="circle-ring${compact?' compact':''}"><svg viewBox="0 0 ${size} ${h}" role="group" aria-label="Круг жизни">${segs}</svg><div class="circle-core"><b>${c.overall==null?'—':countUp(c.overall,'int')}</b><small>баланс жизни</small></div></div>`;
+  const start=-90+i*step+(step-sweep)/2,mid=start+sweep/2,rad=mid*Math.PI/180;
+  const tx=cx+labelR*Math.cos(rad),ty=cy+labelR*Math.sin(rad)+4,fill=sp.score==null?0:seg*sp.score/100;
+  const anchor=Math.abs(Math.cos(rad))<.3?'middle':Math.cos(rad)>0?'start':'end';
+  return `<a href="${esc(sp.href)}" class="circle-seg tone-${scoreTone(sp.score)}" style="--i:${i}" aria-label="${esc(sp.label)}: ${sp.score==null?'нет данных':sp.score+' из 100'}. ${esc(sp.status)}"><circle class="seg-track${sp.score==null?' empty':''}" cx="${cx}" cy="${cy}" r="${r}" stroke-width="${w}" stroke-dasharray="${seg.toFixed(2)} ${(C-seg).toFixed(2)}" transform="rotate(${start} ${cx} ${cy})"/>${fill?`<circle class="seg-fill" cx="${cx}" cy="${cy}" r="${r}" stroke-width="${w}" stroke-dasharray="${fill.toFixed(2)} ${(C-fill).toFixed(2)}" style="--f:${fill.toFixed(2)}" transform="rotate(${start} ${cx} ${cy})"/>`:''}<text x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" text-anchor="${anchor}" class="seg-label">${esc(sp.label)}</text></a>`;}).join('');
+ const dots=Array.from({length:n},(_,i)=>{const a=(-90+i*step)*Math.PI/180;return `<circle class="circle-tick" cx="${(cx+(r+w/2+5)*Math.cos(a)).toFixed(1)}" cy="${(cy+(r+w/2+5)*Math.sin(a)).toFixed(1)}" r="1.4"/>`;}).join('');
+ return `<div class="circle-ring${compact?' compact':''}"><span class="circle-glow" aria-hidden="true"></span><svg viewBox="0 0 ${size} ${h}" role="group" aria-label="Круг жизни"><circle class="circle-orbit" cx="${cx}" cy="${cy}" r="${(r+w/2+7).toFixed(1)}" style="--o:${(2*Math.PI*(r+w/2+7)).toFixed(1)}"/><g class="circle-ticks">${dots}</g>${segs}</svg><div class="circle-core"><span class="core-pulse" aria-hidden="true"></span><b>${c.overall==null?'—':countUp(c.overall,'int')}</b><small>баланс жизни</small></div></div>`;
 }
 function insightList(c,limit=8){
  const items=c.insights.slice(0,limit);
@@ -1474,7 +1527,7 @@ async function bankAction(action,el){
  if(action==='bank-add')return bankEditor();
  if(action==='bank-reload')return sectionReload();
  if(action==='bank-edit')return bankEditor(acc(el.dataset.id));
- if(action==='bank-sync')return activitySync('bank');
+ if(action==='bank-sync')return activitySync();
  if(action==='bank-delete'){if(!await closeDialogFirst())return;if(await confirm('Удалить счёт?','Он исчезнет из общего баланса вместе с историей.','Удалить')){await api('/banks/'+el.dataset.id,{method:'DELETE'});await sectionReload();}return;}
  if(action==='bank-ops'){const r=await api(`/banks/${el.dataset.id}/ops`);if($('#dialog').open&&!await requestDialogExit($('#dialog')))return;const a=acc(el.dataset.id);await dialog('История',`<div class="ops-list">${r.operations.map(o=>`<div class="op-row"><span><b>${esc(o.note||'Операция')}</b><small>${esc(date(o.at,true))}${o.source==='sms'?' · из SMS':''}</small></span><span class="op-values">${o.amount!=null?`<b class="${o.amount<0?'negative':'positive'}">${o.amount>0?'+':''}${esc(bankMoney(o.amount,a.currency))}</b>`:''}${o.balance!=null?`<small>остаток ${esc(bankMoney(o.balance,a.currency))}</small>`:''}</span></div>`).join('')||'<p class="muted">Пока пусто.</p>'}</div>`,'Готово');return;}
  if(action==='bank-inbox-dismiss'){await api('/banks/inbox/'+el.dataset.id,{method:'DELETE'});await sectionReload();return;}
@@ -1487,24 +1540,21 @@ async function bankAction(action,el){
 }
 // Предпросмотр без сервера: правдоподобные вымышленные записи разделов
 function previewActivity(days){
- const end=projectToday(),entries=[],series={steps:[],weight:[],sleep:[],water:[],pulse:[]};
- for(let i=0;i<days;i++){const day=addDaysIso(end,-i),seed=Math.sin(i*1.7)+Math.cos(i*.6);
-  const steps=Math.round(8200+seed*2600);series.steps.push({day,value:steps});entries.push({id:'s'+i,day,kind:'steps',value:steps,label:'Шаги',unit:'шагов',note:'',source:i<20?'auto':'manual'});
+ const end=projectToday(),entries=[],series={weight:[],workout:[]};
+ for(let i=0;i<days;i++){const day=addDaysIso(end,-i);
   if(i%3===0){const w=Math.round((74.2-i*.04+Math.sin(i)*.3)*10)/10;series.weight.push({day,value:w});entries.push({id:'w'+i,day,kind:'weight',value:w,label:'Вес',unit:'кг',note:''});}
-  if(i%2===0)entries.push({id:'t'+i,day,kind:'workout',minutes:30+(i%4)*10,title:['Бег','Зал','Йога','Велосипед'][i%4],value:null,label:'Тренировка',unit:'мин',note:''});
-  series.sleep.push({day,value:Math.round((7.2+Math.sin(i)*.8)*10)/10});}
+  if(i%2===0){const m=30+(i%4)*10;series.workout.push({day,value:m});entries.push({id:'t'+i,day,kind:'workout',minutes:m,title:['Бег','Зал','Йога','Велосипед'][i%4],value:null,label:'Тренировка',unit:'мин',note:''});}}
  for(const k of Object.keys(series))series[k].reverse();
- const week=entries.filter(e=>e.kind==='workout'&&e.day>=addDaysIso(end,-6));
- const sum=(k)=>({label:ACT_KINDS[k][0],unit:ACT_KINDS[k][1],today:series[k].at(-1)?.day===end?series[k].at(-1).value:null,last:series[k].at(-1)?.value??null,last_day:series[k].at(-1)?.day??null,week_avg:series[k].length?series[k].slice(-7).reduce((a,p)=>a+p.value,0)/Math.min(7,series[k].length):null,series:series[k]});
- const workoutDays=[...new Set(entries.filter(e=>e.kind==='workout').map(e=>e.day))].sort();
- return {sync:{connected:true,last_sync:new Date(Date.parse(`${end}T09:00:00Z`)).toISOString(),last_saved:'steps, weight'},from:addDaysIso(end,1-days),to:end,days,entries,goals:{steps:10000,sleep:8,water:2},summary:{steps:sum('steps'),weight:sum('weight'),sleep:sum('sleep'),water:{...sum('water'),today:1.4},pulse:{...sum('pulse'),last:62,last_day:end},workout:{label:'Тренировки',unit:'мин',today:null,week_count:week.length,week_minutes:week.reduce((a,e)=>a+e.minutes,0),series:workoutDays.map(day=>({day,value:entries.filter(e=>e.kind==='workout'&&e.day===day).reduce((a,e)=>a+e.minutes,0)}))}}};
+ const week=series.workout.filter(p=>p.day>=addDaysIso(end,-6));
+ return {days,entries,goals:{weight:72},
+  summary:{weight:{last:series.weight.at(-1)?.value??null,last_day:series.weight.at(-1)?.day??null,series:series.weight},
+   workout:{week_count:week.length,week_minutes:week.reduce((n,p)=>n+p.value,0),series:series.workout}},
+  sync:{connected:false,last_sync:null}};
 }
-// метка времени предпросмотра фиксирована на время жизни страницы: иначе каждое фоновое обновление
-// видело бы «новые» данные и перерисовывало экран
 const PREVIEW_STAMP=new Date(Math.floor(Date.now()/36e5)*36e5).toISOString().replace(/\.\d+Z$/,'Z');
 function previewBanks(){const t=new Date(Date.parse(PREVIEW_STAMP)-2*36e5).toISOString().replace(/\.\d+Z$/,'Z'),mk=(id,bank,title,kind,currency,balance,last4,source='manual',counted=true)=>({id,bank,title,kind,kind_label:BANK_KINDS[kind],currency,balance,last4,counted,updated_at:t,source});const accounts=[mk('b1','Альфа-Банк','Зарплатная','card','BYN',4210.55,'1234','sms'),mk('b2','Альфа-Банк','Накопления','savings','BYN',12000,null),mk('b3','БНБ-Банк','Вклад на год','deposit','USD',3500,null),mk('b4','Приорбанк','Валютная','card','USD',860.2,'9876','sms'),mk('b5','Наличные','Кошелёк','cash','RUB',15000,null,'manual',false)];return {accounts,totals:{BYN:16210.55,USD:4360.2},inbox:[{id:'m1',received_at:t,text:'Покупка 12,00 USD *7777, остаток 88,00 USD',parsed:{last4:'7777',currency:'USD',balance:'88.00',amount:'-12.00',op:'out'}}],kinds:BANK_KINDS,currencies:['BYN','RUB','USD'],sync:{connected:true,last_sync:t}};}
 function previewTasks(){const t=projectToday(),mk=(id,title,due,area,done=false)=>({id:'t'+id,title,note:'',due,area,done,done_at:done?`${addDaysIso(t,-1)}T10:00:00Z`:null,created_at:`${addDaysIso(t,-5)}T09:00:00Z`});return [mk(1,'Сдать квартальный отчёт',addDaysIso(t,-1),'work'),mk(2,'Позвонить в банк',t,'personal'),mk(3,'Записаться к стоматологу',addDaysIso(t,3),'personal'),mk(4,'Заменить лампочку в коридоре',addDaysIso(t,9),'home'),mk(5,'Выбрать курс по английскому',null,'study'),mk(6,'Оплатить интернет',addDaysIso(t,-2),'home',true)];}
-function previewInsights(){return {overall:74,spheres:[{id:'finance',label:'Финансы',href:'#projects',score:88,status:'≈ 118 $ в день'},{id:'health',label:'Здоровье',href:'#activity',score:71,status:'10 800 шагов сегодня'},{id:'tasks',label:'Дела',href:'#plans/tasks',score:52,status:'просрочено 1'},{id:'plans',label:'Планы',href:'#plans/calendar',score:75,status:'4 события на неделе'},{id:'dreams',label:'Мечты',href:'#plans/wish',score:46,status:'4 желания'},{id:'people',label:'Люди',href:'#people',score:70,status:'2 друга'}],insights:[{sphere:'tasks',tone:'warn',text:'Просрочено: 1 задача — «Сдать квартальный отчёт»',href:'#plans/tasks'},{sphere:'plans',tone:'info',text:'Сегодня в 19:00: Звонок маме',href:'#plans/calendar'},{sphere:'health',tone:'good',text:'🔥 4 дня подряд с выполненной целью по шагам',href:'#activity'},{sphere:'finance',tone:'good',text:'Проекты приносят ≈ 118,91 $ в день — около 3 567 $ за месяц',href:'#projects'},{sphere:'dreams',tone:'good',text:'«Штатив» за 700 $ — это ≈ 6 дней дохода проектов',href:'#plans/wish'}]};}
+function previewInsights(){return {overall:65,spheres:[{id:'finance',label:'Финансы',href:'#projects',score:88,status:'≈ 118 $ в день'},{id:'tasks',label:'Дела',href:'#plans/tasks',score:52,status:'просрочено 1'},{id:'plans',label:'Планы',href:'#plans/calendar',score:75,status:'4 события на неделе'},{id:'dreams',label:'Мечты',href:'#plans/wish',score:46,status:'4 желания'}],insights:[{sphere:'tasks',tone:'warn',text:'Просрочено: 1 задача — «Сдать квартальный отчёт»',href:'#plans/tasks'},{sphere:'plans',tone:'info',text:'Сегодня в 19:00: Звонок маме',href:'#plans/calendar'},{sphere:'finance',tone:'good',text:'Проекты приносят ≈ 118,91 $ в день — около 3 567 $ за месяц',href:'#projects'},{sphere:'dreams',tone:'good',text:'«Штатив» за 700 $ — это ≈ 6 дней дохода проектов',href:'#plans/wish'}]};}
 function previewLists(){
  const t=projectToday(),ev=(n,title,color,time=null,repeat='none')=>({id:'e'+n,day:addDaysIso(t,n),date:addDaysIso(t,n),original_day:addDaysIso(t,n),time,title,color,repeat,note:''});
  const upcoming=[ev(0,'Звонок маме','pink','19:00'),ev(2,'ДР Саши','purple',null,'yearly'),ev(5,'Оплата интернета','orange','09:00','monthly'),ev(9,'Стоматолог','blue','11:30')];

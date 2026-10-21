@@ -1642,6 +1642,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any("Проекты приносят" in t for t in texts), texts)
         self.assertTrue(any(t.startswith("Сегодня в 18:00: Встреча") for t in texts), texts)
         scores = {s["id"]: s for s in circle["spheres"]}
+        self.assertEqual(list(scores), ["finance", "tasks", "plans", "dreams"])   # здоровье и люди убраны
         self.assertIsNotNone(scores["finance"]["score"])
         self.assertLess(scores["tasks"]["score"], 100)
         self.assertEqual(scores["tasks"]["status"], "просрочено 1")
@@ -1714,14 +1715,30 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         home = await (await self.call("GET", "/api/bootstrap")).json()
         self.assertEqual(home["station"]["home"], ["circle", "finance", "activity", "tasks", "events", "wish"])
         saved = await (await self.call("PUT", "/api/preferences/station",
-                                       json={"home": ["events", "finance"], "metrics": ["steps", "weight"]})).json()
+                                       json={"home": ["events", "finance"], "metrics": ["workout", "weight"]})).json()
         self.assertEqual(saved["home"], ["events", "finance"])
         self.assertIn("note", saved["quick"])          # неизменённое остаётся как было
-        self.assertEqual((await (await self.call("GET", "/api/bootstrap")).json())["station"]["metrics"], ["steps", "weight"])
+        self.assertEqual((await (await self.call("GET", "/api/bootstrap")).json())["station"]["metrics"], ["workout", "weight"])
         self.assertEqual((await (await self.call("GET", "/api/preferences/station", uid=2)).json())["home"],
                          ["circle", "finance", "activity", "tasks", "events", "wish"])
-        for bad in ({"home": ["casino"]}, {"home": ["finance", "finance"]}, {"theme": []}, {"quick": "steps"}):
+        for bad in ({"home": ["casino"]}, {"home": ["finance", "finance"]}, {"theme": []}, {"quick": "steps"},
+                    {"metrics": ["steps"]}, {"quick": ["sleep"]}):    # шаги и сон с главной убраны
             self.assertEqual((await self.call("PUT", "/api/preferences/station", json=bad)).status, 400, bad)
+
+    async def test_notes_import_from_phone_skips_duplicates(self):
+        await self.call("POST", "/api/notes", json={"title": "Идеи", "body": "Поход в горы"})
+        batch = [{"title": "Идеи", "body": "Поход в горы"}, {"title": "  Покупки  ", "body": "молоко\nхлеб"},
+                 {"title": "", "body": "без заголовка"}, {"title": "", "body": "   "}, {"title": "x" * 300, "body": ""}]
+        result = await (await self.call("POST", "/api/notes/import", json={"notes": batch})).json()
+        self.assertEqual((result["imported"], result["skipped"]), (3, 2))
+        titles = sorted(n["title"] for n in result["notes"])
+        self.assertIn("Покупки", titles)
+        self.assertIn("x" * 120, titles)                # длинный заголовок обрезан
+        again = await (await self.call("POST", "/api/notes/import", json={"notes": batch})).json()
+        self.assertEqual(again["imported"], 0)          # повторный импорт ничего не дублирует
+        self.assertEqual(len((await (await self.call("GET", "/api/lists", uid=2)).json())["notes"]), 0)
+        for bad in ({"notes": []}, {"notes": "текст"}, {"notes": ["строка"]}, {"notes": [{"title": "a"}] * 501}):
+            self.assertEqual((await self.call("POST", "/api/notes/import", json=bad)).status, 400, str(bad)[:40])
 
     async def test_wishlists_notes_and_calendar(self):
         created = await (await self.call("POST", "/api/wishlists", json={"title": "Фото", "emoji": "📷"})).json()

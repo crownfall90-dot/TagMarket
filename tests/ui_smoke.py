@@ -229,7 +229,7 @@ def faq_opens_smoothly(page, url):
     page.emulate_media(reduced_motion='no-preference')
     if page.viewport_size['width'] == 390:
         page.evaluate('scrollTo(0,0)')
-        page.wait_for_function("!document.querySelector('#main').getAnimations({subtree:true}).some(a=>a.playState==='running')")
+        page.wait_for_function("!document.querySelector('#main').getAnimations({subtree:true}).some(a=>a.playState==='running'&&a.effect?.getComputedTiming().iterations!==Infinity)")
         page.screenshot(path=str(Path(tempfile.gettempdir()) / 'tagmarkets-faq-compact-390.png'), full_page=True)
     page.goto(url + '#accounts', wait_until='domcontentloaded')
     page.locator('.page-head [data-action="add"]').click()
@@ -320,8 +320,10 @@ def station_sections(page, nav):
     page.locator('.home-grid').wait_for()
     assert page.locator('.greet').count() == 1 and page.locator('.greet-title').inner_text().strip()
     assert page.locator('.home-card').count() == 6          # круг, финансы, активности, дела, ближайшее, желания
-    assert page.locator('.home-chip').count() == 7
-    assert page.locator('.home-circle .circle-seg').count() == 6
+    assert page.locator('.home-chip').count() == 0, "быстрых кнопок на главной больше нет"
+    assert page.locator('.home-circle .circle-seg').count() == 4   # финансы, дела, планы, мечты
+    assert page.locator('.greet-stat').count() == 3 and page.locator('.greet-day i').count() == 1
+    assert page.locator('.home-activity .act-dots i').count() == 7
     assert page.locator('.home-circle .insight').count() >= 3
     assert page.locator('.page-head [data-action="onboard-open"]').count() == 0, "на главной не навязываем счёт"
     fits(page)
@@ -335,20 +337,21 @@ def station_sections(page, nav):
     # круг жизни открывается из карточки и ведёт в сферы
     page.locator('.home-circle a.text-link').click()
     page.locator('.circle-hero .circle-ring').wait_for()
-    assert page.locator('.sphere-row').count() == 6 and page.locator('.insight').count() >= 3
+    assert page.locator('.sphere-row').count() == 4 and page.locator('.insight').count() >= 3
+    assert not page.locator('.sphere-row', has_text='Здоровье').count() and not page.locator('.sphere-row', has_text='Люди').count()
     assert page.locator(f'{nav} a[href="#overview"].active').count() == 1
     assert page.locator('.circle-core b').inner_text().strip().isdigit()
     fits(page)
     page.locator(f'{nav} a[href="#activity"]').click()
     page.locator('.act-grid').wait_for()
     glider_on_active(page, nav)
-    assert page.locator('.act-card').count() == 6
-    steps = '[data-ui-key="act-chart-steps"] .act-bars .bar'
-    assert page.locator(steps).count() == 30
-    assert page.locator('.auto-tag').count() >= 1, "записи с телефона помечены «авто»"
+    assert page.locator('.act-card').count() == 2          # только вес и тренировки — то, что пишут сами
+    assert page.locator('[data-ui-key="act-chart-steps"]').count() == 0 and page.locator('.sync-banner').count() == 0
+    bars = '[data-ui-key="act-chart-workout"] .act-bars .bar'
+    assert page.locator(bars).count() == 30
     assert page.locator('.act-entry').count() > 0
     page.locator('.act-days [data-value="7"]').click()
-    page.wait_for_function("s => document.querySelectorAll(s).length === 7", arg=steps)
+    page.wait_for_function("s => document.querySelectorAll(s).length === 7", arg=bars)
     page.locator('.act-card[data-kind="workout"]').click()
     page.locator('#dialog[open]').wait_for()
     assert page.locator('#dialog .act-fields-workout').is_visible()
@@ -359,13 +362,7 @@ def station_sections(page, nav):
     page.locator('.act-entry-main').first.click()           # запись можно исправить
     page.locator('#dialog input[name="day"]').wait_for()
     close_dialog(page)
-    page.locator('[data-action="activity-sync"]').first.click()
-    page.locator('#dialog .sync-steps').first.wait_for()
-    assert page.locator('#dialog .sync-code').count() >= 1
-    page.locator('#dialog [data-sync-os="android"]').click()
-    assert page.locator('#dialog [data-sync-guide="android"]').is_visible()
-    fits(page)
-    close_dialog(page)
+    assert page.locator('[data-action="activity-sync"]').count() == 0, "синхронизации здоровья больше нет"
     page.locator(f'{nav} a[href="#plans"]').click()
     page.locator('.task-quick').wait_for()
     glider_on_active(page, nav)
@@ -389,6 +386,14 @@ def station_sections(page, nav):
     page.locator('.note-card').first.click()
     page.locator('#dialog textarea[name="body"]').wait_for()
     close_dialog(page)
+    # импорт заметок с телефона: вставленный текст делится по ---
+    page.locator('.page-head [data-action="note-import"]').click()
+    page.locator('#dialog .note-drop').wait_for()
+    page.locator('#dialog textarea[name="text"]').fill('Звонок\nмаме в 7\n---\nВторая')
+    page.wait_for_function("document.querySelector('[data-note-count]').textContent.includes('2')")
+    fits(page)
+    page.locator('#dialog-submit').click()
+    page.wait_for_function("document.querySelectorAll('.note-card').length === 4")
     page.locator('.lists-tabs [data-value="calendar"]').click()
     page.locator('.cal-grid').wait_for()
     assert page.locator('.cal-cell:not(.empty)').count() >= 28
@@ -403,7 +408,7 @@ def station_sections(page, nav):
     # настройки Platformer — в общих «Настройках»
     page.locator('#settings-link').click()
     page.locator('.station-settings').wait_for()
-    assert page.locator('.station-row').count() == 5
+    assert page.locator('.station-row').count() == 4
     fits(page)
 
 
@@ -644,7 +649,7 @@ def projects_ui(page, nav):
     assert page.locator('.forecast-account-detail').count() >= 1
     # анимация входа и раскрытия деталей должна завершиться: иначе кнопка
     # ещё едет, и клик попадает в соседний слой
-    page.wait_for_function("!document.querySelector('#main').getAnimations({subtree:true}).some(a=>a.playState==='running')")
+    page.wait_for_function("!document.querySelector('#main').getAnimations({subtree:true}).some(a=>a.playState==='running'&&a.effect?.getComputedTiming().iterations!==Infinity)")
     page.locator('[data-action="forecast-horizon"][data-value="1d"]').click()
     page.wait_for_function("state.forecast.horizon==='1d'")
     custom_date=page.evaluate("()=>{const d=new Date(projectToday()+'T00:00:00Z');d.setUTCDate(d.getUTCDate()+8);return d.toISOString().slice(0,10)}")
@@ -667,7 +672,7 @@ def projects_ui(page, nav):
     assert page.locator('.project-summary b').count() == 3
     fits(page)
     if page.viewport_size['width'] == 390:
-        page.wait_for_function("!document.querySelector('#main').getAnimations({subtree:true}).some(a=>a.playState==='running')")
+        page.wait_for_function("!document.querySelector('#main').getAnimations({subtree:true}).some(a=>a.playState==='running'&&a.effect?.getComputedTiming().iterations!==Infinity)")
         page.screenshot(path=str(Path(tempfile.gettempdir()) / 'tagmarkets-mobile-projects.png'), full_page=True)
     page.evaluate("state.projects=[];render()")
     assert page.locator('.project-card').count() == 2  # торговые счета и банки остаются отдельными карточками
@@ -771,7 +776,7 @@ def compact_ui_and_quiet_refresh(page, url):
     assert page.locator('.faq-strategy[open]').count() == 2
     assert question.evaluate('el=>el.open')
     assert abs(page.evaluate('scrollY')-before) < 3
-    assert page.evaluate("!document.querySelector('#main').getAnimations({subtree:true}).some(a=>a.playState==='running')")
+    assert page.evaluate("!document.querySelector('#main').getAnimations({subtree:true}).some(a=>a.playState==='running'&&a.effect?.getComputedTiming().iterations!==Infinity)")
     page.evaluate('window.api=__uxApi;void 0')
     # Every empty period has a real graphical container and no invented deals.
     for period in ('today','yesterday','week','lastweek','month','lastmonth','all','custom'):

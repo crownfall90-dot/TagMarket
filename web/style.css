@@ -1558,3 +1558,144 @@ li.done>.wish-check{background:var(--accent);border-color:var(--accent)}
 .suggest-list li:hover,.suggest-list li.on{background:color-mix(in srgb,var(--accent) 18%,transparent);color:var(--accent-text,var(--text))}
 @keyframes suggest-in{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
 @media(prefers-reduced-motion:reduce){.suggest-list{animation:none}}
+
+/* ═══ Живой интерфейс: постоянные мягкие анимации, новая главная, поля и круг жизни ═══ */
+
+/* Каждый блок едва заметно «дышит»: блик медленно проходит по поверхности */
+.panel{position:relative;isolation:isolate}
+.panel:not(.greet):not(.hero):not(.people-card):before{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;z-index:-1;
+ background:radial-gradient(120% 80% at var(--gx,20%) -20%,rgb(var(--accent-rgb) / .07),transparent 60%);
+ animation:panel-breathe 14s var(--ease-soft,ease-in-out) infinite}
+.panel.act-card:before,.panel.home-card:before{animation-duration:11s}
+@keyframes panel-breathe{0%,100%{--gx:18%;opacity:.55}50%{--gx:78%;opacity:1}}
+@property --gx{syntax:'<percentage>';inherits:false;initial-value:20%}
+
+/* ── Приветствие: крупная карточка с северным сиянием ── */
+.greet{position:relative;overflow:hidden;border-radius:26px;padding:26px 24px 24px;
+ background:linear-gradient(165deg,color-mix(in srgb,var(--accent) 12%,var(--panel)),var(--panel) 58%);
+ border:1px solid color-mix(in srgb,var(--accent) 22%,var(--line))}
+.greet-sheen{position:absolute;inset:-40%;pointer-events:none;
+ background:conic-gradient(from 0deg,transparent 0 62%,rgb(var(--accent-rgb) / .13) 72%,transparent 82%);
+ animation:greet-spin 22s linear infinite}
+@keyframes greet-spin{to{transform:rotate(1turn)}}
+.greet-aurora i{animation:aurora-drift 17s var(--ease-soft,ease-in-out) infinite alternate}
+.greet-aurora i:nth-child(2){animation-duration:23s;animation-delay:-6s}
+.greet-aurora i:nth-child(3){animation-duration:29s;animation-delay:-12s}
+@keyframes aurora-drift{from{transform:translate3d(-7%,-4%,0) scale(1)}to{transform:translate3d(9%,7%,0) scale(1.16)}}
+.greet-top{position:relative;display:flex;align-items:center;gap:10px}
+.greet-date{font-size:11px;color:var(--muted);letter-spacing:.02em}
+.greet-settings{margin-left:auto}
+.greet-title{position:relative;font-size:clamp(28px,8vw,40px);line-height:1.08;margin:18px 0 0;font-weight:500;letter-spacing:-.045em}
+.greet-title em{font-style:normal;background:linear-gradient(100deg,var(--accent),color-mix(in srgb,var(--accent) 45%,var(--purple)) 55%,var(--accent));
+ background-size:220% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:title-flow 9s ease-in-out infinite}
+@keyframes title-flow{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}
+.greet-sub{position:relative;margin-top:10px;font-size:13px;color:var(--muted)}
+.greet-day{position:relative;height:3px;margin:20px 0 0;border-radius:3px;background:color-mix(in srgb,var(--text) 9%,transparent);overflow:hidden}
+.greet-day i{display:block;height:100%;width:calc(var(--p,.5) * 100%);border-radius:3px;
+ background:linear-gradient(90deg,color-mix(in srgb,var(--accent) 45%,transparent),var(--accent));
+ box-shadow:0 0 12px rgb(var(--accent-rgb) / .45);animation:day-pulse 4.5s ease-in-out infinite}
+@keyframes day-pulse{0%,100%{opacity:.75}50%{opacity:1}}
+.greet-stats{position:relative;display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-top:18px}
+.greet-stat{display:flex;align-items:center;gap:11px;padding:13px 14px;border-radius:16px;
+ border:1px solid color-mix(in srgb,var(--text) 7%,transparent);background:color-mix(in srgb,var(--bg) 55%,transparent);
+ backdrop-filter:blur(6px);transition:transform .22s var(--ease-out,cubic-bezier(.16,1,.3,1)),border-color .22s,background .22s}
+.greet-stat:hover,.greet-stat:focus-visible{transform:translateY(-3px);border-color:color-mix(in srgb,var(--accent) 38%,transparent);background:color-mix(in srgb,var(--bg) 75%,transparent)}
+.greet-stat-icon{display:grid;place-items:center;width:32px;height:32px;flex-shrink:0;border-radius:11px;
+ background:rgb(var(--accent-rgb) / .1);color:var(--accent)}
+.greet-stat-icon svg{width:16px;height:16px}
+.greet-stat b{display:block;font-size:17px;font-weight:550;letter-spacing:-.03em;line-height:1.2}
+.greet-stat small{display:block;font-size:10px;color:var(--muted);margin-top:3px}
+
+/* ── Поля ввода: тонко, спокойно, современно ── */
+.field{gap:8px}
+.field input,.field select,.field textarea,select.filter,input.filter{min-height:48px;border-radius:14px;padding:13px 15px;font-size:14px;
+ background:color-mix(in srgb,var(--bg) 70%,transparent);border:1px solid color-mix(in srgb,var(--text) 9%,transparent);
+ transition:border-color .2s,background .2s,box-shadow .25s}
+.field input::placeholder,.field textarea::placeholder{color:color-mix(in srgb,var(--muted) 72%,transparent)}
+.field input:hover,.field select:hover,.field textarea:hover{border-color:color-mix(in srgb,var(--text) 16%,transparent)}
+.field input:focus,.field select:focus,.field textarea:focus{outline:none;background:var(--bg);
+ border-color:color-mix(in srgb,var(--accent) 55%,transparent);box-shadow:0 0 0 4px rgb(var(--accent-rgb) / .12)}
+.field input:focus-visible,.field select:focus-visible,.field textarea:focus-visible{outline:none}
+.field textarea{min-height:120px;line-height:1.6}
+.field select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,currentColor 50%),linear-gradient(135deg,currentColor 50%,transparent 50%);
+ background-position:calc(100% - 19px) calc(50% + 1px),calc(100% - 14px) calc(50% + 1px);background-size:5px 5px,5px 5px;background-repeat:no-repeat;padding-right:38px}
+.field input[type=date],.field input[type=number]{font-variant-numeric:tabular-nums}
+.check{gap:12px}
+.check input{width:20px;height:20px;border-radius:7px}
+
+/* ── Круг жизни ── */
+.circle-ring{position:relative}
+.circle-glow{position:absolute;left:50%;top:44%;width:62%;aspect-ratio:1;transform:translate(-50%,-50%);pointer-events:none;border-radius:50%;
+ background:radial-gradient(circle,rgb(var(--accent-rgb) / .16),transparent 68%);filter:blur(12px);animation:core-breathe 7s ease-in-out infinite}
+.circle-orbit{fill:none;stroke:color-mix(in srgb,var(--text) 10%,transparent);stroke-width:1;stroke-dasharray:2 9;
+ transform-origin:center;animation:orbit-spin 52s linear infinite}
+@keyframes orbit-spin{to{transform:rotate(1turn)}}
+.circle-tick{fill:color-mix(in srgb,var(--text) 18%,transparent)}
+.circle-seg .seg-track{fill:none;stroke:color-mix(in srgb,var(--text) 8%,transparent);stroke-linecap:round}
+.circle-seg .seg-track.empty{stroke-dasharray:2 7;opacity:.7}
+.circle-seg .seg-fill{fill:none;stroke-linecap:round;stroke:var(--c,var(--accent));filter:drop-shadow(0 0 5px rgb(var(--accent-rgb) / .35));
+ animation:seg-draw .9s var(--ease-out,cubic-bezier(.16,1,.3,1)) both,seg-breathe 6s ease-in-out infinite;
+ animation-delay:calc(var(--i,0) * 90ms),calc(var(--i,0) * 300ms)}
+@keyframes seg-draw{from{stroke-dashoffset:var(--f,100);opacity:0}to{stroke-dashoffset:0;opacity:1}}
+@keyframes seg-breathe{0%,100%{opacity:1}50%{opacity:.78}}
+.circle-seg.tone-good .seg-fill{--c:var(--accent)}
+.circle-seg.tone-mid .seg-fill{--c:#e4bf7a}
+.circle-seg.tone-low .seg-fill{--c:var(--negative)}
+.circle-seg.tone-none .seg-fill{--c:var(--muted)}
+.circle-seg .seg-label{fill:var(--muted);font-size:10px;letter-spacing:.01em;stroke:none}
+.circle-seg:hover .seg-label,.circle-seg:focus-visible .seg-label{fill:var(--text)}
+.circle-seg:hover .seg-fill{filter:drop-shadow(0 0 10px rgb(var(--accent-rgb) / .55))}
+.circle-core{position:absolute;left:50%;top:42%;transform:translate(-50%,-50%);text-align:center;pointer-events:none}
+.core-pulse{position:absolute;left:50%;top:50%;width:92px;height:92px;transform:translate(-50%,-50%);border-radius:50%;
+ border:1px solid rgb(var(--accent-rgb) / .22);animation:core-breathe 7s ease-in-out infinite}
+@keyframes core-breathe{0%,100%{transform:translate(-50%,-50%) scale(1);opacity:.7}50%{transform:translate(-50%,-50%) scale(1.09);opacity:1}}
+.circle-core b{display:block;font-size:34px;font-weight:500;letter-spacing:-.05em;line-height:1}
+.circle-ring.compact .circle-core b{font-size:27px}
+.circle-core small{display:block;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-top:5px}
+
+/* ── Активности: неделя точками и спарклайн веса ── */
+.act-dots,.act-week{display:flex;gap:5px;align-items:flex-end}
+.act-dots i,.act-week i{width:9px;height:9px;border-radius:50%;background:color-mix(in srgb,var(--text) 12%,transparent);
+ animation:dot-in .5s var(--ease-out,cubic-bezier(.16,1,.3,1)) both;animation-delay:calc(var(--k,0) * 60ms)}
+.act-dots i.on,.act-week i.on{background:var(--accent);box-shadow:0 0 10px rgb(var(--accent-rgb) / .45)}
+.act-dots i.on{animation:dot-in .5s var(--ease-out,cubic-bezier(.16,1,.3,1)) both,dot-pulse 3.6s ease-in-out infinite;
+ animation-delay:calc(var(--k,0) * 60ms),calc(var(--k,0) * 200ms)}
+@keyframes dot-in{from{transform:scale(.3);opacity:0}to{transform:none;opacity:1}}
+@keyframes dot-pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.22)}}
+.act-card.with-week .act-week{margin:14px 0 2px}
+.act-card.with-spark .act-spark{display:block;height:38px;margin:10px 0 2px;opacity:.85}
+.act-card.with-spark .act-spark svg{height:38px;width:100%}
+
+@media(prefers-reduced-motion:reduce){
+ .panel:before,.greet-sheen,.greet-aurora i,.greet-title em,.greet-day i,.circle-glow,.circle-orbit,
+ .circle-seg .seg-fill,.core-pulse,.act-dots i,.act-week i{animation:none}
+ .greet-title em{color:var(--accent);-webkit-text-fill-color:currentColor}
+}
+
+/* ── Импорт заметок ── */
+.note-drop{position:relative;display:flex;flex-direction:column;align-items:center;gap:6px;margin:16px 0 6px;padding:22px 16px;border-radius:18px;text-align:center;cursor:pointer;
+ border:1.5px dashed color-mix(in srgb,var(--accent) 35%,transparent);background:rgb(var(--accent-rgb) / .04);transition:background .2s,border-color .2s}
+.note-drop:hover,.note-drop:focus-within{background:rgb(var(--accent-rgb) / .08);border-color:color-mix(in srgb,var(--accent) 60%,transparent)}
+.note-drop input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.note-drop-icon{display:grid;place-items:center;width:42px;height:42px;border-radius:14px;background:rgb(var(--accent-rgb) / .12);color:var(--accent);animation:drop-float 3.2s ease-in-out infinite}
+@keyframes drop-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+.note-drop b{color:var(--text);font-size:14px;font-weight:550}
+.note-drop small{font-size:11px;color:var(--muted)}
+.note-import-count{min-height:18px;font-size:12px;color:var(--muted);transition:color .2s}
+.note-import-count.on{color:var(--accent)}
+@media(prefers-reduced-motion:reduce){.note-drop-icon{animation:none}}
+
+/* Главная: активы — во всю ширину, дела и события — рядом; неделя тренировок — строкой точек */
+.greet-stats{grid-template-columns:1fr 1fr}
+.greet-stats .greet-stat:last-child{grid-column:auto}
+.greet-stats .greet-stat:first-child:nth-last-child(3){grid-column:1/-1}
+.greet-stats .greet-stat:first-child:nth-last-child(3) b{font-size:22px}
+@media(min-width:741px){.greet-stats{grid-template-columns:repeat(3,minmax(0,1fr))}.greet-stats .greet-stat:first-child:nth-last-child(3){grid-column:auto}}
+.home-activity-body{flex-direction:column;align-items:stretch;gap:12px}
+.home-activity-body>.act-dots{display:flex;gap:7px}
+.home-activity-body>.act-dots i{width:auto;flex:1;height:6px;border-radius:6px}
+
+/* поля в рядах сжимаются вместе с экраном (два поля даты рядом на 320 px) */
+.field{min-width:0}
+.field input[type=date],.field input[type=time]{padding-left:12px;padding-right:10px;min-width:0}
+@media(max-width:360px){.field input,.field select,.field textarea{padding-left:12px;padding-right:12px}.field select{padding-right:32px}}
