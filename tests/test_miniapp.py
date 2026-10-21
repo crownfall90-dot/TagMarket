@@ -1545,6 +1545,83 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await self.call("POST", "/api/activity", json=bad)).status, 400, bad)
         self.assertEqual((await self.call("GET", "/api/activity?days=0")).status, 400)
 
+    async def test_activity_entries_can_be_corrected(self):
+        workout = await (await self.call("POST", "/api/activity", json={"kind": "workout", "minutes": 30, "title": "Бег"})).json()
+        fixed = await self.call("PATCH", f"/api/activity/{workout['id']}", json={"minutes": 45, "title": "Зал"})
+        self.assertEqual(fixed.status, 200, await fixed.text())
+        data = await (await self.call("GET", "/api/activity?days=7")).json()
+        workouts = [e for e in data["entries"] if e["kind"] == "workout"]
+        self.assertEqual([(e["minutes"], e["title"]) for e in workouts], [(45, "Зал")])
+        steps = await (await self.call("POST", "/api/activity", json={"kind": "steps", "value": 1000})).json()
+        yesterday = (activity.today() - timedelta(days=1)).isoformat()
+        moved = await (await self.call("PATCH", f"/api/activity/{steps['id']}", json={"value": 7000, "day": yesterday})).json()
+        self.assertEqual((moved["day"], moved["value"]), (yesterday, 7000))
+        data = await (await self.call("GET", "/api/activity?days=7")).json()
+        self.assertEqual([e["value"] for e in data["entries"] if e["kind"] == "steps"], [7000])
+        # неверная правка ничего не теряет; чужую запись не исправить
+        self.assertEqual((await self.call("PATCH", f"/api/activity/{moved['id']}", json={"value": -5})).status, 400)
+        self.assertEqual((await self.call("PATCH", f"/api/activity/{moved['id']}", json={"kind": "weight"})).status, 400)
+        self.assertEqual((await self.call("PATCH", f"/api/activity/{moved['id']}", json={"value": 9}, uid=2)).status, 404)
+        data = await (await self.call("GET", "/api/activity?days=7")).json()
+        self.assertEqual([e["value"] for e in data["entries"] if e["kind"] == "steps"], [7000])
+
+    async def test_phone_sync_saves_health_data_without_telegram(self):
+        # без ключа — отказ; ключ выдаётся только своему владельцу через Mini App
+        self.assertEqual((await self.client.post("/api/activity/sync", json={"steps": 1})).status, 401)
+        status = await (await self.call("GET", "/api/activity/sync/key")).json()
+        self.assertFalse(status["connected"])
+        with patch.dict(os.environ, {"MINI_APP_URL": "https://crownfail.shop/tagmarkets/app/"}):
+            created = await (await self.call("POST", "/api/activity/sync/key")).json()
+        self.assertEqual(created["url"], "https://crownfail.shop/tagmarkets/api/activity/sync")
+        key = created["key"]
+        self.assertNotIn(key, json.dumps(await (await self.call("GET", "/api/activity/sync/key")).json()))
+        # «Команды» присылают числа как придётся: строкой с пробелами, с запятой, с единицами
+        today = activity.today().isoformat()
+        sent = await self.client.post("/api/activity/sync", headers={"Authorization": f"Bearer {key}"},
+                                      json={"steps": "8 123", "weight": "72,4 кг", "sleep": 450, "pulse": "",
+                                            "workouts": [{"type": "Бег", "duration": "31.5", "calories": "280"}]})
+        self.assertEqual(sent.status, 200, await sent.text())
+        result = await sent.json()
+        self.assertEqual(result["saved"][today]["steps"], 8123)
+        # та же отправка ещё раз (автоматизация срабатывает несколько раз в день) — без дублей
+        again = await self.client.post(f"/api/activity/sync?key={key}", data={"steps": "9001"})
+        self.assertEqual(again.status, 200, await again.text())
+        await self.client.post("/api/activity/sync", headers={"X-Sync-Key": key},
+                               json={"workouts": [{"type": "Бег", "duration": 31.5}]})
+        data = await (await self.call("GET", "/api/activity?days=7")).json()
+        mine = {e["kind"]: e for e in data["entries"]}
+        self.assertEqual((mine["steps"]["value"], mine["steps"]["source"]), (9001, "auto"))
+        self.assertEqual(mine["weight"]["value"], 72.4)
+        self.assertEqual(mine["sleep"]["value"], 7.5)       # 450 минут
+        self.assertNotIn("pulse", mine)
+        self.assertEqual(len([e for e in data["entries"] if e["kind"] == "workout"]), 1)
+        self.assertTrue(data["sync"]["connected"] and data["sync"]["last_sync"])
+        # история за несколько дней разом; чужие данные не задеты
+        yesterday = (activity.today() - timedelta(days=1)).isoformat()
+        backfill = await self.client.post("/api/activity/sync", headers={"Authorization": f"Bearer {key}"},
+                                          json={"days": [{"date": yesterday + "T23:00:00+03:00", "steps": 5000}]})
+        self.assertEqual((await backfill.json())["saved"][yesterday]["steps"], 5000)
+        self.assertEqual((await (await self.call("GET", "/api/activity", uid=2)).json())["entries"], [])
+        # новый ключ отменяет старый, отключение — тоже
+        await self.call("POST", "/api/activity/sync/key")
+        self.assertEqual((await self.client.post("/api/activity/sync", headers={"Authorization": f"Bearer {key}"}, json={"steps": 1})).status, 401)
+        await self.call("DELETE", "/api/activity/sync/key")
+        self.assertFalse((await (await self.call("GET", "/api/activity/sync/key")).json())["connected"])
+        self.assertEqual((await self.client.post("/api/activity/sync?key=" + "x" * 32, json={"steps": 1})).status, 401)
+
+    async def test_station_preferences_are_per_user_and_validated(self):
+        home = await (await self.call("GET", "/api/bootstrap")).json()
+        self.assertEqual(home["station"]["home"], ["finance", "activity", "events", "wish"])
+        saved = await (await self.call("PUT", "/api/preferences/station",
+                                       json={"home": ["events", "finance"], "metrics": ["steps", "weight"]})).json()
+        self.assertEqual(saved["home"], ["events", "finance"])
+        self.assertIn("note", saved["quick"])          # неизменённое остаётся как было
+        self.assertEqual((await (await self.call("GET", "/api/bootstrap")).json())["station"]["metrics"], ["steps", "weight"])
+        self.assertEqual((await (await self.call("GET", "/api/preferences/station", uid=2)).json())["home"],
+                         ["finance", "activity", "events", "wish"])
+        for bad in ({"home": ["casino"]}, {"home": ["finance", "finance"]}, {"theme": []}, {"quick": "steps"}):
+            self.assertEqual((await self.call("PUT", "/api/preferences/station", json=bad)).status, 400, bad)
+
     async def test_wishlists_notes_and_calendar(self):
         created = await (await self.call("POST", "/api/wishlists", json={"title": "Фото", "emoji": "📷"})).json()
         lid = created["id"]

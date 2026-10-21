@@ -2,12 +2,20 @@
 
 Записи хранятся в серверной SQLite (STATE_DB) рядом с проектами и видны
 только владельцу. Дневные показатели — одно значение на день (новое значение
-заменяет прежнее), тренировок за день может быть сколько угодно. Данные
-вводятся вручную: так раздел одинаково работает на iPhone, Android и в
-браузере, без доступа к Apple Health или Health Connect.
+заменяет прежнее), тренировок за день может быть сколько угодно.
+
+Данные приходят сами: Mini App не может читать «Здоровье» iPhone или Health
+Connect напрямую, поэтому у каждого пользователя есть личный ключ
+синхронизации. Автоматизация на телефоне («Команды» на iPhone, приложение-
+автоматизатор на Android) отправляет показатели на /api/activity/sync — без
+Telegram и без участия человека. Такие записи помечены source="auto"; вручную
+можно добавить или поправить всё то же самое.
 """
 from datetime import date, datetime, timedelta, timezone
+import hashlib
 import math
+import re
+import secrets
 import uuid
 
 # показатель: (название, единица, допустимый диапазон, шаг округления)
@@ -44,7 +52,17 @@ def setup(db):
             target REAL NOT NULL,
             PRIMARY KEY (owner_id, kind)
         );
+        CREATE TABLE IF NOT EXISTS activity_sync (
+            owner_id TEXT PRIMARY KEY,
+            token_hash TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL,
+            last_sync TEXT,
+            last_saved TEXT
+        );
     """)
+    existing = {r[1] for r in db.execute("PRAGMA table_info(activity_entries)")}
+    if "source" not in existing:
+        db.execute("ALTER TABLE activity_entries ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'")
     db.commit()
 
 
@@ -80,10 +98,13 @@ def _text(value, limit, label):
     return value.strip()
 
 
+COLUMNS = "id,owner_id,day,kind,value,minutes,title,note,created_at,source"
+
+
 def _row(r):
     kind = r[3]
     entry = {"id": r[0], "day": r[2], "kind": kind, "value": r[4], "minutes": r[5],
-             "title": r[6], "note": r[7], "created_at": r[8]}
+             "title": r[6], "note": r[7], "created_at": r[8], "source": r[9]}
     if kind in DAILY:
         entry["label"], entry["unit"] = DAILY[kind][0], DAILY[kind][1]
     else:
@@ -91,7 +112,7 @@ def _row(r):
     return entry
 
 
-def add(db, owner, data):
+def add(db, owner, data, source="manual"):
     """Новая запись. Дневной показатель за тот же день заменяет прежний."""
     kind = data.get("kind")
     if kind not in KINDS:
@@ -108,8 +129,8 @@ def add(db, owner, data):
             calories = data.get("value")
             value = None if calories in (None, "") else _number(calories, 0, 20000, "Калории")
             entry_id = uuid.uuid4().hex
-            db.execute("INSERT INTO activity_entries (id,owner_id,day,kind,value,minutes,title,note,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
-                       (entry_id, str(owner), day, kind, value, minutes, title, note, now))
+            db.execute("INSERT INTO activity_entries (id,owner_id,day,kind,value,minutes,title,note,created_at,source) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                       (entry_id, str(owner), day, kind, value, minutes, title, note, now, source))
         else:
             label, _, (low, high), step = DAILY[kind]
             value = _number(data.get("value"), low, high, label)
@@ -118,13 +139,30 @@ def add(db, owner, data):
                              (str(owner), day, kind)).fetchone()
             entry_id = old[0] if old else uuid.uuid4().hex
             db.execute("DELETE FROM activity_entries WHERE owner_id=? AND day=? AND kind=?", (str(owner), day, kind))
-            db.execute("INSERT INTO activity_entries (id,owner_id,day,kind,value,minutes,title,note,created_at) VALUES (?,?,?,?,?,NULL,'',?,?)",
-                       (entry_id, str(owner), day, kind, value, note, now))
+            db.execute("INSERT INTO activity_entries (id,owner_id,day,kind,value,minutes,title,note,created_at,source) VALUES (?,?,?,?,?,NULL,'',?,?,?)",
+                       (entry_id, str(owner), day, kind, value, note, now, source))
     return get_entry(db, owner, entry_id)
 
 
+def replace(db, owner, entry_id, data):
+    """Исправить запись: те же проверки, что у новой; показатель записи не меняется.
+
+    Дневное значение, перенесённое на другой день, заменяет то, что там было.
+    """
+    old = get_entry(db, owner, entry_id)
+    merged = {"day": old["day"], "note": old["note"],
+              **({"minutes": old["minutes"], "title": old["title"], "value": old["value"]}
+                 if old["kind"] == WORKOUT else {"value": old["value"]}),
+              **data, "kind": old["kind"]}
+    if set(data) - {"day", "note", "value", "minutes", "title"}:
+        raise ValueError("Неизвестное поле записи")
+    with db:
+        db.execute("DELETE FROM activity_entries WHERE id=? AND owner_id=?", (entry_id, str(owner)))
+        return add(db, owner, merged)
+
+
 def get_entry(db, owner, entry_id):
-    row = db.execute("SELECT id,owner_id,day,kind,value,minutes,title,note,created_at FROM activity_entries WHERE id=? AND owner_id=?",
+    row = db.execute(f"SELECT {COLUMNS} FROM activity_entries WHERE id=? AND owner_id=?",
                      (entry_id, str(owner))).fetchone()
     if row is None:
         raise LookupError("Запись не найдена")
@@ -163,7 +201,7 @@ def overview(db, owner, days=30):
         raise ValueError(f"Период: от 1 до {MAX_DAYS} дней")
     end = today()
     start = end - timedelta(days=days - 1)
-    rows = db.execute("SELECT id,owner_id,day,kind,value,minutes,title,note,created_at FROM activity_entries WHERE owner_id=? AND day BETWEEN ? AND ? ORDER BY day DESC, created_at DESC",
+    rows = db.execute(f"SELECT {COLUMNS} FROM activity_entries WHERE owner_id=? AND day BETWEEN ? AND ? ORDER BY day DESC, created_at DESC",
                       (str(owner), start.isoformat(), end.isoformat())).fetchall()
     entries = [_row(r) for r in rows]
     week_from = (end - timedelta(days=6)).isoformat()
@@ -194,3 +232,134 @@ def overview(db, owner, days=30):
     }
     return {"from": start.isoformat(), "to": end.isoformat(), "days": days,
             "entries": entries, "summary": summary, "goals": goals(db, owner)}
+
+
+# ── автосинхронизация с телефона ─────────────────────────────────────────
+
+# Как поля называют разные автоматизации: «Команды» iOS, Tasker, MacroDroid…
+SYNC_FIELDS = {
+    "steps": ("steps", "step_count", "шаги"),
+    "weight": ("weight", "body_mass", "вес"),
+    "sleep": ("sleep", "sleep_hours", "сон"),
+    "water": ("water", "вода"),
+    "pulse": ("pulse", "resting_heart_rate", "heart_rate", "пульс"),
+}
+NUMBER_RE = re.compile(r"-?\d[\d\s  ]*(?:[.,]\d+)?")
+MAX_SYNC_DAYS = 31
+
+
+def _hash(token):
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def create_token(db, owner):
+    """Новый личный ключ синхронизации; прежний перестаёт работать. Сам ключ
+    показывается один раз — в базе только его хэш."""
+    token = secrets.token_urlsafe(24)
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with db:
+        db.execute("INSERT INTO activity_sync (owner_id,token_hash,created_at) VALUES (?,?,?) "
+                   "ON CONFLICT(owner_id) DO UPDATE SET token_hash=excluded.token_hash, created_at=excluded.created_at",
+                   (str(owner), _hash(token), now))
+    return token
+
+
+def revoke_token(db, owner):
+    with db:
+        db.execute("DELETE FROM activity_sync WHERE owner_id=?", (str(owner),))
+
+
+def owner_for(db, token):
+    if not isinstance(token, str) or not 16 <= len(token) <= 128:
+        return None
+    row = db.execute("SELECT owner_id FROM activity_sync WHERE token_hash=?", (_hash(token),)).fetchone()
+    return row[0] if row else None
+
+
+def sync_status(db, owner):
+    row = db.execute("SELECT created_at,last_sync,last_saved FROM activity_sync WHERE owner_id=?", (str(owner),)).fetchone()
+    if row is None:
+        return {"connected": False, "last_sync": None, "last_saved": None}
+    return {"connected": True, "created_at": row[0], "last_sync": row[1], "last_saved": row[2]}
+
+
+def loose_number(value):
+    """Число из того, что прислала автоматизация: 8123, "8 123", "72,4 кг", "7.5"."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value) if math.isfinite(value) else None
+    if isinstance(value, str):
+        found = NUMBER_RE.search(value)
+        if found:
+            raw = re.sub(r"[\s  ]", "", found.group()).replace(",", ".")
+            try:
+                return float(raw)
+            except ValueError:
+                return None
+    return None
+
+
+def _sync_day(value):
+    """День из «2026-10-21», «2026-10-21T22:00:00+03:00» или пусто — сегодня."""
+    if value in (None, ""):
+        return today().isoformat()
+    return _day(str(value)[:10])
+
+
+def ingest(db, owner, payload):
+    """Сохраняет присланные показатели за день (или за несколько дней в "days").
+
+    Пустые и непонятные поля пропускаются, а не роняют всю отправку: если у
+    человека нет весов, «Команды» пришлют пустой вес вместе с нормальными шагами.
+    Сон больше 24 считается присланным в минутах.
+    """
+    if not isinstance(payload, dict):
+        raise ValueError("Ожидается JSON-объект")
+    days = payload.get("days")
+    batches = days if isinstance(days, list) else [payload]
+    if not batches or len(batches) > MAX_SYNC_DAYS:
+        raise ValueError(f"За раз — от 1 до {MAX_SYNC_DAYS} дней")
+    saved, skipped = {}, []
+    for batch in batches:
+        if not isinstance(batch, dict):
+            raise ValueError("Каждый день — JSON-объект")
+        day = _sync_day(batch.get("day", batch.get("date")))
+        for kind, names in SYNC_FIELDS.items():
+            raw = next((batch[n] for n in names if n in batch), None)
+            if raw in (None, ""):
+                continue
+            value = loose_number(raw)
+            if kind == "sleep" and value is not None and 24 < value <= 1440:
+                value = value / 60
+            try:
+                if value is None:
+                    raise ValueError
+                add(db, owner, {"kind": kind, "day": day, "value": value}, source="auto")
+                saved.setdefault(day, {})[kind] = value
+            except ValueError:
+                skipped.append(f"{day}:{kind}")
+        for workout in batch.get("workouts") or []:
+            if not isinstance(workout, dict):
+                continue
+            minutes = loose_number(workout.get("minutes", workout.get("duration")))
+            title = str(workout.get("title") or workout.get("type") or "Тренировка")[:64]
+            if minutes is None or not 1 <= round(minutes) <= 1440:
+                skipped.append(f"{day}:workout")
+                continue
+            minutes = round(minutes)
+            # та же тренировка придёт и при следующей синхронизации — второй раз не пишем
+            if db.execute("SELECT 1 FROM activity_entries WHERE owner_id=? AND day=? AND kind=? AND source='auto' AND title=? AND minutes=?",
+                          (str(owner), day, WORKOUT, title, minutes)).fetchone():
+                continue
+            calories = loose_number(workout.get("calories"))
+            add(db, owner, {"kind": WORKOUT, "day": day, "minutes": minutes, "title": title,
+                            "value": calories if calories is not None and 0 <= calories <= 20000 else None},
+                source="auto")
+            saved.setdefault(day, {}).setdefault("workouts", 0)
+            saved[day]["workouts"] += 1
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with db:
+        db.execute("UPDATE activity_sync SET last_sync=?, last_saved=? WHERE owner_id=?",
+                   (now, ", ".join(sorted({k for d in saved.values() for k in d})) or None, str(owner)))
+    return {"ok": True, "saved": saved, "skipped": skipped}

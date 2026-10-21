@@ -353,6 +353,7 @@ async def bootstrap(request):
                 "updated_at": fx_info["updated_at"]}
                if byn_per_unit else None), "fx_error": fx_error,
         "display_currency": display_currency,
+        "station": station_prefs(db, uid),
         "onboarding": {"needed": not own_accounts,
                         "later": partner.kv_get(db, f"onboard:{uid}:later") == "1",
                         "registration_url": registration_url,
@@ -1390,14 +1391,65 @@ async def activity_api(request):
     if request.method == "GET":
         raw = request.query.get("days", "30")
         days = int(raw) if raw.isdigit() else -1
-        return web.json_response(_section_call(lambda: activity.overview(db, uid, days)))
+        result = _section_call(lambda: activity.overview(db, uid, days))
+        return web.json_response({**result, "sync": activity.sync_status(db, uid)})
     if request.method == "DELETE":
         _section_call(lambda: activity.delete(db, uid, entry_id))
         return web.json_response({"ok": True})
     data = await json_object(request)
+    if request.method == "PATCH":
+        return web.json_response(_section_call(lambda: activity.replace(db, uid, entry_id, data)))
     if request.path.endswith("/goals"):
         return web.json_response({"goals": _section_call(lambda: activity.set_goals(db, uid, data))})
     return web.json_response(_section_call(lambda: activity.add(db, uid, data)), status=201)
+
+
+def sync_url(request):
+    """Адрес для автоматизации на телефоне — тот же, по которому открыт Mini App."""
+    base = os.getenv("MINI_APP_URL", "").strip()
+    if base.startswith("https://"):
+        return base.rstrip("/").rsplit("/app", 1)[0] + "/api/activity/sync"
+    return str(request.url.with_path("/api/activity/sync").with_query(None))
+
+
+async def activity_sync(request):
+    """Приём показателей с телефона: без Telegram, по личному ключу.
+
+    Ключ — заголовок «Authorization: Bearer …», «X-Sync-Key» или параметр
+    ?key=… (не во всех автоматизаторах удобно задавать заголовки). Тело — JSON
+    или обычная форма: «Команды» iOS умеют и то и другое.
+    """
+    auth = request.headers.get("Authorization", "")
+    key = (auth[7:].strip() if auth.lower().startswith("bearer ") else
+           request.headers.get("X-Sync-Key") or request.query.get("key"))
+    db = request.app["db"]
+    owner = activity.owner_for(db, key)
+    if owner is None or partner.kv_get(db, f"left:{owner}") == "1":
+        raise web.HTTPUnauthorized(text="Ключ синхронизации не подходит — создайте новый в приложении")
+    now = time.monotonic()
+    start, count = _rates.pop(f"sync:{owner}", (now, 0))
+    if now - start >= 60:
+        start, count = now, 0
+    _rates[f"sync:{owner}"] = (start, count + 1)
+    if count >= 30:
+        raise web.HTTPTooManyRequests(text="Слишком часто — достаточно раза в несколько минут")
+    if request.content_type in ("application/x-www-form-urlencoded", "multipart/form-data"):
+        payload = {k: v for k, v in (await request.post()).items() if isinstance(v, str)}
+    else:
+        payload = await request.json()
+    return web.json_response(_section_call(lambda: activity.ingest(db, owner, payload)))
+
+
+async def activity_sync_key(request):
+    """Ключ синхронизации владельца: GET — состояние, POST — новый ключ, DELETE — отключить."""
+    uid, _ = authorize(request)
+    db = request.app["db"]
+    if request.method == "POST":
+        key = activity.create_token(db, uid)
+        return web.json_response({**activity.sync_status(db, uid), "key": key, "url": sync_url(request)})
+    if request.method == "DELETE":
+        activity.revoke_token(db, uid)
+    return web.json_response({**activity.sync_status(db, uid), "url": sync_url(request)})
 
 
 async def lists_api(request):
@@ -1436,6 +1488,49 @@ async def lists_api(request):
             return web.json_response({"ok": True})
         result = _section_call(lambda: lists.save_event(db, uid, data, event_id))
     return web.json_response(result, status=201 if method == "POST" else 200)
+
+
+# Что показывать в Станции — у каждого своё и одинаково на всех устройствах:
+# карточки главной и их порядок, быстрые кнопки, показатели «Активностей»
+STATION_CHOICES = {
+    "home": ("finance", "activity", "events", "wish"),
+    "quick": ("steps", "weight", "workout", "sleep", "water", "event", "note", "wish"),
+    "metrics": ("steps", "weight", "workout", "sleep", "water", "pulse"),
+}
+STATION_DEFAULTS = {"home": list(STATION_CHOICES["home"]),
+                    "quick": ["steps", "weight", "workout", "event", "note", "wish"],
+                    "metrics": list(STATION_CHOICES["metrics"])}
+
+
+def station_prefs(db, uid):
+    try:
+        saved = json.loads(partner.kv_get(db, f"station_prefs:{uid}") or "{}")
+    except (TypeError, ValueError):
+        saved = {}
+    out = {}
+    for key, allowed in STATION_CHOICES.items():
+        value = saved.get(key) if isinstance(saved, dict) else None
+        out[key] = ([v for v in value if v in allowed] if isinstance(value, list)
+                    else list(STATION_DEFAULTS[key]))
+    return out
+
+
+async def station_preferences(request):
+    uid, _ = authorize(request)
+    db = request.app["db"]
+    if request.method == "GET":
+        return web.json_response(station_prefs(db, uid))
+    data = await json_object(request)
+    if set(data) - set(STATION_CHOICES):
+        raise ValueError("Неизвестная настройка")
+    current = station_prefs(db, uid)
+    for key, value in data.items():
+        if (not isinstance(value, list) or len(value) != len(set(value))
+                or any(v not in STATION_CHOICES[key] for v in value)):
+            raise ValueError(f"Некорректный список: {key}")
+        current[key] = value
+    partner.kv_set(db, f"station_prefs:{uid}", json.dumps(current))
+    return web.json_response(current)
 
 
 async def display_preference(request):
@@ -1494,10 +1589,17 @@ def setup(app):
     app.router.add_post("/api/projects/{project_id}/accounts", project_api)
     app.router.add_patch("/api/projects/{project_id}/accounts/{account_id}", project_api)
     app.router.add_delete("/api/projects/{project_id}/accounts/{account_id}", project_api)
+    app.router.add_post("/api/activity/sync", activity_sync)
+    app.router.add_get("/api/activity/sync/key", activity_sync_key)
+    app.router.add_post("/api/activity/sync/key", activity_sync_key)
+    app.router.add_delete("/api/activity/sync/key", activity_sync_key)
     app.router.add_get("/api/activity", activity_api)
     app.router.add_post("/api/activity", activity_api)
     app.router.add_put("/api/activity/goals", activity_api)
     app.router.add_delete("/api/activity/{entry_id}", activity_api)
+    app.router.add_patch("/api/activity/{entry_id}", activity_api)
+    app.router.add_get("/api/preferences/station", station_preferences)
+    app.router.add_put("/api/preferences/station", station_preferences)
     app.router.add_get("/api/lists", lists_api)
     app.router.add_post("/api/wishlists", lists_api)
     app.router.add_patch("/api/wishlists/{list_id}", lists_api)
