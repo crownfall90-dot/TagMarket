@@ -33,6 +33,7 @@ import activity
 import bot as logic
 import coordination
 import fx
+import insights
 import lists
 import partner
 import projects
@@ -354,6 +355,8 @@ async def bootstrap(request):
                if byn_per_unit else None), "fx_error": fx_error,
         "display_currency": display_currency,
         "station": station_prefs(db, uid),
+        "insights": insights_for(db, uid, display_currency, byn_per_unit,
+                                 (totals["USD"]["month"], totals["USD"]["today"], "USD") if totals.get("USD") else None),
         "onboarding": {"needed": not own_accounts,
                         "later": partner.kv_get(db, f"onboard:{uid}:later") == "1",
                         "registration_url": registration_url,
@@ -1500,13 +1503,58 @@ async def lists_api(request):
 # Что показывать в Станции — у каждого своё и одинаково на всех устройствах:
 # карточки главной и их порядок, быстрые кнопки, показатели «Активностей»
 STATION_CHOICES = {
-    "home": ("finance", "activity", "events", "wish"),
-    "quick": ("steps", "weight", "workout", "sleep", "water", "event", "note", "wish"),
+    "home": ("circle", "finance", "activity", "tasks", "events", "wish"),
+    "quick": ("task", "steps", "weight", "workout", "sleep", "water", "event", "note", "wish"),
     "metrics": ("steps", "weight", "workout", "sleep", "water", "pulse"),
 }
 STATION_DEFAULTS = {"home": list(STATION_CHOICES["home"]),
-                    "quick": ["steps", "weight", "workout", "event", "note", "wish"],
+                    "quick": ["task", "steps", "weight", "workout", "event", "note", "wish"],
                     "metrics": list(STATION_CHOICES["metrics"])}
+
+
+_tag_cache = OrderedDict()      # uid -> (month, today, currency): TagMarket для круга жизни между обновлениями
+
+
+def insights_for(db, uid, display="USD", rates=None, tag=None):
+    """Круг жизни пользователя по его данным; любой сбой не должен ломать приложение."""
+    def conv(value, cur):
+        if value is None:
+            return None
+        if cur == display:
+            return float(value)
+        if rates and rates.get(cur) and rates.get(display):
+            return float(value) * rates[cur] / rates[display]
+        return None
+    try:
+        projects = []
+        for p in projects_list(db, uid):
+            daily = p["daily_income"] if not p["calculation_limited"] else None
+            projects.append({"name": p["name"], "paused": p["paused"], "income_starts": p["income_starts"],
+                             "daily_income": conv(daily, p["currency"]) if daily is not None else None})
+        if tag is not None:
+            _tag_cache[str(uid)] = tag
+            while len(_tag_cache) > 4096:
+                _tag_cache.popitem(last=False)
+        month, today_net, cur = _tag_cache.get(str(uid), (None, None, "USD"))
+        tag_part = None if month is None else {"month": conv(month, cur) or 0, "today": conv(today_net, cur)}
+        summary = activity.overview(db, uid, 30)
+        sync = activity.sync_status(db, uid)
+        sync["stale"] = bool(sync["connected"] and sync["last_sync"] and
+                             datetime.now(timezone.utc) - datetime.fromisoformat(sync["last_sync"]) > timedelta(hours=36))
+        now = lists.today()
+        events = lists.events_between(db, uid, now.isoformat(), (now + timedelta(days=7)).isoformat())["events"]
+        return insights.analyze({
+            "finance": {"currency": display, "projects": projects, "tag": tag_part},
+            "activity": {**summary, "sync": sync}, "tasks": lists.tasks(db, uid), "events": events,
+            "wishlists": lists.wishlists(db, uid), "friends": len(logic.guests_of(db, uid))},
+            now, hour=int(datetime.now(timezone(timedelta(hours=3))).strftime("%H")))
+    except Exception:
+        logging.getLogger("miniapp").exception("insights failed")
+        return None
+
+
+def projects_list(db, uid):
+    return projects.list_for(db, uid)
 
 
 def station_prefs(db, uid):
@@ -1538,6 +1586,23 @@ async def station_preferences(request):
         current[key] = value
     partner.kv_set(db, f"station_prefs:{uid}", json.dumps(current))
     return web.json_response(current)
+
+
+async def insights_api(request):
+    """Круг жизни без полной перезагрузки: после правки задач, активностей, проектов."""
+    uid, _ = authorize(request)
+    db = request.app["db"]
+    display = partner.kv_get(db, f"display_currency:{uid}", "USD")
+    rates = None
+    if display != "USD":
+        try:
+            rates = (await fx_snapshot(db))["rates"]
+        except fx.FxUnavailable:
+            rates = None
+    result = insights_for(db, uid, display, rates)
+    if result is None:
+        raise web.HTTPServiceUnavailable(text="Не удалось построить круг жизни")
+    return web.json_response(result)
 
 
 async def display_preference(request):
@@ -1600,6 +1665,7 @@ def setup(app):
     app.router.add_get("/api/activity/sync/key", activity_sync_key)
     app.router.add_post("/api/activity/sync/key", activity_sync_key)
     app.router.add_delete("/api/activity/sync/key", activity_sync_key)
+    app.router.add_get("/api/insights", insights_api)
     app.router.add_get("/api/activity", activity_api)
     app.router.add_post("/api/activity", activity_api)
     app.router.add_put("/api/activity/goals", activity_api)

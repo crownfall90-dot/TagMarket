@@ -12,9 +12,9 @@ import math
 SPHERES = (
     ("finance", "Финансы", "#projects"),
     ("health", "Здоровье", "#activity"),
-    ("tasks", "Дела", "#plans"),
-    ("plans", "Планы", "#plans"),
-    ("dreams", "Мечты", "#lists"),
+    ("tasks", "Дела", "#plans/tasks"),
+    ("plans", "Планы", "#plans/calendar"),
+    ("dreams", "Мечты", "#plans/wish"),
     ("people", "Люди", "#people"),
 )
 SIGNS = {"USD": "$", "RUB": "₽", "BYN": "Br", "EUR": "€"}
@@ -83,10 +83,10 @@ def analyze(data, today, hour=12):
             score += 35 if month >= 0 else 10
             if today_net:
                 out.append((30, "finance", "good" if today_net > 0 else "warn",
-                            f"TagMarket сегодня {'+' if today_net > 0 else ''}{money(today_net, 'USD', True)}"
-                            + (f" · за месяц {'+' if month > 0 else ''}{money(month, 'USD')}" if month else ""), "#tagmarket"))
+                            f"TagMarket сегодня {'+' if today_net > 0 else ''}{money(today_net, cur, True)}"
+                            + (f" · за месяц {'+' if month > 0 else ''}{money(month, cur)}" if month else ""), "#tagmarket"))
             elif month < 0:
-                out.append((35, "finance", "warn", f"TagMarket в этом месяце {money(month, 'USD')}", "#tagmarket"))
+                out.append((35, "finance", "warn", f"TagMarket в этом месяце {money(month, cur)}", "#tagmarket"))
         else:
             score += 25
         paused = [p for p in projects if p.get("paused")]
@@ -163,11 +163,11 @@ def analyze(data, today, hour=12):
     if tasks:
         scores["tasks"] = 100 * (len(done_week) + 1) / (len(done_week) + len(open_tasks) + 1) - 12 * len(overdue)
         if overdue:
-            out.append((5, "tasks", "warn", f"Просрочено: {len(overdue)} {plural(len(overdue), 'задача', 'задачи', 'задач')} — «{overdue[0]['title']}»", "#plans"))
+            out.append((5, "tasks", "warn", f"Просрочено: {len(overdue)} {plural(len(overdue), 'задача', 'задачи', 'задач')} — «{overdue[0]['title']}»", "#plans/tasks"))
         if due_today:
-            out.append((8, "tasks", "info", f"На сегодня: {', '.join('«' + t['title'] + '»' for t in due_today[:3])}", "#plans"))
+            out.append((8, "tasks", "info", f"На сегодня: {', '.join('«' + t['title'] + '»' for t in due_today[:3])}", "#plans/tasks"))
         if done_week:
-            out.append((48, "tasks", "good", f"За неделю закрыто {len(done_week)} {plural(len(done_week), 'задача', 'задачи', 'задач')}", "#plans"))
+            out.append((48, "tasks", "good", f"За неделю закрыто {len(done_week)} {plural(len(done_week), 'задача', 'задачи', 'задач')}", "#plans/tasks"))
     tasks_status = (f"просрочено {len(overdue)}" if overdue else f"на сегодня {len(due_today)}" if due_today
                     else f"открыто {len(open_tasks)}" if open_tasks else "задач нет")
 
@@ -178,10 +178,10 @@ def analyze(data, today, hour=12):
         scores["plans"] = 45 + min(len(soon), 4) * 10 + (15 if any(t.get("due") for t in open_tasks) else 0)
     for e in events:
         if e["date"] == iso:
-            out.append((6, "plans", "info", f"Сегодня{(' в ' + e['time']) if e.get('time') else ''}: {e['title']}", "#plans"))
+            out.append((6, "plans", "info", f"Сегодня{(' в ' + e['time']) if e.get('time') else ''}: {e['title']}", "#plans/calendar"))
         elif e["date"] == (today + timedelta(days=1)).isoformat():
             gift = any(w in e["title"].lower() for w in ("др", "день рождения", "birthday"))
-            out.append((10, "plans", "info", f"Завтра: {e['title']}" + (" — подарок уже выбран?" if gift else ""), "#plans"))
+            out.append((10, "plans", "info", f"Завтра: {e['title']}" + (" — подарок уже выбран?" if gift else ""), "#plans/calendar"))
     plans_status = f"{len(soon)} {plural(len(soon), 'событие', 'события', 'событий')} на неделе" if soon else "неделя свободна"
 
     # ── мечты ──
@@ -194,7 +194,7 @@ def analyze(data, today, hour=12):
         if priced and daily > 0:
             first = priced[0]
             days = math.ceil(first["price"] / daily)
-            out.append((42, "dreams", "good", f"«{first['title']}» за {money(first['price'], cur)} — это ≈ {days} {plural(days, 'день', 'дня', 'дней')} дохода проектов", "#lists"))
+            out.append((42, "dreams", "good", f"«{first['title']}» за {money(first['price'], cur)} — это ≈ {days} {plural(days, 'день', 'дня', 'дней')} дохода проектов", "#plans/wish"))
     dreams_status = (f"{sum(not i['done'] for i in items)} {plural(sum(not i['done'] for i in items), 'желание', 'желания', 'желаний')}"
                      if wishlists else "создайте первый вишлист")
 

@@ -282,12 +282,29 @@ def guest_with_shared_account_sees_home_and_opens_guide_on_demand(page):
 
 
 def station_sections(page, nav):
-    """Главная Станции и новые разделы: активности, вишлисты, заметки, календарь."""
+    """Главная Станции, круг жизни, активности, планы (задачи, календарь, заметки, желания) и настройки."""
     page.locator(f'{nav} a[href="#overview"]').click()
     page.locator('.home-grid').wait_for()
-    assert page.locator('.home-card').count() == 4
-    assert page.locator('.home-chip').count() == 6
+    assert page.locator('.greet').count() == 1 and page.locator('.greet-title').inner_text().strip()
+    assert page.locator('.home-card').count() == 6          # круг, финансы, активности, дела, ближайшее, желания
+    assert page.locator('.home-chip').count() == 7
+    assert page.locator('.home-circle .circle-seg').count() == 6
+    assert page.locator('.home-circle .insight').count() >= 3
     assert page.locator('.page-head [data-action="onboard-open"]').count() == 0, "на главной не навязываем счёт"
+    fits(page)
+    # число в приветствии «набегает» и приходит к итогу
+    page.wait_for_function("[...document.querySelectorAll('.greet .count-up')].every(e => e.textContent === formatCount(Number(e.dataset.to), e.dataset.format))")
+    # настройка главной: скрыть карточку и вернуть
+    page.locator('[data-action="home-settings"]').click()
+    page.locator('#dialog [data-pref-row]').first.wait_for()
+    assert page.locator('#dialog [data-pref-row][data-group="home"]').count() == 6
+    close_dialog(page)
+    # круг жизни открывается из карточки и ведёт в сферы
+    page.locator('.home-circle a.text-link').click()
+    page.locator('.circle-hero .circle-ring').wait_for()
+    assert page.locator('.sphere-row').count() == 6 and page.locator('.insight').count() >= 3
+    assert page.locator(f'{nav} a[href="#overview"].active').count() == 1
+    assert page.locator('.circle-core b').inner_text().strip().isdigit()
     fits(page)
     page.locator(f'{nav} a[href="#activity"]').click()
     page.locator('.act-grid').wait_for()
@@ -295,6 +312,7 @@ def station_sections(page, nav):
     assert page.locator('.act-card').count() == 6
     steps = '[data-ui-key="act-chart-steps"] .act-bars .bar'
     assert page.locator(steps).count() == 30
+    assert page.locator('.auto-tag').count() >= 1, "записи с телефона помечены «авто»"
     assert page.locator('.act-entry').count() > 0
     page.locator('.act-days [data-value="7"]').click()
     page.wait_for_function("s => document.querySelectorAll(s).length === 7", arg=steps)
@@ -305,9 +323,30 @@ def station_sections(page, nav):
     assert page.locator('#dialog .act-fields-daily').is_visible() and page.locator('#dialog .act-fields-workout').is_hidden()
     fits(page)
     close_dialog(page)
-    page.locator(f'{nav} a[href="#lists"]').click()
-    page.locator('.wish-grid').wait_for()
+    page.locator('.act-entry-main').first.click()           # запись можно исправить
+    page.locator('#dialog input[name="day"]').wait_for()
+    close_dialog(page)
+    page.locator('[data-action="activity-sync"]').first.click()
+    page.locator('#dialog .sync-steps').first.wait_for()
+    assert page.locator('#dialog .sync-code').count() >= 1
+    page.locator('#dialog [data-sync-os="android"]').click()
+    assert page.locator('#dialog [data-sync-guide="android"]').is_visible()
+    fits(page)
+    close_dialog(page)
+    page.locator(f'{nav} a[href="#plans"]').click()
+    page.locator('.task-quick').wait_for()
     glider_on_active(page, nav)
+    assert page.locator('.task-group').count() >= 3
+    assert page.locator('.task-group.late .task').count() == 1
+    # в предпросмотре изменения отключены: галочка сразу отзывается, сервер откажет понятным сообщением
+    page.locator('.task-group.today .wish-check').first.click()
+    page.locator('.task-group.today .task.done').wait_for()
+    page.locator('.task').first.locator('.wish-title').click()
+    page.locator('#dialog [data-due-set]').first.wait_for()
+    close_dialog(page)
+    fits(page)
+    page.locator('.lists-tabs [data-value="wish"]').click()
+    page.locator('.wish-grid').wait_for()
     assert page.locator('.wish-list').count() == 2
     assert page.locator('.wish-items li.done').count() == 1
     fits(page)
@@ -323,10 +362,15 @@ def station_sections(page, nav):
     assert page.locator('.cal-cell.today').count() == 1
     page.locator('[data-action="cal-month"][data-value="1"]').click()
     page.wait_for_function("document.querySelector('.cal-cell.today') === null")
-    page.locator('[data-action="cal-month"][data-value="-1"]').click()
+    page.locator('[data-action="cal-today"]').click()
     page.locator('.cal-cell.today').wait_for()
     page.locator('.cal-cell.today').click()
     assert page.locator('.cal-day-panel h2').inner_text() == 'Сегодня'
+    fits(page)
+    # настройки Станции — в общих «Настройках»
+    page.locator('#settings-link').click()
+    page.locator('.station-settings').wait_for()
+    assert page.locator('.station-row').count() == 3
     fits(page)
 
 

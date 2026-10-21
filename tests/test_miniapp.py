@@ -1626,16 +1626,42 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.call("PATCH", f"/api/tasks/{task['id']}", json={"done": False}, uid=2)).status, 404)
         self.assertEqual((await self.call("DELETE", f"/api/tasks/{task['id']}")).status, 200)
 
+    async def test_life_circle_follows_the_users_data(self):
+        empty = (await (await self.call("GET", "/api/insights", uid=3)).json())
+        self.assertEqual({s["id"]: s["score"] for s in empty["spheres"]}["tasks"], None)
+        yesterday = (lists.today() - timedelta(days=1)).isoformat()
+        await self.call("POST", "/api/tasks", json={"title": "Сдать отчёт", "due": yesterday, "area": "work"})
+        await self.call("POST", "/api/projects", json={"name": "Вклад", "currency": "USD", "rate_percent": 3,
+                                                       "period": "month", "multi": False, "accounts": [{"amount": 3000}]})
+        await self.call("POST", "/api/events", json={"day": lists.today().isoformat(), "title": "Встреча", "time": "18:00"})
+        home = await (await self.call("GET", "/api/bootstrap")).json()
+        circle = home["insights"]
+        texts = [i["text"] for i in circle["insights"]]
+        self.assertTrue(any("Просрочено: 1 задача" in t and "Сдать отчёт" in t for t in texts), texts)
+        self.assertTrue(any("Проекты приносят" in t for t in texts), texts)
+        self.assertTrue(any(t.startswith("Сегодня в 18:00: Встреча") for t in texts), texts)
+        scores = {s["id"]: s for s in circle["spheres"]}
+        self.assertIsNotNone(scores["finance"]["score"])
+        self.assertLess(scores["tasks"]["score"], 100)
+        self.assertEqual(scores["tasks"]["status"], "просрочено 1")
+        # после правки круг обновляется без полной перезагрузки; чужие данные не видны
+        tasks = (await (await self.call("GET", "/api/lists")).json())["tasks"]
+        await self.call("PATCH", f"/api/tasks/{tasks[0]['id']}", json={"done": True})
+        fresh = await (await self.call("GET", "/api/insights")).json()
+        self.assertFalse(any("Просрочено" in i["text"] for i in fresh["insights"]))
+        other = await (await self.call("GET", "/api/insights", uid=2)).json()
+        self.assertFalse(any("Сдать отчёт" in i["text"] for i in other["insights"]))
+
     async def test_station_preferences_are_per_user_and_validated(self):
         home = await (await self.call("GET", "/api/bootstrap")).json()
-        self.assertEqual(home["station"]["home"], ["finance", "activity", "events", "wish"])
+        self.assertEqual(home["station"]["home"], ["circle", "finance", "activity", "tasks", "events", "wish"])
         saved = await (await self.call("PUT", "/api/preferences/station",
                                        json={"home": ["events", "finance"], "metrics": ["steps", "weight"]})).json()
         self.assertEqual(saved["home"], ["events", "finance"])
         self.assertIn("note", saved["quick"])          # неизменённое остаётся как было
         self.assertEqual((await (await self.call("GET", "/api/bootstrap")).json())["station"]["metrics"], ["steps", "weight"])
         self.assertEqual((await (await self.call("GET", "/api/preferences/station", uid=2)).json())["home"],
-                         ["finance", "activity", "events", "wish"])
+                         ["circle", "finance", "activity", "tasks", "events", "wish"])
         for bad in ({"home": ["casino"]}, {"home": ["finance", "finance"]}, {"theme": []}, {"quick": "steps"}):
             self.assertEqual((await self.call("PUT", "/api/preferences/station", json=bad)).status, 400, bad)
 
