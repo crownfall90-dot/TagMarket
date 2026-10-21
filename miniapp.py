@@ -29,9 +29,11 @@ from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarku
 
 os.environ["TRADES_SOURCE"] = "store"
 import accounts
+import activity
 import bot as logic
 import coordination
 import fx
+import lists
 import partner
 import projects
 import store
@@ -1405,6 +1407,72 @@ async def tagmarket_forecast(request):
     return web.json_response(projects.tag_forecast(list(series.values()), start, target))
 
 
+def _section_call(fn):
+    """Ошибки разделов → HTTP: чужая или удалённая запись — 404, неверные данные — 400."""
+    try:
+        return fn()
+    except LookupError as exc:
+        raise web.HTTPNotFound(text=str(exc))
+    except ValueError as exc:
+        raise web.HTTPBadRequest(text=str(exc))
+
+
+async def activity_api(request):
+    """Активности: GET — сводка за ?days=, POST — запись, DELETE /{id}, PUT /goals."""
+    uid, _ = authorize(request)
+    db = request.app["db"]
+    entry_id = request.match_info.get("entry_id")
+    if request.method == "GET":
+        raw = request.query.get("days", "30")
+        days = int(raw) if raw.isdigit() else -1
+        return web.json_response(_section_call(lambda: activity.overview(db, uid, days)))
+    if request.method == "DELETE":
+        _section_call(lambda: activity.delete(db, uid, entry_id))
+        return web.json_response({"ok": True})
+    data = await json_object(request)
+    if request.path.endswith("/goals"):
+        return web.json_response({"goals": _section_call(lambda: activity.set_goals(db, uid, data))})
+    return web.json_response(_section_call(lambda: activity.add(db, uid, data)), status=201)
+
+
+async def lists_api(request):
+    """Вишлисты, заметки и календарь — один обработчик на все пути раздела."""
+    uid, _ = authorize(request)
+    db = request.app["db"]
+    info, method, path = request.match_info, request.method, request.path
+    data = await json_object(request) if method in {"POST", "PATCH"} else {}
+    if path == "/api/lists":
+        return web.json_response({"wishlists": lists.wishlists(db, uid), "notes": lists.notes(db, uid),
+                                  "upcoming": lists.upcoming(db, uid)})
+    if path.startswith("/api/wishlists"):
+        list_id, item_id = info.get("list_id"), info.get("item_id")
+        if "/items" in path:
+            if method == "DELETE":
+                return web.json_response(_section_call(lambda: lists.delete_item(db, uid, list_id, item_id)))
+            result = _section_call(lambda: lists.save_item(db, uid, list_id, data, item_id))
+        elif method == "DELETE":
+            _section_call(lambda: lists.delete_wishlist(db, uid, list_id))
+            return web.json_response({"ok": True})
+        else:
+            result = _section_call(lambda: lists.save_wishlist(db, uid, data, list_id))
+    elif path.startswith("/api/notes"):
+        note_id = info.get("note_id")
+        if method == "DELETE":
+            _section_call(lambda: lists.delete_note(db, uid, note_id))
+            return web.json_response({"ok": True})
+        result = _section_call(lambda: lists.save_note(db, uid, data, note_id))
+    else:
+        event_id = info.get("event_id")
+        if method == "GET":
+            return web.json_response(_section_call(lambda: lists.events_between(
+                db, uid, request.query.get("from"), request.query.get("to"))))
+        if method == "DELETE":
+            _section_call(lambda: lists.delete_event(db, uid, event_id))
+            return web.json_response({"ok": True})
+        result = _section_call(lambda: lists.save_event(db, uid, data, event_id))
+    return web.json_response(result, status=201 if method == "POST" else 200)
+
+
 async def display_preference(request):
     uid, _ = authorize(request)
     key = f"display_currency:{uid}"
@@ -1422,6 +1490,8 @@ def setup(app):
     global _state_db
     _state_db = app["db"]
     projects.setup(app["db"])
+    activity.setup(app["db"])
+    lists.setup(app["db"])
     # Legacy copies lack provenance. Matching only a login is unsafe: an
     # independently added account may use that number with another password.
     with locked(accounts.PATH):
@@ -1459,6 +1529,24 @@ def setup(app):
     app.router.add_post("/api/projects/{project_id}/accounts", project_api)
     app.router.add_patch("/api/projects/{project_id}/accounts/{account_id}", project_api)
     app.router.add_delete("/api/projects/{project_id}/accounts/{account_id}", project_api)
+    app.router.add_get("/api/activity", activity_api)
+    app.router.add_post("/api/activity", activity_api)
+    app.router.add_put("/api/activity/goals", activity_api)
+    app.router.add_delete("/api/activity/{entry_id}", activity_api)
+    app.router.add_get("/api/lists", lists_api)
+    app.router.add_post("/api/wishlists", lists_api)
+    app.router.add_patch("/api/wishlists/{list_id}", lists_api)
+    app.router.add_delete("/api/wishlists/{list_id}", lists_api)
+    app.router.add_post("/api/wishlists/{list_id}/items", lists_api)
+    app.router.add_patch("/api/wishlists/{list_id}/items/{item_id}", lists_api)
+    app.router.add_delete("/api/wishlists/{list_id}/items/{item_id}", lists_api)
+    app.router.add_post("/api/notes", lists_api)
+    app.router.add_patch("/api/notes/{note_id}", lists_api)
+    app.router.add_delete("/api/notes/{note_id}", lists_api)
+    app.router.add_get("/api/events", lists_api)
+    app.router.add_post("/api/events", lists_api)
+    app.router.add_patch("/api/events/{event_id}", lists_api)
+    app.router.add_delete("/api/events/{event_id}", lists_api)
     app.router.add_get("/api/notifications", notifications)
     app.router.add_post("/api/notifications", notifications)
     app.router.add_post("/api/onboarding", onboarding_progress)
