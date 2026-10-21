@@ -787,34 +787,21 @@ def invite_link(username: str, token: str) -> str:
 
 
 def onboarding_message(db, uid) -> str:
-    done = onboarding_status(db, uid)
-    steps = [
-        ("registered", "Регистрация в партнёрском портале и подтверждение почты"),
-        ("verified", "Регистрация Tag Markets через портал и проверка личности"),
-        ("broker_account", "Торговый счёт и доступ MT5"),
-    ]
-    lines = [f"{'✓' if done[key] else '○'} {i}. {label}"
-             for i, (key, label) in enumerate(steps, 1)]
-    lines.append("○ 4. Подключение счёта в приложении")
-    saved = partner_link(db, uid)
-    referral = ("\n\n<b>Твоя партнёрская ссылка сохранена.</b> Ты сможешь использовать её "
-                "для своих будущих приглашений." if saved else "")
-    return ("<b>Добро пожаловать в Tag Markets</b>\n" + trades.THIN +
-            "\nЧтобы начать со своей стратегией, пройдите шаги по порядку:\n\n" +
-            "\n".join(lines) +
-            "\n\nВ Mini App есть понятная инструкция и отметки пройденных шагов. "
-            "После подключения счёта здесь появятся ваши сделки и результат." + referral)
+    """Приветствие Станции: что внутри, без обязательных шагов и регистраций."""
+    return ("<b>Добро пожаловать в Станцию</b>\n" + trades.THIN +
+            "\nЛичное пространство для вас и друзей:\n\n"
+            "💰 <b>Финансы</b> — проекты, вклады и счета TagMarket\n"
+            "🏃 <b>Активности</b> — шаги, вес, сон и тренировки\n"
+            "🎁 <b>Вишлисты</b> — желания, заметки и календарь\n\n"
+            "<i>Ничего подключать заранее не нужно — откройте приложение и добавляйте, "
+            "что вам удобно.</i>")
 
 
 def onboarding_buttons(mini_url: str, db=None, uid=None) -> InlineKeyboardMarkup:
     rows = []
-    inviter = kv_get(db, f"guest_by:{uid}") if db is not None and uid is not None else None
-    registration = partner_link(db, inviter) if inviter else partner_registration_url()
-    if registration:
-        rows.append([InlineKeyboardButton(text="1 · Начать регистрацию", url=registration)])
     if mini_url.startswith("https://"):
-        rows.append([InlineKeyboardButton(text="Открыть Mini App", web_app=WebAppInfo(url=mini_url))])
-    rows.append([InlineKeyboardButton(text="Посмотреть доступные счета", callback_data="dash")])
+        rows.append([InlineKeyboardButton(text="✦ Открыть Станцию", web_app=WebAppInfo(url=mini_url))])
+    rows.append([InlineKeyboardButton(text="Мои счета TagMarket", callback_data="dash")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -1227,11 +1214,11 @@ def account_menu(name: str, owner) -> tuple[str, InlineKeyboardMarkup]:
     return text, InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-NO_ACCOUNTS = ("👋 <b>TagMarkets</b>\n" + trades.THIN +
-               "\nПоказываю сделки и заработок по счетам MT5: сколько принесла "
-               "каждая сделка, сколько вышло за день, неделю и месяц.\n\n"
-               "<b>Начни с кнопки ＋ Счёт</b> — спрошу номер кабинета, "
-               "номер счёта и пароль.\n\n"
+NO_ACCOUNTS = ("👋 <b>Станция · TagMarket</b>\n" + trades.THIN +
+               "\nЗдесь появятся сделки и заработок по счетам MT5, если они у вас есть: "
+               "сколько принесла каждая сделка, сколько вышло за день, неделю и месяц.\n\n"
+               "Есть счёт в Tag Markets — добавьте его кнопкой ＋ Счёт. Нет — ничего страшного, "
+               "остальные разделы Станции работают и без него.\n\n"
                "<i>Хватит investor-пароля: бот только читает, торговать не может. "
                "Чужие счета тебе не видны, твои — никому другому.</i>")
 
@@ -2138,10 +2125,9 @@ async def main():
         wanted = invite_logins(inv)
         added = accounts.share(wanted, inv["owner"], uid) if wanted else []
 
-        what = ("Доступны счета для наблюдения: <b>" + html.escape(", ".join(added)) + "</b>" if added
-                else "Своего торгового счёта пока нет.")
+        what = ("Вам открыты счета: <b>" + html.escape(", ".join(added)) + "</b>\n\n" if added else "")
         await send(bot, msg.chat.id,
-                   f"✅ <b>Приглашение принято</b>\n{trades.THIN}\n{what}\n\n"
+                   f"✅ <b>Приглашение принято</b>\n{trades.THIN}\n{what}"
                    + onboarding_message(db, uid), onboarding_buttons(mini_url, db, uid), track=False)
 
         # одноразовая ссылка сгорела — сразу выпускаем следующую с теми же
