@@ -1427,11 +1427,94 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(projects, "today", return_value=fixed_today):
             changed = projects.account_change(self.db, "1", daily["id"],
                 {"capitalization":False, "capitalization_from":None}, daily["accounts"][0]["id"])
-        self.assertEqual(changed["current_total"], 500)
+        self.assertEqual(changed["current_total"], 520)     # без капитализации — простой процент каждый день
         with patch.object(projects, "today", return_value=fixed_today):
             changed = projects.account_change(self.db, "1", daily["id"],
                 {"capitalization":None, "capitalization_from":None}, daily["accounts"][0]["id"])
         self.assertEqual(changed["current_total"], 520.2)
+
+    async def test_project_income_can_start_on_a_future_date(self):
+        start = date(2026, 10, 3)
+        with patch.object(projects, "today", return_value=start):
+            later = projects.save(self.db, "1", {"name":"Later", "currency":"USD", "rate_percent":1,
+                "period":"day", "multi":False, "capitalization":True, "capitalization_from":"2026-10-01",
+                "income_from":"2026-10-10", "accounts":[{"amount":1000}]})
+            forecast = projects.forecast(self.db, "1", later["id"], "2026-10-12", False)
+        self.assertEqual(later["income_from"], "2026-10-10")
+        self.assertEqual(later["income_starts"], "2026-10-10")
+        self.assertEqual(later["current_total"], 1000)       # капитализация ещё не началась
+        self.assertEqual(later["expected_income"], 0)
+        self.assertEqual(forecast["checkpoints"]["week"]["total"], 1000)
+        self.assertAlmostEqual(forecast["total"], 1020.1)    # два дня с 10-го числа
+        with patch.object(projects, "today", return_value=date(2026, 10, 12)):
+            started = projects.get(self.db, "1", later["id"])
+        self.assertAlmostEqual(started["current_total"], 1020.1)
+        self.assertIsNone(started["income_starts"])
+        # своя дата у аккаунта сильнее даты проекта; формат проверяется
+        with patch.object(projects, "today", return_value=start):
+            mixed = projects.account_change(self.db, "1", later["id"], {"amount":500, "income_from":"2026-10-01"})
+            self.assertEqual(mixed["expected_income"], 5)  # первый ещё ждёт, второй уже работает
+            for bad in ("10.10.2026", "2046-01-01", 5):
+                with self.assertRaises(ValueError):
+                    projects.save(self.db, "1", {"income_from": bad}, later["id"])
+
+    async def test_project_income_is_added_to_balance_every_day(self):
+        # 3% в месяц, октябрь — 31 день: через 10 дней к балансу прибавилось 10/31 месячного дохода
+        with patch.object(projects, "today", return_value=date(2026, 10, 1)):
+            p = projects.save(self.db, "1", {"name":"Daily", "currency":"USD", "rate_percent":3,
+                "period":"month", "multi":True, "accounts":[{"amount":1000}, {"amount":1000, "capitalization":True,
+                "capitalization_from":"2026-10-01"}]})
+        with patch.object(projects, "today", return_value=date(2026, 10, 11)):
+            now = projects.get(self.db, "1", p["id"])
+        simple, compound = now["accounts"]
+        self.assertAlmostEqual(simple["current_amount"], 1000 + 30 * 10 / 31)
+        self.assertAlmostEqual(compound["current_amount"], 1000 * 1.03 ** (10 / 31))
+        self.assertAlmostEqual(now["accrued_income"], simple["accrued_income"] + compound["accrued_income"])
+        self.assertAlmostEqual(simple["expected_income"], 30)      # простой процент — на вложенное
+
+    async def test_paused_account_and_project_are_excluded_and_do_not_accrue(self):
+        def at(day, fn, *args, **kwargs):
+            with patch.object(projects, "today", return_value=day):
+                return fn(*args, **kwargs)
+        d = lambda n: date(2026, 10, n)  # noqa: E731
+        p = at(d(1), projects.save, self.db, "1", {"name":"Pause", "currency":"USD", "rate_percent":1,
+               "period":"day", "multi":True, "capitalization":True, "capitalization_from":"2026-10-01",
+               "accounts":[{"amount":1000}, {"amount":1000}]})
+        pid, first = p["id"], p["accounts"][0]["id"]
+        paused = at(d(3), projects.set_paused, self.db, "1", pid, True, first)
+        self.assertTrue(paused["accounts"][0]["paused"])
+        self.assertEqual(paused["paused_accounts"], 1)
+        self.assertAlmostEqual(paused["current_total"], 1020.1)   # только второй аккаунт
+        self.assertAlmostEqual(paused["paused_total"], 1020.1)
+        self.assertAlmostEqual(paused["expected_income"], 10.201)
+        forecast = at(d(3), projects.forecast, self.db, "1", pid, "2026-10-04", False)
+        self.assertEqual(len(forecast["accounts"]), 1)
+        # пять дней паузы не начисляются: на 10-е у первого 7 − 5 = 2 периода
+        later = at(d(8), projects.set_paused, self.db, "1", pid, False, first)
+        self.assertFalse(later["accounts"][0]["paused"])
+        self.assertEqual(later["accounts"][0]["paused_days"], 5)
+        self.assertAlmostEqual(at(d(10), projects.get, self.db, "1", pid)["accounts"][0]["current_amount"], 1040.60401)
+        # пауза проекта: доход 0, пересечение с паузой аккаунта не считается дважды
+        at(d(10), projects.set_paused, self.db, "1", pid, True)
+        at(d(11), projects.set_paused, self.db, "1", pid, True, first)
+        whole = at(d(12), projects.get, self.db, "1", pid)
+        self.assertTrue(whole["paused"])
+        self.assertEqual(whole["expected_income"], 0)
+        self.assertEqual(at(d(12), projects.forecast, self.db, "1", pid, "2026-10-20", False)["total"], 0)
+        at(d(14), projects.set_paused, self.db, "1", pid, False)
+        resumed = at(d(15), projects.set_paused, self.db, "1", pid, False, first)
+        self.assertEqual(resumed["accounts"][0]["paused_days"], 5 + 5)   # 10 → 15 одной паузой
+        self.assertEqual(resumed["accounts"][1]["paused_days"], 4)       # 10 → 14
+        with self.assertRaises(ValueError):
+            projects.set_paused(self.db, "1", pid, "yes")
+        with self.assertRaises(LookupError):
+            projects.set_paused(self.db, "2", pid, True)
+        # через API: пауза аккаунта и проекта, чужой проект — 404
+        api = await (await self.call("POST", f"/api/projects/{pid}/accounts/{first}/pause", json={"paused": True})).json()
+        self.assertTrue(api["accounts"][0]["paused"])
+        api = await (await self.call("POST", f"/api/projects/{pid}/pause", json={"paused": True})).json()
+        self.assertTrue(api["paused"])
+        self.assertEqual((await self.call("POST", f"/api/projects/{pid}/pause", json={"paused": "1"})).status, 400)
 
     async def test_daily_rate_can_skip_weekends_without_changing_other_periods(self):
         friday, monday = date(2026, 10, 2), date(2026, 10, 5)
@@ -1520,9 +1603,10 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(accounts_day[2]["bonus"], 101)
         self.assertAlmostEqual(accounts_day[3]["personal"], 1020.1)
         self.assertAlmostEqual(accounts_day[3]["bonus"], 101)
-        self.assertEqual(one_week["checkpoints"]["selected"]["bonus"], 0)
-        self.assertEqual(one_week["total"], no_bonus["total"])
-        self.assertEqual(one_week["checkpoints"]["selected"]["accounts"][0]["bonus"], 0)
+        # бонус закончился 5-го, но доход на него за три дня остался: 3 + 3 + 3.0301 + 3.0301
+        self.assertAlmostEqual(one_week["checkpoints"]["selected"]["bonus"], 12.0602)
+        self.assertAlmostEqual(one_week["total"], no_bonus["total"] + 12.0602)
+        self.assertAlmostEqual(one_week["checkpoints"]["selected"]["accounts"][0]["bonus"], 3)
         self.assertEqual(no_bonus["current"]["bonus"], 0)
         self.assertEqual(one_week["currency"], "BYN")
         self.assertEqual(api_response.status, 200)
@@ -1541,8 +1625,10 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                     {"amount":500, "bonus_amount":25, "bonus_expires_at":expired},
                 ]})
         self.assertEqual(saved["total"], 1000)
-        self.assertAlmostEqual(saved["current_total"], 1040.4)
-        self.assertAlmostEqual(saved["bonus_total"], 52.02)
+        # доход на бонус (2.02) ложится в баланс, бонус остаётся своей суммой
+        self.assertAlmostEqual(saved["current_total"], 1042.42)
+        self.assertAlmostEqual(saved["accrued_income"], 42.42)
+        self.assertAlmostEqual(saved["bonus_total"], 50)
         self.assertAlmostEqual(saved["working_total"], 1092.42)
         self.assertAlmostEqual(saved["expected_income"], 21.8484)
         self.assertTrue(saved["has_capitalization"])
@@ -1579,7 +1665,10 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertAlmostEqual(active["total"], 1515, places=2)
             included = projects.forecast(self.db, "1", bonus["id"], until_after_expiry, True)
             excluded = projects.forecast(self.db, "1", bonus["id"], until_after_expiry, False)
-            self.assertEqual(included["total"], excluded["total"])
+            # после срока сам бонус выбыл, а доход на него до срока остался
+            expires = date.fromisoformat(bonus["accounts"][0]["bonus_expires_at"][:10])
+            earned = 500 * 0.01 * projects.fractional_periods(date(2026, 10, 2), expires, "month")
+            self.assertAlmostEqual(included["total"], excluded["total"] + earned, places=6)
             self.assertEqual(bonus["working_total"], 1500)
 
     async def test_display_currency_preference_is_saved_and_rates_are_existing_fx(self):
