@@ -1400,6 +1400,35 @@ function tasksCard(){
 // личному ключу, что и шаги. Пароли от интернет-банка Platformer не просит и не хранит.
 const BANK_KINDS={card:'Карта',current:'Счёт',deposit:'Вклад',savings:'Накопительный',cash:'Наличные'};
 const BANK_NAMES=['Альфа-Банк','БНБ-Банк','Беларусбанк','Приорбанк','МТБанк','БелВЭБ Банк','Белагропромбанк','Белинвестбанк','Сбербанк','Т-Банк','ВТБ','Revolut','Wise'];
+// Подсказки названия банка появляются только после первой введённой буквы:
+// сначала свои банки, затем известные, по совпадению с началом и с серединой слова.
+function bankSuggestions(){
+ const own=[...new Set((state.banks?.accounts||[]).map(a=>a.bank).filter(Boolean))],low=own.map(n=>n.toLowerCase());
+ return [...own,...BANK_NAMES.filter(n=>!low.includes(n.toLowerCase()))];
+}
+function bankSuggestInit(d){
+ const input=d.querySelector('input[name="bank"]'),list=d.querySelector('#bank-suggest');if(!input||!list)return;
+ let items=[],pick=-1;
+ const close=()=>{items=[];pick=-1;list.hidden=true;list.innerHTML='';input.setAttribute('aria-expanded','false');};
+ const mark=()=>{[...list.children].forEach((li,i)=>{li.classList.toggle('on',i===pick);li.setAttribute('aria-selected',i===pick?'true':'false');});};
+ const render=()=>{
+  const q=input.value.trim().toLowerCase();if(!q)return close();
+  const all=bankSuggestions(),starts=all.filter(n=>n.toLowerCase().startsWith(q)),inside=all.filter(n=>!n.toLowerCase().startsWith(q)&&n.toLowerCase().includes(q));
+  items=[...starts,...inside].slice(0,6);
+  if(!items.length||(items.length===1&&items[0].toLowerCase()===q))return close();
+  pick=-1;list.innerHTML=items.map(n=>`<li role="option" aria-selected="false">${esc(n)}</li>`).join('');list.hidden=false;input.setAttribute('aria-expanded','true');
+ };
+ const choose=i=>{if(i<0||i>=items.length)return;input.value=items[i];d.dataset.dirty='1';close();input.focus();};
+ input.addEventListener('input',render);
+ input.addEventListener('keydown',e=>{
+  if(list.hidden)return;
+  if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();pick=(pick+(e.key==='ArrowDown'?1:items.length-1)+(pick<0&&e.key==='ArrowUp'?1:0))%items.length;mark();}
+  else if(e.key==='Enter'&&pick>=0){e.preventDefault();choose(pick);}
+  else if(e.key==='Escape'){e.stopPropagation();close();}
+ });
+ input.addEventListener('blur',()=>setTimeout(close,120));
+ list.addEventListener('mousedown',e=>{const li=e.target.closest('li');if(!li)return;e.preventDefault();choose([...list.children].indexOf(li));});
+}
 function bankMoney(value,cur){return new Intl.NumberFormat('ru-RU',{style:'currency',currency:cur,maximumFractionDigits:2}).format(value);}
 function bankAgo(a){const src=a.source==='sms'?'из SMS':'вручную';return `${src} · ${agoText(a.updated_at)||'только что'}`;}
 function bankShares(){
@@ -1433,8 +1462,8 @@ function banksView(){
 async function bankEditor(acc=null,seed={}){
  let error='',draft=acc?{...acc}:{bank:'',title:'',kind:'card',currency:state.displayCurrency in {USD:1,RUB:1,BYN:1}?state.displayCurrency:'BYN',balance:'',last4:'',counted:true,...seed};
  while(true){
-  const body=`${error?notice(error,true):''}<label class="field">Банк<input name="bank" list="bank-names" value="${esc(draft.bank)}" required maxlength="48" placeholder="Альфа-Банк, БНБ-Банк…" autocomplete="off"></label><datalist id="bank-names">${BANK_NAMES.map(n=>`<option value="${esc(n)}">`).join('')}</datalist>${field('Название (необязательно)','title','text',draft.title||'','maxlength="64" placeholder="Зарплатная, Накопления…"')}<div class="field-row"><label class="field">Тип<select name="kind">${Object.entries(BANK_KINDS).map(([id,l])=>`<option value="${id}" ${id===draft.kind?'selected':''}>${l}</option>`).join('')}</select></label><label class="field">Валюта<select name="currency" ${acc?'disabled':''}>${['BYN','USD','RUB'].map(c=>`<option ${c===draft.currency?'selected':''}>${c}</option>`).join('')}</select></label></div>${field(acc?'Баланс сейчас':'Баланс','balance','number',draft.balance===''?'':draft.balance,'required step="0.01" inputmode="decimal"')}${field('Последние 4 цифры карты (необязательно)','last4','text',draft.last4||'','maxlength="4" inputmode="numeric" pattern="[0-9]{4}" placeholder="1234"')}<p class="project-form-note">По цифрам SMS от банка сами найдут этот счёт и обновят баланс.</p><label class="check"><input type="checkbox" name="counted" ${draft.counted?'checked':''}>Учитывать в общем балансе</label>${acc?`<div class="inline-actions mt">${button('bank-ops','История изменений','secondary small','clock',`data-id="${esc(acc.id)}"`)}</div><div class="guest-danger">${button('bank-delete','Удалить счёт','danger small','',`data-id="${esc(acc.id)}"`)}</div>`:''}`;
-  const values=await dialog(acc?'Счёт':'Новый счёт',body);if(!values)return;
+  const body=`${error?notice(error,true):''}<label class="field">Банк<span class="suggest"><input name="bank" value="${esc(draft.bank)}" required maxlength="48" placeholder="Начните вводить название" autocomplete="off" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="bank-suggest"><ul class="suggest-list" id="bank-suggest" role="listbox" hidden></ul></span></label>${field('Название (необязательно)','title','text',draft.title||'','maxlength="64" placeholder="Зарплатная, Накопления…"')}<div class="field-row"><label class="field">Тип<select name="kind">${Object.entries(BANK_KINDS).map(([id,l])=>`<option value="${id}" ${id===draft.kind?'selected':''}>${l}</option>`).join('')}</select></label><label class="field">Валюта<select name="currency" ${acc?'disabled':''}>${['BYN','USD','RUB'].map(c=>`<option ${c===draft.currency?'selected':''}>${c}</option>`).join('')}</select></label></div>${field(acc?'Баланс сейчас':'Баланс','balance','number',draft.balance===''?'':draft.balance,'required step="0.01" inputmode="decimal"')}${field('Последние 4 цифры карты (необязательно)','last4','text',draft.last4||'','maxlength="4" inputmode="numeric" pattern="[0-9]{4}" placeholder="1234"')}<p class="project-form-note">По цифрам SMS от банка сами найдут этот счёт и обновят баланс.</p><label class="check"><input type="checkbox" name="counted" ${draft.counted?'checked':''}>Учитывать в общем балансе</label>${acc?`<div class="inline-actions mt">${button('bank-ops','История изменений','secondary small','clock',`data-id="${esc(acc.id)}"`)}</div><div class="guest-danger">${button('bank-delete','Удалить счёт','danger small','',`data-id="${esc(acc.id)}"`)}</div>`:''}`;
+  const values=await dialog(acc?'Счёт':'Новый счёт',body,'Сохранить',{onOpen:bankSuggestInit});if(!values)return;
   draft={...draft,bank:values.bank,title:values.title||'',kind:values.kind,currency:acc?acc.currency:values.currency,balance:values.balance,last4:values.last4||'',counted:values.counted==='on'};
   const payload={bank:draft.bank,title:draft.title,kind:draft.kind,balance:Number(draft.balance),last4:draft.last4||null,counted:draft.counted};if(!acc)payload.currency=draft.currency;
   try{await api('/banks'+(acc?'/'+acc.id:''),{method:acc?'PATCH':'POST',body:JSON.stringify(payload)});tg?.HapticFeedback?.notificationOccurred('success');toast('Сохранено');await sectionReload();return;}catch(exc){error=exc.message;}
