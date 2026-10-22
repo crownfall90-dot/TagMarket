@@ -1718,6 +1718,32 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         other = await (await self.call("GET", "/api/insights", uid=2)).json()
         self.assertFalse(any("Сдать отчёт" in i["text"] for i in other["insights"]))
 
+    async def test_alfa_bank_sms_updates_card_and_codes_are_dropped(self):
+        key = (await (await self.call("POST", "/api/activity/sync/key")).json())["key"]
+        card = await (await self.call("POST", "/api/banks", json={"bank": "Альфа-Банк", "kind": "card", "currency": "BYN",
+                                                                  "balance": 0, "last4": "2774"})).json()
+        send = lambda text: self.client.post(f"/api/banks/sync?key={key}", json={"text": text})
+        minsk = datetime.now(timezone(timedelta(hours=3)))
+        stamp = lambda t: t.strftime("%d.%m.%Y %H:%M:%S")
+        later = await (await send(f"Karta 5.2774\nPostuplenie\nUspeshno\nSumma:171.27 BYN\nOstatok:291.27 BYN\n{stamp(minsk + timedelta(minutes=1))}")).json()
+        self.assertEqual((later["status"], later["balance"]), ("applied", 291.27))
+        # более раннее SMS пришло позже (телефон переслал историю) — в истории есть, баланс не откатывает
+        earlier = await (await send(f"Karta 5.2774\nPostuplenie\nUspeshno\nSumma:350.00 BYN\nOstatok:389.82 BYN\n{stamp(minsk - timedelta(minutes=27))}")).json()
+        self.assertEqual(earlier["status"], "applied")
+        acc = await (await self.call("GET", f"/api/banks/{card['id']}")).json()
+        self.assertEqual(acc["balance"], 291.27)
+        ops = (await (await self.call("GET", f"/api/banks/{card['id']}/ops")).json())["operations"]
+        self.assertEqual(len([o for o in ops if o["source"] == "sms"]), 2)     # плюс запись о создании карты
+        # коды подтверждения и пароли: не разбираются, не хранятся, во «входящие» не попадают
+        for text in ("Код: 0537. Подтвердите перевод на сумму 16.19 RUR получатель 792*2877",
+                     "Никому не сообщайте временный пароль: 492253. Вход в Мобильный банк"):
+            result = await (await send(text)).json()
+            self.assertEqual(result["status"], "ignored", text)
+        data = await (await self.call("GET", "/api/banks")).json()
+        self.assertEqual(data["inbox"], [])
+        self.assertNotIn("0537", json.dumps(data))
+        self.assertNotIn("492253", json.dumps(await (await self.call("GET", f"/api/banks/{card['id']}/ops")).json()))
+
     async def test_bank_accounts_manual_and_updated_from_sms(self):
         card = await self.call("POST", "/api/banks", json={"bank": "Альфа-Банк", "title": "Зарплатная", "kind": "card",
                                                            "currency": "BYN", "balance": 1500.5, "last4": "1234"})
@@ -3683,6 +3709,10 @@ class BankMessageParserTests(unittest.TestCase):
         ("Пополнение счёта 3000 $. Остаток: $4,520.30 (*1111)", "1111", "USD", "4520.30", "3000"),
         ("Списано 45,90 р. Карта 1234. Остаток 90,10 р.", "1234", "RUB", "90.10", "-45.90"),
         ("Покупка 1,250.00 USD *9999 баланс 1,000,340.20 USD", "9999", "USD", "1000340.20", "-1250.00"),
+        # Альфа-Банк Беларусь: латиницей, построчно, карта как «4.9490»
+        ("Karta 4.9490\nPostuplenie\nUspeshno\nSumma:132.67 BYN\nOstatok:132.67 BYN\n15.10.2026 12:49:33", "9490", "BYN", "132.67", "132.67"),
+        ("Karta 5.2774\nPostuplenie\nUspeshno\nSumma:350.00 BYN\nOstatok:389.82 BYN\n11.10.2026 23:31:10", "2774", "BYN", "389.82", "350.00"),
+        ("Karta 5.2774\nPokupka\nUspeshno\nSumma:12.40 BYN\nOstatok:377.42 BYN\n12.10.2026 09:15:02", "2774", "BYN", "377.42", "-12.40"),
     ]
 
     def test_realistic_messages(self):
@@ -3690,6 +3720,24 @@ class BankMessageParserTests(unittest.TestCase):
             parsed = banks.parse_message(text)
             self.assertEqual((parsed["last4"], parsed["currency"], str(parsed["balance"]), str(parsed["amount"])),
                              (last4, currency, balance, amount), text)
+
+    def test_one_time_codes_are_secrets_not_operations(self):
+        """Коды подтверждения и временные пароли из SMS банка не разбираются и не хранятся."""
+        for text in ("Ваш код подтверждения 8182. Сообщите его сотруднику банка",
+                     "Никому не сообщайте временный пароль: 492253. Вход в Мобильный банк",
+                     "Код подтверждения: 3335", "Никому не сообщайте код: 2765. Вход в Мобильный банк",
+                     "Код: 0537. Подтвердите перевод на сумму 16.19 RUR получатель 792*2877",
+                     "Kod: 0537. Podtverdite perevod na summu 16.19 RUR"):
+            self.assertTrue(banks.is_secret(text), text)
+        self.assertFalse(banks.is_secret("Karta 4.9490\nPostuplenie\nUspeshno\nSumma:132.67 BYN\nOstatok:132.67 BYN"))
+        self.assertFalse(banks.is_secret("Карта *1234: Покупка 25,40 BYN, остаток 1 340,10 BYN"))
+        self.assertFalse(banks.is_secret("Pokupka 12.40 BYN MCC code 5411 Karta *1234 Ostatok 100 BYN"))
+
+    def test_operation_time_from_message(self):
+        self.assertEqual(banks.message_time("Karta 4.9490\nSumma:1 BYN\nOstatok:2 BYN\n15.10.2026 12:49:33"), "2026-10-15T09:49:33+00:00")
+        self.assertEqual(banks.message_time("Покупка 25,40 BYN 03.02.2026 08:05"), "2026-02-03T05:05:00+00:00")
+        self.assertIsNone(banks.message_time("Покупка 25,40 BYN"))
+        self.assertIsNone(banks.message_time("31.02.2026 10:00"))
 
     def test_noise_is_not_money(self):
         for text in ("Ваш код подтверждения 123456", "Вход в интернет-банк выполнен", "", "Акция: кэшбэк до 5%"):
