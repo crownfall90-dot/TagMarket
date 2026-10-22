@@ -40,7 +40,6 @@ import income
 import insights
 import lists
 import spend
-import summary
 import partner
 import projects
 import store
@@ -1500,15 +1499,11 @@ async def goals_api(request):
 
 
 async def friends_api(request):
-    """Друзья: GET — круг, их открытые вишлисты и общие траты с долгами;
-    POST/DELETE /wish/{item_id} — «подарю»; POST /split — запись, DELETE /split/{id}."""
+    """Друзья: GET — круг и общие траты с долгами; POST /split — запись, DELETE /split/{id}."""
     uid, _ = authorize(request)
     db = request.app["db"]
     info, method, path = request.match_info, request.method, request.path
     if path == "/api/friends":
-        return web.json_response(friends.overview(db, uid))
-    if "/wish/" in path:
-        _section_call(lambda: friends.reserve(db, uid, info["item_id"], method == "POST"))
         return web.json_response(friends.overview(db, uid))
     if method == "DELETE":
         _section_call(lambda: friends.delete_split(db, uid, info["split_id"]))
@@ -1516,14 +1511,6 @@ async def friends_api(request):
         data = await json_object(request)
         _section_call(lambda: friends.add_split(db, uid, data))
     return web.json_response(friends.overview(db, uid), status=201 if method == "POST" else 200)
-
-
-async def month_api(request):
-    """Сводка месяца: зарплата и траты по датам, по валютам; полгода для графика."""
-    uid, _ = authorize(request)
-    db = request.app["db"]
-    income.credit_due(db, uid)
-    return web.json_response(_section_call(lambda: summary.report(db, uid, request.query.get("month"))))
 
 
 async def income_api(request):
@@ -1601,27 +1588,16 @@ async def banks_sync(request):
 
 
 async def lists_api(request):
-    """Вишлисты, заметки и календарь — один обработчик на все пути раздела."""
+    """Задачи, заметки и календарь — один обработчик на все пути раздела."""
     uid, _ = authorize(request)
     db = request.app["db"]
     info, method, path = request.match_info, request.method, request.path
     data = await json_object(request) if method in {"POST", "PATCH"} else {}
     if path == "/api/lists":
-        return web.json_response({"wishlists": lists.wishlists(db, uid), "notes": lists.notes(db, uid),
+        return web.json_response({"notes": lists.notes(db, uid),
                                   "tasks": lists.tasks(db, uid), "areas": lists.AREAS,
                                   "upcoming": lists.upcoming(db, uid)})
-    if path.startswith("/api/wishlists"):
-        list_id, item_id = info.get("list_id"), info.get("item_id")
-        if "/items" in path:
-            if method == "DELETE":
-                return web.json_response(_section_call(lambda: lists.delete_item(db, uid, list_id, item_id)))
-            result = _section_call(lambda: lists.save_item(db, uid, list_id, data, item_id))
-        elif method == "DELETE":
-            _section_call(lambda: lists.delete_wishlist(db, uid, list_id))
-            return web.json_response({"ok": True})
-        else:
-            result = _section_call(lambda: lists.save_wishlist(db, uid, data, list_id))
-    elif path.startswith("/api/tasks"):
+    if path.startswith("/api/tasks"):
         task_id = info.get("task_id")
         if method == "DELETE":
             _section_call(lambda: lists.delete_task(db, uid, task_id))
@@ -1650,9 +1626,9 @@ async def lists_api(request):
 # Что показывать в Platformer — у каждого своё и одинаково на всех устройствах:
 # карточки главной и их порядок, быстрые кнопки, показатели «Активностей»
 STATION_CHOICES = {
-    "home": ("circle", "finance", "activity", "tasks", "events", "wish"),
-    "quick": ("task", "weight", "workout", "event", "note", "wish"),
-    "metrics": ("steps", "weight", "workout"),      # шаги — только присланные телефоном
+    "home": ("circle", "finance", "activity", "tasks", "events", "notes"),
+    "quick": ("task", "event", "note"),
+    "metrics": ("steps",),      # шаги — только присланные телефоном
 }
 STATION_DEFAULTS = {"home": list(STATION_CHOICES["home"]),
                     "quick": list(STATION_CHOICES["quick"]),
@@ -1709,7 +1685,7 @@ def insights_for(db, uid, display="USD", rates=None, tag=None):
                         "banks": bank_total if bank_known else None, "charges": soon,
                         "salary": salary, "paydays": paydays},
             "activity": {**summary, "sync": sync}, "tasks": lists.tasks(db, uid), "events": events,
-            "wishlists": lists.wishlists(db, uid), "friends": len(logic.guests_of(db, uid))},
+            "goals": goals.overview(db, uid, now)["items"], "friends": len(logic.guests_of(db, uid))},
             now, hour=int(datetime.now(timezone(timedelta(hours=3))).strftime("%H")))
     except Exception:
         logging.getLogger("miniapp").exception("insights failed")
@@ -1728,6 +1704,8 @@ def station_prefs(db, uid):
     out = {}
     for key, allowed in STATION_CHOICES.items():
         value = saved.get(key) if isinstance(saved, dict) else None
+        if key == "home" and isinstance(value, list):
+            value = ["notes" if v == "wish" else v for v in value]     # вишлисты стали заметками
         out[key] = ([v for v in value if v in allowed] if isinstance(value, list)
                     else list(STATION_DEFAULTS[key]))
     return out
@@ -1838,10 +1816,7 @@ def setup(app):
     app.router.add_patch("/api/goals/{goal_id}", goals_api)
     app.router.add_delete("/api/goals/{goal_id}", goals_api)
     app.router.add_post("/api/goals/{goal_id}/add", goals_api)
-    app.router.add_get("/api/month", month_api)
     app.router.add_get("/api/friends", friends_api)
-    app.router.add_post("/api/friends/wish/{item_id}", friends_api)
-    app.router.add_delete("/api/friends/wish/{item_id}", friends_api)
     app.router.add_post("/api/friends/split", friends_api)
     app.router.add_delete("/api/friends/split/{split_id}", friends_api)
     app.router.add_get("/api/income", income_api)
@@ -1870,12 +1845,6 @@ def setup(app):
     app.router.add_get("/api/preferences/station", station_preferences)
     app.router.add_put("/api/preferences/station", station_preferences)
     app.router.add_get("/api/lists", lists_api)
-    app.router.add_post("/api/wishlists", lists_api)
-    app.router.add_patch("/api/wishlists/{list_id}", lists_api)
-    app.router.add_delete("/api/wishlists/{list_id}", lists_api)
-    app.router.add_post("/api/wishlists/{list_id}/items", lists_api)
-    app.router.add_patch("/api/wishlists/{list_id}/items/{item_id}", lists_api)
-    app.router.add_delete("/api/wishlists/{list_id}/items/{item_id}", lists_api)
     app.router.add_post("/api/tasks", lists_api)
     app.router.add_patch("/api/tasks/{task_id}", lists_api)
     app.router.add_delete("/api/tasks/{task_id}", lists_api)

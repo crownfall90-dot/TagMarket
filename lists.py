@@ -1,4 +1,4 @@
-"""Раздел «Вишлисты»: списки желаний по увлечениям, заметки, задачи и календарь событий.
+"""Раздел «Планы»: заметки, задачи и календарь событий.
 
 Всё хранится в серверной SQLite (STATE_DB) и видно только владельцу.
 Календарь принимает событие на любое число; повтор раз в неделю, месяц или
@@ -20,38 +20,7 @@ TIME_RE = re.compile(r"(?:[01]\d|2[0-3]):[0-5]\d")
 
 
 def setup(db):
-    db.execute("PRAGMA foreign_keys=ON")
-    _setup_tables(db)
-    # «показать друзьям» — появилось позже самих вишлистов
-    if "shared" not in {r[1] for r in db.execute("PRAGMA table_info(wishlists)")}:
-        db.execute("ALTER TABLE wishlists ADD COLUMN shared INTEGER NOT NULL DEFAULT 0")
-    db.commit()
-
-
-def _setup_tables(db):
     db.executescript("""
-        CREATE TABLE IF NOT EXISTS wishlists (
-            id TEXT PRIMARY KEY,
-            owner_id TEXT NOT NULL,
-            title TEXT NOT NULL,
-            emoji TEXT NOT NULL DEFAULT '',
-            position INTEGER NOT NULL,
-            created_at TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS wishlists_owner ON wishlists(owner_id, position);
-        CREATE TABLE IF NOT EXISTS wish_items (
-            id TEXT PRIMARY KEY,
-            list_id TEXT NOT NULL REFERENCES wishlists(id) ON DELETE CASCADE,
-            title TEXT NOT NULL,
-            note TEXT NOT NULL DEFAULT '',
-            url TEXT NOT NULL DEFAULT '',
-            price_cents INTEGER,
-            currency TEXT,
-            done INTEGER NOT NULL DEFAULT 0,
-            position INTEGER NOT NULL,
-            created_at TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS wish_items_list ON wish_items(list_id, position);
         CREATE TABLE IF NOT EXISTS notes (
             id TEXT PRIMARY KEY,
             owner_id TEXT NOT NULL,
@@ -148,99 +117,6 @@ def _patch(old, data, fields):
     if unknown:
         raise ValueError("Неизвестное поле: " + ", ".join(sorted(unknown)))
     return {**old, **data}
-
-
-# ── вишлисты ────────────────────────────────────────────────────────────
-
-def _items(db, list_id):
-    rows = db.execute("SELECT id,title,note,url,price_cents,currency,done,created_at FROM wish_items WHERE list_id=? ORDER BY done, position, created_at",
-                      (list_id,)).fetchall()
-    return [{"id": r[0], "list_id": list_id, "title": r[1], "note": r[2], "url": r[3],
-             "price": r[4] / 100 if r[4] is not None else None, "currency": r[5],
-             "done": bool(r[6]), "created_at": r[7]} for r in rows]
-
-
-def wishlist(db, owner, list_id):
-    row = db.execute("SELECT id,title,emoji,created_at,shared FROM wishlists WHERE id=? AND owner_id=?",
-                     (list_id, str(owner))).fetchone()
-    if row is None:
-        raise LookupError("Список не найден")
-    items = _items(db, list_id)
-    totals = {}
-    for item in items:
-        if item["price"] is not None and not item["done"]:
-            totals[item["currency"]] = round(totals.get(item["currency"], 0) + item["price"], 2)
-    return {"id": row[0], "title": row[1], "emoji": row[2], "created_at": row[3], "shared": bool(row[4]), "items": items,
-            "open": sum(not i["done"] for i in items), "done": sum(i["done"] for i in items),
-            "totals": totals}
-
-
-def wishlists(db, owner):
-    return [wishlist(db, owner, r[0]) for r in db.execute(
-        "SELECT id FROM wishlists WHERE owner_id=? ORDER BY position, created_at", (str(owner),))]
-
-
-def save_wishlist(db, owner, data, list_id=None):
-    with db:
-        old = wishlist(db, owner, list_id) if list_id else {"title": "", "emoji": "", "shared": False}
-        merged = _patch(old, data, ("title", "emoji", "shared"))
-        title = text(merged.get("title"), 64, "Название", required=True)
-        emoji = text(merged.get("emoji"), 8, "Значок")
-        shared = merged.get("shared", False)
-        if type(shared) is not bool:
-            raise ValueError("Некорректная отметка «показать друзьям»")
-        if list_id:
-            db.execute("UPDATE wishlists SET title=?, emoji=?, shared=? WHERE id=? AND owner_id=?",
-                       (title, emoji, int(shared), list_id, str(owner)))
-        else:
-            list_id = uuid.uuid4().hex
-            position = db.execute("SELECT COALESCE(MAX(position)+1,0) FROM wishlists WHERE owner_id=?", (str(owner),)).fetchone()[0]
-            db.execute("INSERT INTO wishlists (id,owner_id,title,emoji,shared,position,created_at) VALUES (?,?,?,?,?,?,?)",
-                       (list_id, str(owner), title, emoji, int(shared), position, now()))
-        return wishlist(db, owner, list_id)
-
-
-def delete_wishlist(db, owner, list_id):
-    with db:
-        wishlist(db, owner, list_id)
-        db.execute("DELETE FROM wish_items WHERE list_id=?", (list_id,))
-        db.execute("DELETE FROM wishlists WHERE id=? AND owner_id=?", (list_id, str(owner)))
-
-
-def save_item(db, owner, list_id, data, item_id=None):
-    with db:
-        current = wishlist(db, owner, list_id)
-        old = next((i for i in current["items"] if i["id"] == item_id), None) if item_id else {}
-        if item_id and old is None:
-            raise LookupError("Желание не найдено")
-        fields = ("title", "note", "url", "price", "currency", "done")
-        merged = _patch(old, data, fields)
-        title = text(merged.get("title"), 120, "Название", required=True)
-        note = text(merged.get("note"), 1000, "Заметка")
-        url = link(merged.get("url"))
-        cents = price(merged.get("price"))
-        currency = choice(merged.get("currency") or ("USD" if cents is not None else None),
-                          CURRENCIES | {None}, None, "валюта")
-        done = merged.get("done", False)
-        if type(done) is not bool:
-            raise ValueError("Некорректная отметка «исполнено»")
-        if item_id:
-            db.execute("UPDATE wish_items SET title=?,note=?,url=?,price_cents=?,currency=?,done=? WHERE id=? AND list_id=?",
-                       (title, note, url, cents, currency, int(done), item_id, list_id))
-        else:
-            position = db.execute("SELECT COALESCE(MAX(position)+1,0) FROM wish_items WHERE list_id=?", (list_id,)).fetchone()[0]
-            db.execute("INSERT INTO wish_items (id,list_id,title,note,url,price_cents,currency,done,position,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                       (uuid.uuid4().hex, list_id, title, note, url, cents, currency, int(done), position, now()))
-        return wishlist(db, owner, list_id)
-
-
-def delete_item(db, owner, list_id, item_id):
-    with db:
-        current = wishlist(db, owner, list_id)
-        if not any(i["id"] == item_id for i in current["items"]):
-            raise LookupError("Желание не найдено")
-        db.execute("DELETE FROM wish_items WHERE id=? AND list_id=?", (item_id, list_id))
-        return wishlist(db, owner, list_id)
 
 
 # ── заметки ─────────────────────────────────────────────────────────────

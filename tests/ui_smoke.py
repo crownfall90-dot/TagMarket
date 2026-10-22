@@ -369,12 +369,12 @@ def income_ui(page, nav):
     close_dialog(page)
 
 
-def month_goals_ui(page, nav):
-    """Сводка месяца и цели в Финансах, экран #month; первый запуск — пока не всё настроено; траты за год."""
+def goals_ui(page, nav):
+    """Цели накоплений в Финансах, первый запуск — пока не всё настроено; траты за год. Сводки «пришло / ушло» больше нет."""
     page.locator(f'{nav} a[href="#projects"]').click()
-    page.locator('.fin-month .month-card').wait_for()
-    assert page.locator('.fin-month .mb-col').count() == 6
+    page.locator('.fin-goals .goal-card').first.wait_for()
     assert page.locator('.fin-goals .goal-card').count() == 3
+    assert page.locator('.fin-month, .month-card, .mb-chart').count() == 0
     assert page.locator('.fin-onboard').count() == 0                               # всё настроено — шагов нет
     page.evaluate("state.banks={...state.banks,accounts:[]};state.income={...state.income,items:[]};render()")
     page.locator('.fin-onboard').wait_for()
@@ -383,12 +383,6 @@ def month_goals_ui(page, nav):
     page.locator('.fin-onboard [data-action="onboard-hide"]').click()
     page.wait_for_function("!document.querySelector('.fin-onboard')")
     page.evaluate("localStorage.removeItem('fin-onboard-hidden')")
-    page.locator('.fin-month a.month-card').click()
-    page.locator('.month-head').wait_for()
-    assert page.locator(f'{nav} a[href="#projects"].active').count() == 1
-    assert page.locator('.month-part .mr-row').count() >= 3
-    assert page.locator('.month-plan').count() == 1 and page.locator('.fin-goals h2').count() == 1
-    fits(page)
     page.locator('.goal-card').first.click()
     page.locator('#dialog input[name="target"]').wait_for()
     assert page.locator('#dialog [data-action="goal-add-money"]').count() == 1
@@ -403,40 +397,43 @@ def month_goals_ui(page, nav):
 
 
 def friends_ui(page, nav):
-    """Друзья: круг с долгами и открытыми желаниями («подарю»), общие траты и окно новой траты."""
+    """Друзья: круг с долгами, одна кнопка «Общая трата», расчёт — касанием долга; без подарков и без второй кнопки."""
     page.locator(f'{nav} a[href="#people"]').click()
     page.locator('.friends-block .friend-card').first.wait_for()
     assert page.locator('.friend-card').count() == 3
-    assert page.locator('.fw-gift.mine').count() == 1 and page.locator('.fw-gift.busy').count() == 1
+    assert page.locator('[data-action="split-add"]').count() == 1, "общая трата — одна кнопка"
+    assert page.locator('.fab').count() == 0 or not page.locator('#fab-root .fab').is_visible()
+    assert page.locator('.fw-gift, .fw-list, [data-action="friend-reserve"]').count() == 0
+    assert page.locator('.fc-debt').count() == 2 and page.locator('[data-action="friend-settle"]').count() == 2
     assert page.locator('.split-block .split-row').count() == 2
     fits(page)
-    page.locator('.friends-block [data-action="split-add"]').click()
+    page.locator('.split-cta').click()
     page.locator('#dialog select[name="payer"]').wait_for()
     assert page.locator('#dialog .split-member').count() == 4                       # вы и трое друзей в кругу
     fits(page)
     close_dialog(page)
+    page.locator('.fc-debt').first.click()
+    page.locator('#dialog input[name="amount"]').wait_for()
+    close_dialog(page)
 
 
 def station_sections(page, nav):
-    """Главная Platformer, круг жизни, активности, планы (задачи, календарь, заметки, желания) и настройки."""
+    """Главная Platformer, круг жизни, шаги, планы (задачи, календарь, заметки) и настройки."""
     page.locator(f'{nav} a[href="#overview"]').click()
     page.locator('.home-grid').wait_for()
     assert page.locator('.greet').count() == 1 and page.locator('.greet-title').inner_text().strip()
-    assert page.locator('.home-card').count() == 6          # круг, финансы, активности, дела, ближайшее, желания
+    assert page.locator('.home-card').count() == 6          # круг, финансы, шаги, дела, ближайшее, заметки
     assert page.locator('.home-chip').count() == 0, "быстрых кнопок на главной больше нет"
     assert page.locator('.home-circle .circle-seg').count() == 4   # финансы, дела, планы, мечты
     assert page.locator('.greet-stat').count() == 3 and page.locator('.greet-day i').count() == 1
-    assert page.locator('.home-activity .act-dots i').count() == 7
+    assert page.locator('.home-activity .ring').count() == 1 and page.locator('.home-activity .live-tag').count() == 1
+    assert page.locator('.home-activity').inner_text().lower().count('трениров') == 0 and 'вес' not in page.locator('.home-activity').inner_text().lower()
     assert page.locator('.home-circle .insight').count() >= 3
     assert page.locator('.page-head [data-action="onboard-open"]').count() == 0, "на главной не навязываем счёт"
     fits(page)
     # число в приветствии «набегает» и приходит к итогу
     page.wait_for_function("[...document.querySelectorAll('.greet .count-up')].every(e => e.textContent === formatCount(Number(e.dataset.to), e.dataset.format))")
-    # настройка главной: скрыть карточку и вернуть
-    page.locator('[data-action="home-settings"]').click()
-    page.locator('#dialog [data-pref-row]').first.wait_for()
-    assert page.locator('#dialog [data-pref-row][data-group="home"]').count() == 6
-    close_dialog(page)
+    assert page.locator('[data-action="home-settings"]').count() == 0, "настройка главной убрана"
     # круг жизни открывается из карточки и ведёт в сферы
     page.locator('.home-circle a.text-link').click()
     page.locator('.circle-hero .circle-ring').wait_for()
@@ -446,35 +443,21 @@ def station_sections(page, nav):
     assert page.locator('.circle-core b').inner_text().strip().isdigit()
     fits(page)
     page.locator(f'{nav} a[href="#activity"]').click()
-    page.locator('.act-grid').wait_for()
+    page.locator('.steps-hero').wait_for()
     glider_on_active(page, nav)
-    # шаги приходят только с телефона (в предпросмотре — пришли): живая карточка без «+» и без ручного ввода
-    assert page.locator('.act-card').count() == 3 and page.locator('.steps-card').count() == 1
-    assert page.locator('.steps-card [data-action]').count() == 0 and page.locator('.steps-card .live-tag').count() == 1
-    assert page.locator('[data-ui-key="act-chart-steps"]').count() == 1 and page.locator('.sync-banner').count() == 0
-    assert page.locator('.steps-off').count() == 0
-    assert 'инструкц' not in page.locator('#main').inner_text().lower()
-    bars = '[data-ui-key="act-chart-workout"] .act-bars .bar'
-    assert page.locator(bars).count() == 30
-    assert page.locator('.act-entry').count() > 0
+    # только шаги: живое кольцо и график; ни веса, ни тренировок, ни ручного ввода, ни инструкций
+    assert page.locator('.steps-hero .ring').count() == 1 and page.locator('.steps-hero .live-tag').count() == 1
+    assert page.locator('[data-ui-key="act-chart-steps"] .act-bars .bar').count() == 30
+    assert page.locator('.act-card, .act-entry, [data-action="activity-add"], [data-action="activity-settings"]').count() == 0
+    text = page.locator('#main').inner_text().lower()
+    assert 'трениров' not in text and 'вес' not in text and 'инструкц' not in text
     page.locator('.act-days [data-value="7"]').click()
-    page.wait_for_function("s => document.querySelectorAll(s).length === 7", arg=bars)
-    page.locator('.act-card[data-kind="workout"]').click()
-    page.locator('#dialog[open]').wait_for()
-    assert page.locator('#dialog .act-fields-workout').is_visible()
-    assert page.locator('#dialog select[name="kind"] option[value="steps"]').count() == 0   # шаги вручную не вводят
-    page.locator('#dialog select[name="kind"]').select_option('weight')
-    assert page.locator('#dialog .act-fields-daily').is_visible() and page.locator('#dialog .act-fields-workout').is_hidden()
+    page.wait_for_function("document.querySelectorAll('.act-bars .bar').length === 7")
     fits(page)
-    close_dialog(page)
-    page.locator('.act-entry-main').first.click()           # запись можно исправить
-    page.locator('#dialog input[name="day"]').wait_for()
-    close_dialog(page)
-    assert page.locator('#main [data-action="activity-sync"]').count() == 0, "в «Активностях» никаких инструкций по подключению"
-    # нет шагов с телефона — одна строка, что на устройстве не обновляются
+    # нет шагов с телефона — одно сообщение, что на устройстве не обновляются
     page.evaluate("state.activity.summary.steps={today:null,series:[]};state.activity.sync={connected:false};render()")
-    page.locator('.steps-off').wait_for()
-    assert page.locator('.steps-card').count() == 0 and 'не обновляются' in page.locator('.steps-off').inner_text()
+    page.locator('.steps-empty').wait_for()
+    assert 'не обновляются' in page.locator('.steps-empty').inner_text()
     page.evaluate("state.activity=null;render()")
     page.locator(f'{nav} a[href="#plans"]').click()
     page.locator('.task-quick').wait_for()
@@ -482,7 +465,7 @@ def station_sections(page, nav):
     phone = page.viewport_size['width'] <= 740
     assert page.locator('.fab').is_visible() == phone
     assert page.locator('.plans-hero .head-primary').is_visible() == (not phone)
-    assert page.locator('.plan-tabs [role="tab"]').count() == 4
+    assert page.locator('.plan-tabs [role="tab"]').count() == 3        # задачи, календарь, заметки
     assert 'enter' not in page.locator('.task-quick input').get_attribute('placeholder').lower()
     assert 'enter' not in page.locator('#main').inner_text().lower(), "компьютерных подсказок быть не должно"
     glider_on_active(page, nav)
@@ -494,11 +477,6 @@ def station_sections(page, nav):
     page.locator('.task').first.locator('.wish-title').click()
     page.locator('#dialog [data-due-set]').first.wait_for()
     close_dialog(page)
-    fits(page)
-    page.locator('.lists-tabs [data-value="wish"]').click()
-    page.locator('.wish-grid').wait_for()
-    assert page.locator('.wish-list').count() == 2
-    assert page.locator('.wish-items li.done').count() == 1
     fits(page)
     page.locator('.lists-tabs [data-value="notes"]').click()
     page.locator('.notes-grid').wait_for()
@@ -525,10 +503,11 @@ def station_sections(page, nav):
     page.locator('.cal-cell.today').click()
     assert page.locator('.cal-day-panel h2').inner_text() == 'Сегодня'
     fits(page)
-    # настройки Platformer — в общих «Настройках»
+    # «Настройки»: гамма, ярлык и счета; блока «Platformer» с настройками разделов больше нет
     page.locator('#settings-link').click()
-    page.locator('.station-settings').wait_for()
-    assert page.locator('.station-row').count() == 5      # + «Шаги с телефона» — только ссылка
+    page.locator('.scheme-picker').wait_for()
+    assert page.locator('.station-settings, .station-row').count() == 0
+    assert 'platformer' not in page.locator('.two-column').inner_text().lower().replace('открывать platformer в один тап', '')
     fits(page)
 
 
@@ -1395,7 +1374,7 @@ def main():
                     banks_ui(page, nav)
                     spend_ui(page, nav)
                     income_ui(page, nav)
-                    month_goals_ui(page, nav)
+                    goals_ui(page, nav)
                     friends_ui(page, nav)
                     projects_ui(page, nav)
                     compact_ui_and_quiet_refresh(page, url)
