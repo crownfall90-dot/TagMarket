@@ -294,7 +294,8 @@ def banks_ui(page, nav):
     assert page.locator('.bank-account.off').count() == 1                      # наличные не в общем балансе
     assert page.locator('.inbox-item').count() == 1
     fits(page)
-    page.locator('.bank-account').first.click()
+    # карты одного банка лежат стопкой: у верхних видна полоса сверху — по ней и нажимают
+    page.locator('.bank-account').first.click(position={'x': 40, 'y': 22})
     page.locator('#dialog input[name="bank"]').wait_for()
     assert page.locator('#dialog select[name="currency"]').is_disabled()       # валюту счёта менять нельзя
     assert page.locator('#dialog input[name="last4"]').input_value() == '1234'
@@ -423,7 +424,21 @@ def projects_ui(page, nav):
     page.locator(f'{nav} a[href="#projects"]').click()
     page.locator('.project-card').first.wait_for()
     assert page.locator(f'{nav} a[data-tab]').count() == 5
-    assert page.locator('.project-card').count() == 4  # TagMarket, банки плюс два preview-проекта
+    assert page.locator('.project-card').count() == 3  # TagMarket и два preview-проекта
+    # банки и счета — главное в Финансах: кошелёк с картами идёт раньше проектов
+    assert page.evaluate("!!(document.querySelector('.wallet').compareDocumentPosition(document.querySelector('.fin-projects')) & Node.DOCUMENT_POSITION_FOLLOWING)")
+    assert page.locator('.wallet .pcard:not(.add)').count() == 5 and page.locator('.wallet .pcard.add').count() == 1
+    assert page.locator('.project-card.proj .proj-art').count() == 2      # у каждого проекта своя обложка
+    if page.viewport_size['width'] <= 740:        # «+» на телефоне: меню «Счёт или карта» и «Проект»
+        page.locator('#fab-root .fab').click()
+        page.locator('#fab-root .fab-item').first.wait_for()
+        assert page.locator('#fab-root .fab-item').count() == 2
+        assert page.locator('#fab-root .fab-item[data-action="bank-add"]').count() == 1
+        page.locator('#fab-root .fab').click()
+        page.wait_for_function("!document.querySelector('#fab-root').classList.contains('open')")
+        assert page.locator('#fab-root .fab-item').count() == 0
+    else:
+        assert page.locator('#fab-root .fab').is_hidden()
     assert 'Плюс за' in page.locator('.project-card.system-project').first.inner_text()
     # доходность проекта: процент или фиксированная сумма
     page.locator('[data-action="project-create"]').first.click()
@@ -676,13 +691,13 @@ def projects_ui(page, nav):
     page.locator('[data-action="forecast-back"]').click()
     page.locator('.project-card').first.wait_for()
     page.evaluate("window.api=window.__projectUiApi;state.projects[0].total=999999999999.99;state.projects[0].currency='BYN';state.projects[0].name='x'.repeat(96);render()")
-    assert page.locator('.project-summary b').count() == 3
+    assert page.locator('.fin-hero .fin-total').count() == 1 and page.locator('.fin-hero a.forecast-link').count() == 1
     fits(page)
     if page.viewport_size['width'] == 390:
         page.wait_for_function("!document.querySelector('#main').getAnimations({subtree:true}).some(a=>a.playState==='running'&&a.effect?.getComputedTiming().iterations!==Infinity)")
         page.screenshot(path=str(Path(tempfile.gettempdir()) / 'tagmarkets-mobile-projects.png'), full_page=True)
     page.evaluate("state.projects=[];render()")
-    assert page.locator('.project-card').count() == 2  # торговые счета и банки остаются отдельными карточками
+    assert page.locator('.project-card').count() == 1 and page.locator('.wallet').count() == 1  # TagMarket и кошелёк банков остаются
     assert page.locator('[data-action="project-create"]').count() == 1
     fits(page)
 

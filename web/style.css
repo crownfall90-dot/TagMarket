@@ -1906,3 +1906,182 @@ li.done>.wish-check{background:var(--accent);border-color:var(--accent)}
 .home-grid .panel.home-card.home-tasks:after,.home-grid .panel.home-card.home-events:after{content:"";display:block;height:1px;margin-top:14px;background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--accent) 30%,transparent),transparent)}
 .plans .plan-tabs{width:100%;max-width:none}
 .plans-glow{-webkit-mask-image:radial-gradient(ellipse 70% 75% at 45% 35%,#000 35%,transparent 78%);mask-image:radial-gradient(ellipse 70% 75% at 45% 35%,#000 35%,transparent 78%)}
+
+/* ═══ Плавающая «+» — общий слой поверх приложения (только телефон) ═══ */
+.fab-root{position:fixed;right:max(16px,env(safe-area-inset-right));bottom:calc(var(--safe-bottom,0px) + 96px);z-index:35;display:flex;flex-direction:column;align-items:flex-end;gap:10px;pointer-events:none}
+.fab-root>*{pointer-events:auto}
+.fab-root .fab{transform:none;animation:fab-pop .5s var(--ease-out,cubic-bezier(.16,1,.3,1)) both}
+.fab-root .fab:active{transform:scale(.92)}
+.fab-root .fab svg{transition:transform .35s var(--ease-out,cubic-bezier(.16,1,.3,1))}
+.fab-root.open .fab svg{transform:rotate(135deg)}
+@keyframes fab-pop{from{opacity:0;transform:translateY(16px) scale(.7)}to{opacity:1;transform:none}}
+.fab-menu{display:flex;flex-direction:column;align-items:flex-end;gap:8px}
+.fab-item{display:inline-flex;align-items:center;gap:10px;min-height:46px;padding:0 18px 0 14px;border:1px solid color-mix(in srgb,var(--text) 10%,transparent);border-radius:16px;
+ background:color-mix(in srgb,var(--panel) 92%,transparent);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);color:var(--text);font-size:14px;font-weight:500;
+ box-shadow:0 12px 30px -10px rgb(0 0 0 / .6);animation:fab-item-in .35s var(--ease-out,cubic-bezier(.16,1,.3,1)) both;animation-delay:calc(var(--i,0) * 50ms)}
+.fab-item svg{width:18px;height:18px;color:var(--accent)}
+@keyframes fab-item-in{from{opacity:0;transform:translateY(12px) scale(.9)}to{opacity:1;transform:none}}
+.fab-root.open:before{content:"";position:fixed;inset:0;z-index:-1;background:rgb(0 0 0 / .35);backdrop-filter:blur(2px);animation:fade-in .2s both}
+@keyframes fade-in{from{opacity:0}}
+@media(min-width:741px){.fab-root{display:none}}
+@media(max-width:740px){.head-primary{display:none!important}}
+.modal-open .fab-root{display:none}
+
+/* ═══ Шапки разделов: открытые, с живым свечением своего цвета ═══ */
+.page-head.sec-hero{position:relative;isolation:isolate;align-items:flex-end;margin:-6px -4px 14px;padding:22px 6px 8px}
+.sec-glow{position:absolute;inset:-70px -50px -30px;z-index:-1;pointer-events:none;overflow:hidden;
+ -webkit-mask-image:radial-gradient(ellipse 72% 78% at 40% 35%,#000 35%,transparent 78%);mask-image:radial-gradient(ellipse 72% 78% at 40% 35%,#000 35%,transparent 78%)}
+.sec-glow i{position:absolute;width:62%;aspect-ratio:1;border-radius:50%;filter:blur(48px);opacity:.36;background:var(--g1,var(--accent));animation:aurora-drift 19s var(--ease-soft,ease-in-out) infinite alternate}
+.sec-glow i:nth-child(1){left:-12%;top:-30%}
+.sec-glow i:nth-child(2){right:-14%;top:-16%;background:var(--g2,var(--purple));opacity:.28;animation-duration:25s;animation-delay:-8s}
+.sec-glow i:nth-child(3){left:32%;top:12%;width:42%;background:var(--g3,#7ab8f5);opacity:.16;animation-duration:31s;animation-delay:-15s}
+.tone-fin{--g1:var(--accent);--g2:#2bd4b0;--g3:#7ab8f5}
+.tone-act{--g1:#f0b46b;--g2:#f29ac0;--g3:var(--accent)}
+.tone-people{--g1:#f29ac0;--g2:var(--purple);--g3:#7ab8f5}
+.tone-set{--g1:var(--purple);--g2:#7ab8f5;--g3:var(--accent)}
+.tone-bank{--g1:#2bd4b0;--g2:var(--accent);--g3:#f0b46b}
+.sec-eyebrow{display:block;font-size:11px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+.sec-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 2px 12px}
+.sec-row h2{font-size:21px;letter-spacing:-.035em}
+.sec-row .text-link{color:var(--accent);font-size:13px;display:inline-flex;align-items:center;gap:6px}
+.sec-row .text-link svg{width:14px;height:14px}
+
+/* ═══ Финансы ═══ */
+.fin .fin-total{display:block;font-size:clamp(34px,10.5vw,52px);line-height:1.02;font-weight:500;letter-spacing:-.055em}
+.fin .fin-sub{margin-top:10px;font-size:13px;color:var(--muted)}
+.fin .fin-sub b{color:var(--text);font-weight:550}
+.fin .fin-sub b.positive{color:var(--accent)}
+.fin .forecast-link{align-self:flex-end;border-radius:14px}
+.fin-alloc{display:flex;gap:4px;height:10px;margin:4px 2px 10px}
+.fin-alloc i{display:block;height:100%;border-radius:6px;width:var(--w);animation:alloc-grow .9s var(--ease-out,cubic-bezier(.16,1,.3,1)) both;animation-delay:var(--d,0ms)}
+@keyframes alloc-grow{from{width:0;opacity:0}}
+.fin-legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin:0 2px 26px;font-size:12px;color:var(--muted)}
+.fin-legend span{display:inline-flex;align-items:center;gap:7px}
+.fin-legend i{width:8px;height:8px;border-radius:50%}
+.fin-legend em{font-style:normal;color:var(--text)}
+.fa-banks{background:linear-gradient(90deg,#2bd4b0,color-mix(in srgb,#2bd4b0 60%,var(--accent)))}
+.fa-projects{background:linear-gradient(90deg,var(--accent),color-mix(in srgb,var(--accent) 60%,#fff))}
+.fa-tag{background:linear-gradient(90deg,var(--purple),color-mix(in srgb,var(--purple) 55%,#7ab8f5))}
+
+/* кошелёк: банки и счета — главный блок */
+.wallet{margin:0 0 30px}
+.wallet-sum{display:grid;gap:4px;padding:2px 2px 14px;color:var(--text)}
+.wallet-sum .ws-main{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+.wallet-sum .ws-main small{font-size:13px;color:var(--muted)}
+.wallet-sum .ws-main b{font-size:26px;font-weight:550;letter-spacing:-.045em}
+.wallet-sum .ws-meta{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.wallet-sum .ws-meta em{font-style:normal;color:#f0b46b}
+.wallet-sum .ws-meta svg{width:13px;height:13px;margin-left:auto}
+.wallet-sum .bank-stack{margin-top:10px}
+.wallet-cards{display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;margin:0 -16px;padding:4px 16px 16px;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.wallet-cards::-webkit-scrollbar{display:none}
+.pcard{position:relative;flex:0 0 min(74vw,290px);aspect-ratio:1.586;scroll-snap-align:start;display:flex;flex-direction:column;justify-content:space-between;padding:16px 18px;border:0;border-radius:22px;overflow:hidden;text-align:left;
+ color:var(--ink,#fff);background:radial-gradient(120% 90% at 100% 0%,color-mix(in srgb,var(--c1) 70%,#fff) 0%,transparent 45%),linear-gradient(140deg,var(--c1),var(--c2));
+ box-shadow:0 18px 34px -16px color-mix(in srgb,var(--c1) 70%,transparent),inset 0 1px 0 rgb(255 255 255 / .25);
+ animation:pcard-in .6s var(--ease-out,cubic-bezier(.16,1,.3,1)) both;animation-delay:calc(var(--i,0) * 70ms);transition:transform .25s var(--ease-out,cubic-bezier(.16,1,.3,1))}
+.pcard:active{transform:scale(.97)}
+.pcard.off{filter:saturate(.35) brightness(.8)}
+@keyframes pcard-in{from{opacity:0;transform:translateX(24px) rotate(2deg)}to{opacity:1;transform:none}}
+.pcard:after{content:"";position:absolute;inset:0;pointer-events:none;border-radius:inherit;
+ background:repeating-linear-gradient(115deg,rgb(255 255 255 / .05) 0 2px,transparent 2px 9px);mix-blend-mode:overlay}
+.pc-shine{position:absolute;inset:-40% -60%;pointer-events:none;background:linear-gradient(105deg,transparent 40%,rgb(255 255 255 / .28) 50%,transparent 60%);animation:pc-shine 7s ease-in-out infinite;animation-delay:calc(var(--i,0) * 900ms)}
+@keyframes pc-shine{0%,62%{transform:translateX(-60%)}82%,100%{transform:translateX(60%)}}
+.pc-top{position:relative;display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.pc-top b{font-size:16px;font-weight:650;letter-spacing:-.02em}
+.pc-top i{font-style:normal;font-size:10px;letter-spacing:.12em;text-transform:uppercase;opacity:.75}
+.pc-chip{position:relative;width:38px;height:28px;border-radius:7px;background:linear-gradient(135deg,#f7e3a1,#c9a24b 55%,#f3d987);box-shadow:inset 0 0 0 1px rgb(0 0 0 / .15)}
+.pc-chip:before{content:"";position:absolute;inset:7px 0;border-top:1px solid rgb(0 0 0 / .18);border-bottom:1px solid rgb(0 0 0 / .18)}
+.pc-coins{position:relative;display:flex;height:28px}
+.pc-coins i{width:24px;height:24px;margin-right:-10px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#fff6c9,#d9a93f 60%,#9b7524);box-shadow:0 2px 4px rgb(0 0 0 / .3)}
+.pc-bal{position:relative;font-size:clamp(20px,6vw,25px);font-weight:600;letter-spacing:-.04em;font-variant-numeric:tabular-nums}
+.pc-bottom{position:relative;display:flex;justify-content:space-between;gap:10px;font-size:12px;opacity:.85}
+.pc-bottom span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pc-live{position:absolute;right:14px;top:40%;display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:10px;font-size:10px;background:rgb(0 0 0 / .22);color:#fff;backdrop-filter:blur(4px)}
+.pc-live i{width:6px;height:6px;border-radius:50%;background:#7dff9a;animation:late-ping 2.4s ease-out infinite}
+.pcard.add{flex-basis:min(42vw,150px);align-items:center;justify-content:center;gap:10px;color:var(--accent);background:none;
+ border:1.5px dashed color-mix(in srgb,var(--accent) 45%,transparent);box-shadow:none;font-size:13px;text-align:center}
+.pcard.add:after{content:none}
+.pcard.add svg{width:24px;height:24px}
+
+/* проекты: у каждого свой оттенок и своя обложка */
+.fin-projects{margin:0 0 30px}
+.fin .project-card.proj{position:relative;overflow:hidden;isolation:isolate;
+ background:linear-gradient(160deg,hsl(var(--ph) 45% 22% / .55),color-mix(in srgb,var(--panel) 92%,transparent) 62%);border-color:hsl(var(--ph) 50% 55% / .22)}
+.fin .project-card.proj .project-icon{background:hsl(var(--ph) 70% 60% / .16);color:hsl(var(--ph) 80% 72%)}
+.proj-art{position:absolute;right:-12%;top:-30%;width:62%;height:110%;z-index:-1;opacity:.55;filter:blur(18px);pointer-events:none}
+.proj-art circle{fill:hsl(var(--ph) 78% 58%);animation:blob-float var(--t,12s) ease-in-out infinite alternate}
+.proj-art .b1{fill:hsl(calc(var(--ph) + 40) 75% 60%)}
+.proj-art .b2{fill:hsl(calc(var(--ph) - 35) 70% 55%);opacity:.8}
+@keyframes blob-float{to{transform:translate(var(--dx,6px),var(--dy,4px)) scale(1.08)}}
+.fin .project-card.tag-card{background:linear-gradient(160deg,rgb(var(--purple-rgb) / .2),color-mix(in srgb,var(--panel) 92%,transparent) 62%);border-color:rgb(var(--purple-rgb) / .22)}
+.fin .project-card.tag-card .project-icon{background:rgb(var(--purple-rgb) / .16);color:var(--purple)}
+.fin .fin-empty{padding-top:24px}
+
+/* доход по проектам — открытым списком */
+.fin .project-dynamics{padding:0;border:0;background:none;margin:0 0 20px}
+.fin .project-dynamics:before{content:none}
+
+@media(prefers-reduced-motion:reduce){
+ .sec-glow i,.fab-root .fab,.fab-item,.fin-alloc i,.pcard,.pc-shine,.proj-art circle,.pc-live i{animation:none}
+}
+.fin .fin-hero{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.fin .fin-main{min-width:0;flex:1 1 220px}
+.fin .fin-hero .forecast-link{flex:none;min-height:42px;padding:8px 14px;gap:8px;color:var(--accent);border-color:color-mix(in srgb,var(--accent) 35%,transparent);background:rgb(var(--accent-rgb) / .08)}
+.fin .fin-hero .forecast-link svg{width:16px;height:16px}
+.proj-art{position:absolute;inset:0;z-index:-1;pointer-events:none;overflow:hidden;border-radius:inherit}
+.proj-art i{position:absolute;width:var(--s,160px);height:var(--s,160px);margin:calc(var(--s,160px) / -2) 0 0 calc(var(--s,160px) / -2);border-radius:50%;
+ background:radial-gradient(circle,hsl(var(--ph) 78% 58% / .55),transparent 68%);animation:blob-float var(--t,12s) ease-in-out infinite alternate}
+.proj-art .b1{background:radial-gradient(circle,hsl(calc(var(--ph) + 40) 75% 62% / .42),transparent 68%)}
+.proj-art .b2{background:radial-gradient(circle,hsl(calc(var(--ph) - 35) 70% 55% / .38),transparent 68%)}
+@media(prefers-reduced-motion:reduce){.proj-art i{animation:none}}
+
+/* ═══ Банки и счета: шапка со свечением, группы банков стопками карт ═══ */
+.bank-head .bank-total{display:block;font-size:clamp(32px,10vw,48px);line-height:1.04;font-weight:500;letter-spacing:-.055em}
+.bank-head p{margin-top:8px;font-size:13px;color:var(--muted)}
+.bank-hero{padding:0;border:0;background:none;margin:0 2px 24px}
+.bank-hero:before{content:none}
+.bank-hero .bank-stack{margin:0}
+.bank-hero .bank-legend{margin-top:10px}
+.bank-group{padding:0;border:0;background:none;margin:0 0 26px;animation:row-in .5s var(--ease-out,cubic-bezier(.16,1,.3,1)) both;animation-delay:calc(var(--g,0) * 80ms)}
+.bank-group:before{content:none}
+.bank-group-head{display:flex;align-items:center;gap:12px;margin:0 2px 12px}
+.bank-group-head h2{font-size:18px;letter-spacing:-.03em;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bank-group-head .bank-sum{font-size:15px;font-weight:600;letter-spacing:-.02em}
+.bank-group .bank-logo{display:grid;place-items:center;width:38px;height:38px;flex-shrink:0;border-radius:13px;font-size:16px;font-weight:700;color:var(--ink,#fff);
+ background:linear-gradient(140deg,var(--c1),var(--c2));box-shadow:0 8px 18px -8px var(--c1)}
+.bank-stack-cards{display:grid}
+.bank-stack-cards .bank-account{width:100%;flex:none;max-width:420px;padding:18px 20px}
+/* карты одного банка лежат стопкой: верхние видны полосой, последняя — целиком */
+.bank-stack-cards .bank-account:not(:last-child){margin-bottom:calc(-1 * (min(100vw - 32px,420px) / 1.586) + 64px)}
+.bank-stack-cards .bank-account:not(:last-child) .pc-chip,.bank-stack-cards .bank-account:not(:last-child) .pc-coins{visibility:hidden}
+.bank-stack-cards .bank-account{transition:transform .3s var(--ease-out,cubic-bezier(.16,1,.3,1))}
+.bank-stack-cards .bank-account:not(:last-child):active{transform:translateY(-10px)}
+.bank-stack-cards .bank-account .pc-top b{font-size:15px}
+.bank-inbox{padding:16px;margin:0 0 24px;border-radius:20px;border:1px solid color-mix(in srgb,#f0b46b 35%,transparent);background:linear-gradient(160deg,color-mix(in srgb,#f0b46b 14%,transparent),transparent 70%)}
+.bank-inbox:before{content:none}
+.bank-stack-cards .bank-account.pcard{display:flex;flex-direction:column;justify-content:space-between;align-items:stretch;text-align:left;gap:0;min-height:0;aspect-ratio:1.586;border:0}
+.bank-stack-cards .bank-account.pcard .pc-top{justify-content:space-between}
+.bank-stack-cards .bank-account.pcard .pc-bottom{justify-content:space-between}
+
+/* ═══ Шапки остальных разделов, открытые блоки ═══ */
+.tone-circle{--g1:var(--accent);--g2:#f29ac0;--g3:var(--purple)}
+.sec-hero h1{font-size:clamp(34px,10vw,46px);line-height:1;letter-spacing:-.055em}
+.sec-hero p{margin-top:10px;font-size:13px;color:var(--text);opacity:.78}
+/* круг жизни — прямо на фоне, под ним мягкое свечение */
+.circle-hero{position:relative;padding:4px 0 10px;margin:0 0 18px;border:0;background:radial-gradient(60% 55% at 50% 42%,rgb(var(--accent-rgb) / .12),transparent 70%)}
+.circle-hero:before{content:none}
+.circle-hero .circle-verdict{text-align:center;margin-top:4px;font-size:14px;color:var(--text);opacity:.85}
+/* записи активностей — открытым списком */
+.act-history{padding:0;border:0;background:none;margin:8px 0 20px}
+.act-history:before{content:none}
+.act-history .act-day{margin:0 0 14px}
+.act-history .act-entry{border-bottom:1px solid color-mix(in srgb,var(--text) 6%,transparent)}
+.act-history .act-entry:last-child{border-bottom:0}
+/* настройки: строки разделов Platformer — без серого фона кнопок */
+.settings-row.station-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:12px;width:100%;padding:14px 0;margin:0;border:0;border-bottom:1px solid var(--line);border-radius:0;background:none;color:var(--text);font:inherit;text-align:left;cursor:pointer}
+.settings-row.station-row:last-child{border-bottom:0}
+.settings-row.station-row:active{opacity:.7}
+.settings-row.station-row .home-icon{display:grid;place-items:center;width:38px;height:38px;border-radius:12px;background:rgb(var(--accent-rgb) / .1);color:var(--accent)}
+.settings-row.station-row b,.settings-row.station-row p{display:block;font-size:14px;font-weight:550;color:var(--text);margin:0}
+.settings-row.station-row small{display:block;margin-top:3px;font-size:12px;color:var(--muted)}
+.settings-row.station-row>svg{width:16px;height:16px;color:var(--muted)}
