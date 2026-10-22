@@ -34,6 +34,7 @@ import coordination
 import miniapp
 import activity
 import banks
+import insights
 import lists
 import projects
 import partner
@@ -1646,6 +1647,13 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(scores["finance"]["score"])
         self.assertLess(scores["tasks"]["score"], 100)
         self.assertEqual(scores["tasks"]["status"], "просрочено 1")
+        # банки и счета — главное в финансах: в статусе сферы и в выводах они идут раньше проектов
+        await self.call("POST", "/api/banks", json={"bank": "Альфа-Банк", "kind": "card", "currency": "USD", "balance": 1200})
+        circle = (await (await self.call("GET", "/api/bootstrap")).json())["insights"]
+        finance = next(s for s in circle["spheres"] if s["id"] == "finance")
+        self.assertTrue(finance["status"].startswith("на счетах " + insights.money(1200, "USD")), finance["status"])
+        order = [i["text"] for i in circle["insights"] if i["sphere"] == "finance"]
+        self.assertTrue(order[0].startswith("На банковских счетах"), order)
         # после правки круг обновляется без полной перезагрузки; чужие данные не видны
         tasks = (await (await self.call("GET", "/api/lists")).json())["tasks"]
         await self.call("PATCH", f"/api/tasks/{tasks[0]['id']}", json={"done": True})
@@ -2925,6 +2933,39 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Баланс счёта: ", text)
         self.assertNotIn("профит 1", text)      # отдельной строки «капитал + профит» нет
         self.assertIn("Вывод профита", title)
+
+    async def test_profit_withdrawal_settles_the_balance_for_the_next_trade(self):
+        """Позавчера минус, вчера плюс, профит выведен целиком — осталось 1 999. Сегодняшняя
+        сделка прибавляет к 1 999 ровно свой профит. Раньше доля брокера с уже выведенного
+        профита ещё раз вычиталась из новой сделки: «1 999.00 → 2 009.40» при +15.42."""
+        trades.use(accounts.load(1)[0])
+        day = trades.clock().replace(hour=9, minute=0, second=0, microsecond=0)
+
+        def deal(ticket, when, net, comment="", closing=False, balance=False):
+            return {"ticket": ticket, "time": when.isoformat(), "is_balance": balance,
+                    "is_closing": closing, "is_opening": False, "net": net, "volume": 0.1 if closing else 0,
+                    "comment": comment, "symbol": "XAUUSD" if closing else "", "side": "SELL" if closing else "",
+                    "position": ticket if closing else 0}
+
+        store.save_deals(self.tdb, 123, [
+            deal(1, day - timedelta(days=3), 1999.0, "Deposit", balance=True),
+            deal(2, day - timedelta(days=2), -7.17, closing=True),              # позавчера минус
+            deal(3, day - timedelta(days=1), 23.90, closing=True),              # вчера плюс, итог в плюсе
+            deal(4, day - timedelta(days=1, minutes=-30), -16.73, "Profit Withdrawal", balance=True),
+            deal(5, day, 22.03, closing=True)])                                 # сегодня плюс
+        leverage = trades._multiplier or 1        # баланс = капитал × плечо + профит
+        store.save_state(self.tdb, 123, 1999.0 * leverage + 22.03, 1999.0 * leverage + 22.03, "USD", "Demo", 5)
+        rows = {r["ticket"]: r for r in trades.fetch(datetime(2000, 1, 1), trades.clock() + timedelta(days=1))}
+        capital = trades.capital()
+        self.assertAlmostEqual(capital, 1999.0, places=6)
+        around = trades.strategy_around(rows[5])
+        profit = trades.net_of_fee(trades.mine(22.03))
+        self.assertAlmostEqual(around["was"], 1999.0, places=6, msg="после вывода профита на счёте ровно капитал")
+        self.assertAlmostEqual(around["became"], 1999.0 + profit, places=6, msg="к 1 999 прибавляется только профит сделки")
+        self.assertAlmostEqual(trades.capital() + trades.retained(), 1999.0 + profit, places=6,
+                               msg="Mini App показывает тот же баланс")
+        text = trades.fmt_notification(rows[5], "USD")
+        self.assertIn("2 014.42", text.replace("\u202f", " ").replace("\xa0", " "), text)
 
     async def test_broker_comment_cannot_break_notification_markup(self):
         trades.use(accounts.load(1)[0])

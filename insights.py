@@ -84,13 +84,14 @@ def analyze(data, today, hour=12):
         for p in waiting[:2]:
             out.append((55, "finance", "info", f"Начисления по «{p['name']}» начнутся {_date(p['income_starts'])}", "#projects"))
         if bank is not None:
-            out.append((44, "finance", "info", f"На банковских счетах: {money(bank, cur)}", "#banks"))
+            # банки и счета — главное в финансах: этот вывод идёт раньше проектов
+            out.append((28, "finance", "info" if bank >= 0 else "warn", f"На банковских счетах: {money(bank, cur)}", "#banks"))
             if not projects and not tag:
                 score = 60 if bank >= 0 else 25
         scores["finance"] = score
-        fin_status = (f"≈ {money(daily, cur)} в день" if daily > 0 else
-                      "есть проекты на паузе" if paused else
-                      f"на счетах {money(bank, cur)}" if bank is not None else "без дохода в день")
+        income = f"≈ {money(daily, cur)} в день" if daily > 0 else ""
+        fin_status = (" · ".join(x for x in (f"на счетах {money(bank, cur)}", income) if x) if bank is not None else
+                      income or ("есть проекты на паузе" if paused else "без дохода в день"))
     else:
         fin_status = "добавьте проект или счёт"
         daily = 0
