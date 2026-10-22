@@ -124,6 +124,7 @@ class MainActivity : ComponentActivity() {
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
+                if (updater?.blocking == true) { finish(); return }      // обновление обязательное
                 // сначала страница: открытое окно или меню закрываются «Назад», как в обычном приложении
                 web.evaluateJavascript("window.platformerBack ? window.platformerBack() : false") { handled ->
                     if (handled == "true") return@evaluateJavascript

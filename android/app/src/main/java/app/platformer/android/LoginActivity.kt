@@ -47,6 +47,7 @@ class LoginActivity : ComponentActivity() {
     private var requested = false
     private var staleClip: String? = null
     private var busy = false
+    private var updater: Updater? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -126,6 +127,8 @@ class LoginActivity : ComponentActivity() {
         enter.setOnClickListener { submit() }
         renderCells(false)
         intro(findViewById(R.id.login_content))
+        // новая версия — обязательна: окно обновления закрывает и экран входа
+        updater = Updater(this, findViewById(R.id.login_root))
     }
 
     /** Код без дефиса и лишних символов. */
@@ -210,6 +213,11 @@ class LoginActivity : ComponentActivity() {
                 .setInterpolator(if (i == 0) OvershootInterpolator(1.6f) else DecelerateInterpolator(2f))
                 .start()
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        updater?.onResume()
     }
 
     private fun dp(v: Float) = v * resources.displayMetrics.density

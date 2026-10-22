@@ -1,5 +1,6 @@
 package app.platformer.android
 
+import android.app.Activity
 import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
@@ -8,10 +9,18 @@ import com.google.android.play.core.appupdate.AppUpdateOptions
 import com.google.android.play.core.install.model.AppUpdateType
 import com.google.android.play.core.install.model.UpdateAvailability
 
-/** Версия из Google Play обновляется через сам Play: при запуске — сразу, на весь экран. */
+/**
+ * Версия из Google Play обновляется через сам Play: при запуске — сразу, на весь экран.
+ * Обновление обязательное: отказались — приложение закрывается.
+ */
 class Updater(activity: ComponentActivity, @Suppress("UNUSED_PARAMETER") host: FrameLayout) {
     private val manager = AppUpdateManagerFactory.create(activity)
-    private val launcher = activity.registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { }
+    private val launcher = activity.registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+        if (result.resultCode != Activity.RESULT_OK) activity.finish()
+    }
+
+    /** Окно обновления рисует сам Google Play — своего у нас нет. */
+    val blocking get() = false
 
     fun onResume() {
         manager.appUpdateInfo.addOnSuccessListener { info ->

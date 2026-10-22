@@ -6,6 +6,9 @@ import android.content.Intent
 import android.content.pm.PackageInfo
 import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -16,6 +19,8 @@ import android.widget.FrameLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.activity.ComponentActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -24,29 +29,44 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
+import java.net.ConnectException
+import java.net.NoRouteToHostException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
 
 /**
  * Самообновление APK, установленного не из Google Play. При запуске (и не чаще раза
- * в 30 минут при возвращении) читает latest.json из релиза на GitHub; если версия
- * новее — качает APK, сверяет SHA-256, имя пакета, номер версии и подпись с
+ * в 30 минут при возвращении) читает latest.json из релиза на GitHub. Если версия
+ * новее — показывает окно: номер версии, что нового и кнопку «Обновить до …».
+ * Обновление обязательное: пока окно на экране, приложением пользоваться нельзя.
+ * По кнопке качает APK, сверяет SHA-256, имя пакета, номер версии и подпись с
  * установленным приложением и ставит его через PackageInstaller. На Android 12+
  * обновление самого себя проходит без вопросов; на старых — одно «Установить».
  */
 class Updater(private val activity: ComponentActivity, private val host: FrameLayout) {
-    private class Release(val code: Long, val name: String, val apk: String, val sha256: String, val size: Long)
+    private class Release(
+        val code: Long, val name: String, val apk: String, val sha256: String, val size: Long, val notes: List<String>,
+    )
 
     private val prefs = activity.getSharedPreferences("updates", Context.MODE_PRIVATE)
     private var job: Job? = null
     private var overlay: View? = null
     private var waiting: Pair<Release, File>? = null       // скачано, ждём разрешения на установку
+    private var offered: Release? = null
+    private var netCallback: ConnectivityManager.NetworkCallback? = null
     private var launched = true                             // при открытии приложения проверяем всегда
 
     init {
         UpdateReceiver.listener = { status, message -> activity.runOnUiThread { onStatus(status, message) } }
     }
+
+    /** Новая версия найдена и ещё не установлена — приложение закрыто окном обновления. */
+    val blocking get() = overlay != null
+
+    private class WrongSignature : Exception("подпись не совпадает")
 
     fun onResume() {
         if (BuildConfig.UPDATE_URL.isBlank() || job?.isActive == true) return
@@ -61,18 +81,121 @@ class Updater(private val activity: ComponentActivity, private val host: FrameLa
             try {
                 val release = withContext(Dispatchers.IO) { fetch() }
                 prefs.edit().putLong("checked", now).apply()
-                if (release.code <= BuildConfig.VERSION_CODE) return@launch
-                show(release)
+                if (release.code > BuildConfig.VERSION_CODE) offer(release)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // нет интернета — говорим прямо: без проверки войти нельзя; другие сбои (релиза ещё
+                // нет, GitHub недоступен) не мешают пользоваться приложением
+                if (offline(e)) showOffline()
+            }
+        }
+    }
+
+    private fun offline(e: Exception): Boolean {
+        if (e is UnknownHostException || e is ConnectException || e is SocketTimeoutException || e is NoRouteToHostException) return true
+        val cm = activity.getSystemService(ConnectivityManager::class.java) ?: return false
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return true
+        return !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    }
+
+    /** «Нет интернета»: окно с кнопкой «Повторить»; сеть появилась — проверяем сами. */
+    private fun showOffline() {
+        if (overlay == null) {
+            show(null)
+        }
+        val view = overlay ?: return
+        view.findViewById<TextView>(R.id.update_eyebrow).text = activity.getString(R.string.update_offline_eyebrow)
+        view.findViewById<TextView>(R.id.update_title).text = activity.getString(R.string.update_offline_title)
+        notesVisible(false)
+        state(null, activity.getString(R.string.update_offline), busy = false, action = activity.getString(R.string.update_retry)) {
+            retryCheck()
+        }
+        if (netCallback == null) {
+            val cm = activity.getSystemService(ConnectivityManager::class.java) ?: return
+            val callback = object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) {
+                    activity.runOnUiThread { retryCheck() }
+                }
+            }
+            runCatching { cm.registerDefaultNetworkCallback(callback) }.onSuccess { netCallback = callback }
+        }
+    }
+
+    private fun retryCheck() {
+        if (job?.isActive == true) return
+        stopWatchingNetwork()
+        overlay?.let { state(null, activity.getString(R.string.update_checking), busy = true) }
+        launched = true
+        job = activity.lifecycleScope.launch {
+            try {
+                val release = withContext(Dispatchers.IO) { fetch() }
+                prefs.edit().putLong("checked", System.currentTimeMillis()).apply()
+                if (release.code > BuildConfig.VERSION_CODE) offer(release) else hide()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (offline(e)) showOffline() else hide()
+            } finally {
+                launched = false
+            }
+        }
+    }
+
+    private fun stopWatchingNetwork() {
+        val callback = netCallback ?: return
+        netCallback = null
+        runCatching { activity.getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(callback) }
+    }
+
+    /** Окно «Доступно обновление»: версия, что нового и «Обновить до …». */
+    private fun offer(release: Release) {
+        stopWatchingNetwork()
+        show(release)
+        overlay?.findViewById<TextView>(R.id.update_eyebrow)?.text = activity.getString(R.string.update_eyebrow)
+        val view = overlay ?: return
+        val notes = release.notes.ifEmpty { listOf(activity.getString(R.string.update_no_notes)) }
+        view.findViewById<TextView>(R.id.update_notes).text = notes.joinToString("\n") { "•  $it" }
+        notesVisible(true)
+        state(release, activity.getString(R.string.update_current, BuildConfig.VERSION_NAME), busy = false,
+            action = activity.getString(R.string.update_now, release.name.ifBlank { release.code.toString() })) {
+            start(release)
+        }
+    }
+
+    /** Нажали «Обновить»: качаем, проверяем и ставим. */
+    private fun start(release: Release) {
+        job?.cancel()
+        notesVisible(false)
+        state(release, activity.getString(R.string.update_downloading, megabytes(release.size)), busy = true)
+        job = activity.lifecycleScope.launch {
+            try {
                 val file = withContext(Dispatchers.IO) { download(release) }
                 withContext(Dispatchers.IO) { verify(release, file) }
                 if (canInstall()) install(release, file) else askPermission(release, file)
             } catch (e: CancellationException) {
                 throw e
+            } catch (_: WrongSignature) {
+                reinstall(release)
             } catch (e: Exception) {
-                // нет сети или релиза — молча; ошибку показываем, только если окно уже на экране
-                if (overlay != null) fail(e.message ?: e.javaClass.simpleName)
+                fail(release, e.message ?: e.javaClass.simpleName)
             }
         }
+    }
+
+    /** Эта копия подписана другим ключом: поверх неё обновление не встанет — только переустановка. */
+    private fun reinstall(release: Release) {
+        notesVisible(false)
+        state(release, activity.getString(R.string.update_reinstall), busy = false,
+            action = activity.getString(R.string.update_download)) {
+            runCatching { activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(release.apk))) }
+        }
+    }
+
+    private fun notesVisible(on: Boolean) {
+        val v = if (on) View.VISIBLE else View.GONE
+        overlay?.findViewById<View>(R.id.update_notes_title)?.visibility = v
+        overlay?.findViewById<View>(R.id.update_notes)?.visibility = v
     }
 
     // ── сеть ─────────────────────────────────────────────────────────────
@@ -109,7 +232,10 @@ class Updater(private val activity: ComponentActivity, private val host: FrameLa
             require(apk.startsWith(BuildConfig.UPDATE_URL.substringBeforeLast('/') + "/")) { "чужая ссылка" }
             val sha = json.getString("sha256").lowercase()
             require(Regex("^[0-9a-f]{64}$").matches(sha)) { "нет контрольной суммы" }
-            return Release(json.getLong("versionCode"), json.optString("versionName"), apk, sha, json.optLong("size"))
+            val notes = json.optJSONArray("notes")?.let { arr ->
+                (0 until arr.length()).map { arr.optString(it).trim().take(160) }.filter { it.isNotEmpty() }.take(8)
+            }.orEmpty()
+            return Release(json.getLong("versionCode"), json.optString("versionName"), apk, sha, json.optLong("size"), notes)
         } finally {
             conn.disconnect()
         }
@@ -197,7 +323,7 @@ class Updater(private val activity: ComponentActivity, private val host: FrameLa
         val theirs = signers(archive)
         if (mine.isNotEmpty() && theirs.isNotEmpty() && mine.intersect(theirs).isEmpty()) {
             file.delete()
-            error("подпись не совпадает")
+            throw WrongSignature()
         }
     }
 
@@ -214,7 +340,7 @@ class Updater(private val activity: ComponentActivity, private val host: FrameLa
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                fail(e.message ?: e.javaClass.simpleName)
+                fail(release, e.message ?: e.javaClass.simpleName)
             }
         }
     }
@@ -250,31 +376,36 @@ class Updater(private val activity: ComponentActivity, private val host: FrameLa
     private fun onStatus(status: Int, message: String?) {
         when (status) {
             PackageInstaller.STATUS_PENDING_USER_ACTION, PackageInstaller.STATUS_SUCCESS -> Unit
-            PackageInstaller.STATUS_FAILURE_ABORTED -> hide()             // нажали «Отмена» в окне Android
-            else -> fail(message ?: "ошибка $status")
+            // нажали «Отмена» в окне Android — обновление обязательное, предлагаем снова
+            PackageInstaller.STATUS_FAILURE_ABORTED -> offered?.let { offer(it) }
+            else -> fail(offered, message ?: "ошибка $status")
         }
     }
 
     // ── окно ─────────────────────────────────────────────────────────────
 
-    private fun show(release: Release) {
+    private fun show(release: Release?) {
         if (overlay == null) {
             val view = LayoutInflater.from(activity).inflate(R.layout.view_update, host, false)
             host.addView(view)
+            // карточка — над панелью жестов и под статус-баром на любом экране
+            ViewCompat.getRootWindowInsets(host)?.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )?.let { bars ->
+                val own = (host.paddingBottom > 0)            // экран уже отступил от панелей сам
+                if (!own) view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            }
             val card = view.findViewById<View>(R.id.update_card)
             view.alpha = 0f
             card.translationY = 80f * activity.resources.displayMetrics.density
             view.animate().alpha(1f).setDuration(220).start()
             card.animate().translationY(0f).setDuration(320).start()
-            view.findViewById<Button>(R.id.update_later).setOnClickListener {
-                job?.cancel()
-                hide()
-            }
             overlay = view
         }
+        if (release == null) return
+        offered = release
         overlay!!.findViewById<TextView>(R.id.update_title).text =
             activity.getString(R.string.update_title, release.name.ifBlank { release.code.toString() })
-        state(release, activity.getString(R.string.update_downloading, megabytes(release.size)), busy = true)
     }
 
     private fun state(release: Release?, text: String, busy: Boolean, action: String? = null, onAction: (() -> Unit)? = null) {
@@ -289,7 +420,7 @@ class Updater(private val activity: ComponentActivity, private val host: FrameLa
         button.visibility = if (action != null) View.VISIBLE else View.GONE
         button.text = action.orEmpty()
         button.setOnClickListener { onAction?.invoke() }
-        view.findViewById<Button>(R.id.update_later).visibility = if (busy && action == null) View.GONE else View.VISIBLE
+        view.findViewById<Button>(R.id.update_later).visibility = View.GONE   // обновление обязательное
     }
 
     private fun progress(pct: Int, total: Long) {
@@ -311,16 +442,18 @@ class Updater(private val activity: ComponentActivity, private val host: FrameLa
         }
     }
 
-    private fun fail(message: String) {
+    private fun fail(release: Release?, message: String) {
         prefs.edit().putLong("checked", 0L).apply()            // в следующий раз проверим сразу
+        if (overlay == null && release != null) show(release)
+        notesVisible(false)
         state(null, activity.getString(R.string.update_failed, message), busy = false,
             action = activity.getString(R.string.update_retry)) {
-            hide()
-            onResume()
+            if (release != null) start(release) else hide()
         }
     }
 
     private fun hide() {
+        stopWatchingNetwork()
         val view = overlay ?: return
         overlay = null
         view.animate().alpha(0f).setDuration(180).withEndAction { host.removeView(view) }.start()

@@ -80,8 +80,17 @@ jobs:
           sha=$(sha256sum "$RUNNER_TEMP/$name" | cut -d' ' -f1)
           size=$(stat -c%s "$RUNNER_TEMP/$name")
           base="https://github.com/$GITHUB_REPOSITORY/releases/download/android-latest"
-          printf '{"versionCode":%s,"versionName":"%s","apk":"%s/%s","sha256":"%s","size":%s}\n' \
-            "$PLATFORMER_VERSION_CODE" "$PLATFORMER_VERSION_NAME" "$base" "$name" "$sha" "$size" > "$RUNNER_TEMP/latest.json"
+          # «что нового» — из android/whatsnew.txt: строка — пункт, # — комментарий
+          python3 - "$RUNNER_TEMP/latest.json" "$base/$name" "$sha" "$size" <<'PY'
+          import json, os, sys
+          out, apk, sha, size = sys.argv[1:5]
+          notes = [line.strip().lstrip("-• ").strip() for line in open("whatsnew.txt", encoding="utf-8")]
+          notes = [n for n in notes if n and not n.startswith("#")][:8]
+          data = {"versionCode": int(os.environ["PLATFORMER_VERSION_CODE"]),
+                  "versionName": os.environ["PLATFORMER_VERSION_NAME"],
+                  "apk": apk, "sha256": sha, "size": int(size), "notes": notes}
+          json.dump(data, open(out, "w", encoding="utf-8"), ensure_ascii=False)
+          PY
           cat "$RUNNER_TEMP/latest.json"
           gh release view android-latest >/dev/null 2>&1 || \
             gh release create android-latest --prerelease --latest=false --target "$GITHUB_SHA" \

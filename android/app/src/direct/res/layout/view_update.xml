@@ -19,6 +19,7 @@
         android:padding="22dp">
 
         <TextView
+            android:id="@+id/update_eyebrow"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:fontFamily="sans-serif-medium"
@@ -46,6 +47,27 @@
             android:lineSpacingExtra="2dp"
             android:textColor="@color/muted"
             android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/update_notes_title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:fontFamily="sans-serif-medium"
+            android:text="@string/update_whats_new"
+            android:textColor="@color/text"
+            android:textSize="14.5sp"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/update_notes"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:lineSpacingExtra="4dp"
+            android:textColor="@color/muted"
+            android:textSize="14sp"
+            android:visibility="gone" />
 
         <ProgressBar
             android:id="@+id/update_progress"
