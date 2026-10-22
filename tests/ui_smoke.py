@@ -1159,6 +1159,9 @@ def main():
                     fits(page)
                     # «Назад» возвращает в сообщение: текст, файл, получатель и кнопка на месте
                     assert page.locator('#dialog .dialog-actions button[value="cancel"]').inner_text() == 'Назад'
+                    # сразу после выбора файла системный «cancel» не закрывает окно, но нажатая «Назад» —
+                    # решение человека: раньше она тоже глохла и в CI ломала этот шаг через раз
+                    page.evaluate("filePickerUntil=Date.now()+60000")
                     page.locator('#dialog .dialog-actions button[value="cancel"]').click()
                     page.wait_for_function("document.querySelector('#dialog-title').textContent === 'Сообщение пользователям'")
                     assert page.locator('#dialog textarea[name="text"]').input_value().startswith('<b>Обновление</b>') or 'Обновление для пользователей' in page.locator('#dialog textarea[name="text"]').input_value()
