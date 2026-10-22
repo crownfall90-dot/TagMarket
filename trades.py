@@ -536,6 +536,30 @@ def growth_pct(rows: list[dict], flows: list[dict] = None, current: float = None
     return (g - 1) * 100
 
 
+def _settled_at(rows: list[dict]):
+    """Когда профит последний раз был рассчитан: удержание брокера (PF Deduction)
+    или вывод/реинвест, после которого профита на счёте не осталось.
+
+    Выведен весь профит — всё, что было до вывода, закрыто: с этих денег долю
+    брокера больше не ждём. Иначе 30% с уже выведенного ещё раз вычитались из
+    следующей сделки: после «вывел профит, осталось 1 999» сделка +15.42 давала
+    «1 999.00 → 2 009.40». Частичный вывод расчёт не закрывает — с оставшегося
+    профита доля брокера по-прежнему положена.
+    """
+    left, at = (0.0 if HAS_MT5 else _stored_profit_carry()), None
+    for r in sorted(rows, key=_mark):
+        if r["is_closing"]:
+            left += r["net"]
+        elif r["is_balance"] and is_perf_fee(r):
+            left += r["net"]
+            at = r["time"]
+        elif r["is_balance"] and is_transfer(r) and is_profit_side(r):
+            left += r["net"]
+            if left < DUST:
+                at = r["time"]
+    return at
+
+
 def retained(upto: tuple = None, inclusive: bool = True) -> float:
     """Накопленный профит чистыми — то, что реально лежит на стратегии.
 
@@ -553,7 +577,7 @@ def retained(upto: tuple = None, inclusive: bool = True) -> float:
         return gross
     if upto is not None:
         rows = _upto(rows, upto, inclusive)
-    last_fee = max((r["time"] for r in rows if is_perf_fee(r)), default=None)
+    last_fee = _settled_at(rows)
     pending = sum(r["net"] for r in rows
                   if r["is_closing"] and (last_fee is None or r["time"] > last_fee))
     left = mine(gross) - BROKER_FEE * max(pending, 0.0)

@@ -275,6 +275,43 @@ def save_note(db, owner, data, note_id=None):
         return note(db, owner, note_id)
 
 
+IMPORT_LIMIT = 500   # заметок за один импорт
+
+
+def import_notes(db, owner, items):
+    """Пачка заметок с телефона за один раз.
+
+    Каждая — {"title", "body"}; пустые пропускаются, длинный заголовок
+    обрезается, а заметка, которая уже есть (тот же заголовок и текст),
+    второй раз не создаётся — повторный импорт того же файла безопасен.
+    """
+    if not isinstance(items, list) or not items:
+        raise ValueError("Нет заметок для импорта")
+    if len(items) > IMPORT_LIMIT:
+        raise ValueError(f"За один раз — не больше {IMPORT_LIMIT} заметок")
+    seen = {(r[0], r[1]) for r in db.execute("SELECT title,body FROM notes WHERE owner_id=?", (str(owner),))}
+    imported = skipped = 0
+    stamp = now()
+    with db:
+        for item in items:
+            if not isinstance(item, dict):
+                raise ValueError("Некорректная заметка")
+            title = item.get("title") if isinstance(item.get("title"), str) else ""
+            body = item.get("body") if isinstance(item.get("body"), str) else ""
+            title, body = " ".join(title.split())[:120], body.strip()[:20000]
+            if not title and not body:
+                skipped += 1
+                continue
+            if (title, body) in seen:
+                skipped += 1
+                continue
+            seen.add((title, body))
+            db.execute("INSERT INTO notes (id,owner_id,title,body,pinned,color,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)",
+                       (uuid.uuid4().hex, str(owner), title, body, 0, "accent", stamp, stamp))
+            imported += 1
+    return {"imported": imported, "skipped": skipped, "notes": notes(db, owner)}
+
+
 def delete_note(db, owner, note_id):
     with db:
         note(db, owner, note_id)

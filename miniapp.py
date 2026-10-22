@@ -1542,6 +1542,8 @@ async def lists_api(request):
             _section_call(lambda: lists.delete_task(db, uid, task_id))
             return web.json_response({"ok": True})
         result = _section_call(lambda: lists.save_task(db, uid, data, task_id))
+    elif path == "/api/notes/import":
+        return web.json_response(_section_call(lambda: lists.import_notes(db, uid, data.get("notes"))))
     elif path.startswith("/api/notes"):
         note_id = info.get("note_id")
         if method == "DELETE":
@@ -1564,11 +1566,11 @@ async def lists_api(request):
 # карточки главной и их порядок, быстрые кнопки, показатели «Активностей»
 STATION_CHOICES = {
     "home": ("circle", "finance", "activity", "tasks", "events", "wish"),
-    "quick": ("task", "steps", "weight", "workout", "sleep", "water", "event", "note", "wish"),
-    "metrics": ("steps", "weight", "workout", "sleep", "water", "pulse"),
+    "quick": ("task", "weight", "workout", "event", "note", "wish"),
+    "metrics": ("weight", "workout"),
 }
 STATION_DEFAULTS = {"home": list(STATION_CHOICES["home"]),
-                    "quick": ["task", "steps", "weight", "workout", "event", "note", "wish"],
+                    "quick": list(STATION_CHOICES["quick"]),
                     "metrics": list(STATION_CHOICES["metrics"])}
 
 
@@ -1763,6 +1765,7 @@ def setup(app):
     app.router.add_patch("/api/tasks/{task_id}", lists_api)
     app.router.add_delete("/api/tasks/{task_id}", lists_api)
     app.router.add_post("/api/notes", lists_api)
+    app.router.add_post("/api/notes/import", lists_api)
     app.router.add_patch("/api/notes/{note_id}", lists_api)
     app.router.add_delete("/api/notes/{note_id}", lists_api)
     app.router.add_get("/api/events", lists_api)
