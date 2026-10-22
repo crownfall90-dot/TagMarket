@@ -7,6 +7,7 @@ from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import base64
+import contextlib
 import os
 import tempfile
 from threading import Thread
@@ -116,11 +117,12 @@ def rapid_taps_render_once(page, nav):
         window.render = (...a) => { window.__renders++; return window.__realRender(...a); }; }""")
     # оба нажатия — из страницы, с паузой 50 мс: время самих кликов Playwright не должно
     # сдвигать второе нажатие за конец ухода старого экрана
-    page.evaluate("""([nav]) => new Promise(resolve => {
-        document.querySelector(nav + ' a[href="#projects"]').click();
-        setTimeout(() => { document.querySelector(nav + ' a[href="#overview"]').click(); resolve(); }, 50);
-    })""", [nav])
-    page.wait_for_timeout(1200)
+    with real_speed(page):
+        page.evaluate("""([nav]) => new Promise(resolve => {
+            document.querySelector(nav + ' a[href="#projects"]').click();
+            setTimeout(() => { document.querySelector(nav + ' a[href="#overview"]').click(); resolve(); }, 50);
+        })""", [nav])
+        page.wait_for_timeout(1200)
     renders, view = page.evaluate("[window.__renders, state.view]")
     page.evaluate("window.render = window.__realRender")
     assert view == "overview", f"открылся не последний раздел: {view}"
@@ -341,6 +343,80 @@ def spend_ui(page, nav):
     close_dialog(page)
 
 
+def income_ui(page, nav):
+    """Зарплата: блок сразу после банков, дорожка месяца с днями выплат, свой экран и окно зачисления."""
+    page.locator(f'{nav} a[href="#projects"]').click()
+    page.locator('.fin-income .inc-card').wait_for()
+    assert page.evaluate("!!(document.querySelector('.wallet').compareDocumentPosition(document.querySelector('.fin-income')) & Node.DOCUMENT_POSITION_FOLLOWING)")
+    assert page.locator('.fin-income .inc-mark').count() == 3                      # аванс, зарплата, премия
+    assert page.locator('.fin-income .inc-row').count() == 3
+    assert '≈' in page.locator('.fin-hero .fin-sub').inner_text()                  # зарплата идёт в доход в день
+    fits(page)
+    page.locator('.fin-income .sec-row a[href="#income"]').click()
+    page.locator('.inc-head').wait_for()
+    assert page.locator(f'{nav} a[href="#projects"].active').count() == 1
+    assert page.locator('.inc-page .inc-mark').count() == 3
+    assert page.locator('[data-action="income-add"]').count() == 0                 # все три уже есть
+    fits(page)
+    page.locator('.spend-list .inc-row').first.click()
+    page.locator('#dialog input[name="day"]').wait_for()
+    assert page.locator('#dialog .inc-kind input:disabled').count() == 2           # занятые виды не выбрать
+    assert page.locator('#dialog .inc-only-card').is_visible()
+    page.locator('#dialog select[name="account_id"]').select_option('')            # без карты — нужна валюта
+    page.wait_for_function("!document.querySelector('#dialog .inc-only-free').hidden")
+    assert not page.locator('#dialog .inc-only-card').is_visible()
+    fits(page)
+    close_dialog(page)
+
+
+def month_goals_ui(page, nav):
+    """Сводка месяца и цели в Финансах, экран #month; первый запуск — пока не всё настроено; траты за год."""
+    page.locator(f'{nav} a[href="#projects"]').click()
+    page.locator('.fin-month .month-card').wait_for()
+    assert page.locator('.fin-month .mb-col').count() == 6
+    assert page.locator('.fin-goals .goal-card').count() == 3
+    assert page.locator('.fin-onboard').count() == 0                               # всё настроено — шагов нет
+    page.evaluate("state.banks={...state.banks,accounts:[]};state.income={...state.income,items:[]};render()")
+    page.locator('.fin-onboard').wait_for()
+    assert page.locator('.fin-onboard button.fo-step').count() == 2 and page.locator('.fin-onboard .fo-step.done').count() == 1
+    fits(page)
+    page.locator('.fin-onboard [data-action="onboard-hide"]').click()
+    page.wait_for_function("!document.querySelector('.fin-onboard')")
+    page.evaluate("localStorage.removeItem('fin-onboard-hidden')")
+    page.locator('.fin-month a.month-card').click()
+    page.locator('.month-head').wait_for()
+    assert page.locator(f'{nav} a[href="#projects"].active').count() == 1
+    assert page.locator('.month-part .mr-row').count() >= 3
+    assert page.locator('.month-plan').count() == 1 and page.locator('.fin-goals h2').count() == 1
+    fits(page)
+    page.locator('.goal-card').first.click()
+    page.locator('#dialog input[name="target"]').wait_for()
+    assert page.locator('#dialog [data-action="goal-add-money"]').count() == 1
+    fits(page)
+    close_dialog(page)
+    page.goto(page.url.split('#')[0] + '#spend')
+    page.locator('.spend-span').wait_for()
+    page.locator('.spend-span [data-span="year"]').click()
+    page.wait_for_function("document.querySelector('.spend-head p')?.textContent.includes('В этом году')")
+    page.locator('.spend-span [data-span="month"]').click()
+    page.wait_for_function("document.querySelector('.spend-head p')?.textContent.includes('В этом месяце')")
+
+
+def friends_ui(page, nav):
+    """Друзья: круг с долгами и открытыми желаниями («подарю»), общие траты и окно новой траты."""
+    page.locator(f'{nav} a[href="#people"]').click()
+    page.locator('.friends-block .friend-card').first.wait_for()
+    assert page.locator('.friend-card').count() == 3
+    assert page.locator('.fw-gift.mine').count() == 1 and page.locator('.fw-gift.busy').count() == 1
+    assert page.locator('.split-block .split-row').count() == 2
+    fits(page)
+    page.locator('.friends-block [data-action="split-add"]').click()
+    page.locator('#dialog select[name="payer"]').wait_for()
+    assert page.locator('#dialog .split-member').count() == 4                       # вы и трое друзей в кругу
+    fits(page)
+    close_dialog(page)
+
+
 def station_sections(page, nav):
     """Главная Platformer, круг жизни, активности, планы (задачи, календарь, заметки, желания) и настройки."""
     page.locator(f'{nav} a[href="#overview"]').click()
@@ -468,7 +544,7 @@ def projects_ui(page, nav):
     if page.viewport_size['width'] <= 740:        # «+» на телефоне: меню «Счёт или карта» и «Проект»
         page.locator('#fab-root .fab').click()
         page.locator('#fab-root .fab-item').first.wait_for()
-        assert page.locator('#fab-root .fab-item').count() == 3      # счёт, трата, проект
+        assert page.locator('#fab-root .fab-item').count() == 4      # счёт, цель, трата, проект
         assert page.locator('#fab-root .fab-item[data-action="bank-add"]').count() == 1
         page.locator('#fab-root .fab').click()
         page.wait_for_function("!document.querySelector('#fab-root').classList.contains('open')")
@@ -782,6 +858,8 @@ def compact_ui_and_quiet_refresh(page, url):
     close_dialog(page)
     page.goto(url+'#people', wait_until='domcontentloaded')
     page.locator('.people-card').first.wait_for()
+    # загрузка раздела ещё может идти: её ответ затёр бы подменённых гостей
+    page.wait_for_function("!state.busy && !document.body.classList.contains('is-loading')")
     page.evaluate("""() => {
       window.__uxApi=window.api;window.__guestCalls=[];window.__uxMutate=window.mutate;
       const own=state.people.shareable[0];
@@ -909,6 +987,47 @@ def modal_scroll_and_deferred_refresh(page, url):
     page.evaluate('window.api=__uxApi;void 0')
 
 
+ANIM_RATE = float(os.getenv("TAGMARKETS_UI_SMOKE_ANIM_RATE", "6"))
+_anim = {}
+
+
+def speed_up_animations(page):
+    """CSS-анимации и переходы — в ANIM_RATE раз быстрее (DevTools Animation.setPlaybackRate).
+
+    Тест почти всё время ждал окончания анимаций: процессор занят ~10 с из
+    ~110. Таймеры JS не трогаем — логика приложения работает как обычно;
+    после перехода по адресу скорость выставляется заново."""
+    if ANIM_RATE == 1:
+        return
+    cdp = page.context.new_cdp_session(page)
+    _anim[page] = [cdp, ANIM_RATE]
+
+    def apply(*_):
+        try:
+            cdp.send("Animation.enable")
+            cdp.send("Animation.setPlaybackRate", {"playbackRate": _anim[page][1]})
+        except Exception:
+            pass
+    apply()
+    page.on("load", apply)
+
+
+@contextlib.contextmanager
+def real_speed(page):
+    """Проверки, где важно настоящее время анимации (нажатие, пока экран ещё уезжает)."""
+    item = _anim.get(page)
+    if not item:
+        yield
+        return
+    item[1] = 1
+    item[0].send("Animation.setPlaybackRate", {"playbackRate": 1})
+    try:
+        yield
+    finally:
+        item[1] = ANIM_RATE
+        item[0].send("Animation.setPlaybackRate", {"playbackRate": ANIM_RATE})
+
+
 def close_dialog(page):
     """Закрыть диалог крестиком в шапке: у информационных окон кнопка
     «Отмена» спрятана, а крестик есть у всех. Изменённые поля подтверждаем."""
@@ -937,6 +1056,7 @@ def main():
             try:
                 for width in WIDTHS:
                     page = browser.new_page(viewport={"width": width, "height": 844})
+                    speed_up_animations(page)
                     errors = []
                     page.on("pageerror", lambda error, errors=errors: errors.append(str(error)))
                     page.route("https://telegram.org/js/telegram-web-app.js",
@@ -1061,7 +1181,8 @@ def main():
                     page.locator('.home-grid').wait_for()
                     rapid_switching_stays_under_limit(page, nav)
                     guest_with_shared_account_sees_home_and_opens_guide_on_demand(page)
-                    faq_opens_smoothly(page, url)
+                    with real_speed(page):          # проверяет саму анимацию раскрытия
+                        faq_opens_smoothly(page, url)
                     page.goto(url + "#tagmarket", wait_until="domcontentloaded")
                     page.locator('.hero').wait_for()
                     rapid_period_taps_load_once(page)
@@ -1273,6 +1394,9 @@ def main():
                     station_sections(page, nav)
                     banks_ui(page, nav)
                     spend_ui(page, nav)
+                    income_ui(page, nav)
+                    month_goals_ui(page, nav)
+                    friends_ui(page, nav)
                     projects_ui(page, nav)
                     compact_ui_and_quiet_refresh(page, url)
                     modal_scroll_and_deferred_refresh(page, url)

@@ -1637,7 +1637,7 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
             head = ("♻️ <b>Реинвест профита · шаг 1 из 2</b>" if moved_in
                     else "💸 <b>Вывод профита</b>")
             where = ("⬇️ Списано из профита — через мгновение уйдёт в капитал" if moved_in
-                     else "➡️ Профит списан со стратегии на баланс Tag Markets")
+                     else "➡️ Профит списан со стратегии на баланс Tag Markets — это уже ваши деньги, заработано полностью")
             out = [f"🕒 <b>{when}</b>", head, THIN,
                    f"<b>{money(own)}{sign(cur)}</b>", where]
             if note:

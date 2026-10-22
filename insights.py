@@ -57,9 +57,17 @@ def analyze(data, today, hour=12):
     projects = fin.get("projects") or []
     tag = fin.get("tag")
     bank = fin.get("banks")
-    if projects or tag or bank is not None:
+    salary = fin.get("salary") or 0
+    if projects or tag or bank is not None or salary:
         score = 0
         daily = sum(p["daily_income"] or 0 for p in projects if not p.get("paused"))
+        if salary > 0:
+            score += 20
+            out.append((38, "finance", "good", f"Зарплата: {money(salary, cur)} в месяц", "#income"))
+        for u in fin.get("paydays") or []:
+            when = "сегодня" if u["in_days"] == 0 else "завтра" if u["in_days"] == 1 else f"через {u['in_days']} {plural(u['in_days'], 'день', 'дня', 'дней')}"
+            amount = money(u["converted"], cur, True) if u.get("converted") is not None else money(u["amount"], u["currency"], True)
+            out.append((9 + u["in_days"], "finance", "good", f"{when.capitalize()} {u['title'].lower()} — {amount}", "#income"))
         if projects:
             score += 35 if daily > 0 else 10
             if daily > 0:
@@ -91,8 +99,9 @@ def analyze(data, today, hour=12):
             # банки и счета — главное в финансах: этот вывод идёт раньше проектов
             out.append((28, "finance", "info" if bank >= 0 else "warn", f"На банковских счетах: {money(bank, cur)}", "#banks"))
             if not projects and not tag:
-                score = 60 if bank >= 0 else 25
-        scores["finance"] = score
+                score = (60 if bank >= 0 else 25) + (20 if salary > 0 else 0)
+        scores["finance"] = min(score, 100)
+        daily += salary * 12 / 365
         income = f"≈ {money(daily, cur)} в день" if daily > 0 else ""
         fin_status = (" · ".join(x for x in (f"на счетах {money(bank, cur)}", income) if x) if bank is not None else
                       income or ("есть проекты на паузе" if paused else "без дохода в день"))
@@ -141,7 +150,7 @@ def analyze(data, today, hour=12):
         if priced and daily > 0:
             first = priced[0]
             days = math.ceil(first["price"] / daily)
-            out.append((42, "dreams", "good", f"«{first['title']}» за {money(first['price'], cur)} — это ≈ {days} {plural(days, 'день', 'дня', 'дней')} дохода проектов", "#plans/wish"))
+            out.append((42, "dreams", "good", f"«{first['title']}» за {money(first['price'], cur)} — это ≈ {days} {plural(days, 'день', 'дня', 'дней')} дохода", "#plans/wish"))
     dreams_status = (f"{sum(not i['done'] for i in items)} {plural(sum(not i['done'] for i in items), 'желание', 'желания', 'желаний')}"
                      if wishlists else "создайте первый вишлист")
 

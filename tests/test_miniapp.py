@@ -36,6 +36,11 @@ import activity
 import banks
 import insights
 import spend
+import income
+import goals
+import summary
+import friends
+import backup
 import lists
 import projects
 import partner
@@ -658,6 +663,35 @@ class OneEventOneMessageTests(unittest.IsolatedAsyncioTestCase):
 
     def feed(self, user="1"):
         return partner.notifications_for(self.db, user)["items"]
+
+    async def test_profit_to_wallet_counts_as_withdrawn_before_mt5_row(self):
+        """Профит ушёл на баланс Tag Markets, а строки MT5 ещё нет (агенты офлайн):
+        деньги уже выведены и заработаны полностью, на стратегии остаётся капитал —
+        а не «2 009 + 13.29 профит», как будто вывода не было."""
+        day = trades.clock().replace(microsecond=0) - timedelta(hours=2)
+        store.save_deals(self.tdb, 123, [
+            {"ticket": 1, "time": day - timedelta(days=3), "symbol": "", "side": "", "volume": 0, "price": 0,
+             "profit": 1999.0, "swap": 0, "commission": 0, "net": 1999.0, "is_balance": True,
+             "is_closing": False, "is_opening": False, "comment": "Deposit"},
+            {"ticket": 2, "time": day, "symbol": "XAUUSD", "side": "SELL", "volume": 0.1, "price": 0,
+             "profit": 22.03, "swap": 0, "commission": 0, "net": 22.03, "is_balance": False,
+             "is_closing": True, "is_opening": False, "comment": "", "position": 2}])
+        leverage = trades._multiplier or 1
+        store.save_state(self.tdb, 123, 1999.0 * leverage + 22.03, 1999.0 * leverage + 22.03, "USD", "Demo", 5)
+        self.assertGreater(partner.cabinet_profit("CU1"), 1)
+        await self.hook("15.42", "tx-profit")
+        text = self.chat[0][1].replace("\u202f", " ").replace("\xa0", " ")
+        self.assertIn("Профит выведен на баланс Tag Markets", text)
+        self.assertIn("заработано полностью", text)
+        trades.use(accounts.load(1)[0])
+        self.assertIn(trades.amount(trades.capital(), "USD").replace("\u202f", " ").replace("\xa0", " "), text)
+        self.assertIn("работает дальше", text)
+        self.assertNotIn("профит</", text.split("💎")[-1])
+        # пришла строка MT5 о том же выводе — на стратегии ровно капитал, остаток работает дальше
+        self.deal(3, -15.42, "Profit Withdrawal", day + timedelta(minutes=30))
+        trades.use(accounts.load(1)[0])
+        self.assertEqual(trades.retained(), 0.0)
+        self.assertAlmostEqual(trades.invested(), trades.capital(), places=6)
 
     async def test_hook_first_then_mt5_edits_the_same_message(self):
         await self.hook()
@@ -1881,6 +1915,191 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len((await (await self.call("GET", "/api/spend", uid=2)).json())["items"]), 0)
         self.assertEqual((await self.call("DELETE", f"/api/spend/{netflix['id']}")).status, 200)
         self.assertEqual(len((await (await self.call("GET", "/api/spend")).json())["items"]), 3)
+
+    async def test_salary_credits_the_card_once_per_pay_day(self):
+        """Зарплата: до трёх зачислений (аванс, зарплата, премия) на любое число; в день выплаты
+        сумма сама приходит на выбранную карту — один раз — и считается в доходе."""
+        today = income.today()
+        card = await (await self.call("POST", "/api/banks", json={"bank": "Альфа-Банк", "kind": "card", "currency": "BYN",
+                                                                  "balance": 100, "last4": "9490"})).json()
+        salary = await (await self.call("POST", "/api/income", json={"kind": "salary", "amount": "1 400,50", "day": today.day,
+                                                                     "account_id": card["id"]})).json()
+        self.assertEqual(salary["currency"], "BYN")                     # валюта — карты
+        self.assertEqual(salary["next"], today.isoformat())
+        self.assertEqual(salary["credited"], today.isoformat())         # сегодня день выплаты — уже на карте
+        banks_now = await (await self.call("GET", "/api/banks")).json()  # повторный запрос не зачисляет второй раз
+        self.assertAlmostEqual(banks_now["accounts"][0]["balance"], 1500.5, places=2)
+        ops = await (await self.call("GET", f"/api/banks/{card['id']}/ops")).json()
+        self.assertEqual([(o["amount"], o["source"]) for o in ops["operations"] if o["source"] == "salary"], [(1400.5, "salary")])
+        # аванс в другое число, без карты — только учёт дохода; вторую «зарплату» добавить нельзя
+        other = today.day % 28 + 1
+        advance = await (await self.call("POST", "/api/income", json={"kind": "advance", "amount": 600, "day": other,
+                                                                      "currency": "USD"})).json()
+        self.assertIsNone(advance["account_id"])
+        self.assertIsNone(advance["credited"])
+        self.assertEqual((await self.call("POST", "/api/income", json={"kind": "salary", "amount": 1, "day": 3,
+                                                                       "currency": "USD"})).status, 400)
+        data = await (await self.call("GET", "/api/income")).json()
+        self.assertEqual(data["monthly"], {"BYN": 1400.5, "USD": 600.0})
+        self.assertEqual(data["received"]["BYN"], 1400.5)
+        self.assertEqual(data["limit"], 3)
+        # доход — в круге жизни
+        circle = (await (await self.call("GET", "/api/bootstrap")).json())["insights"]
+        self.assertTrue(any(i["text"].startswith("Зарплата:") and i["href"] == "#income" for i in circle["insights"]),
+                        circle["insights"])
+        # проверка ввода, чужая карта и чужие зачисления
+        for bad in ({"kind": "bonus", "amount": 1, "day": 0, "currency": "USD"},
+                    {"kind": "bonus", "amount": 1, "day": 32, "currency": "USD"},
+                    {"kind": "bonus", "amount": 0, "day": 5, "currency": "USD"},
+                    {"kind": "tips", "amount": 1, "day": 5, "currency": "USD"},
+                    {"kind": "bonus", "amount": 1, "day": 5, "currency": "JPY"},
+                    {"kind": "bonus", "amount": 1, "day": 5, "currency": "USD", "owner_id": "2"}):
+            self.assertEqual((await self.call("POST", "/api/income", json=bad)).status, 400, bad)
+        self.assertEqual((await self.call("POST", "/api/income", uid=2, json={"kind": "bonus", "amount": 1, "day": 5,
+                                                                              "account_id": card["id"]})).status, 404)
+        self.assertEqual((await self.call("PATCH", f"/api/income/{salary['id']}", uid=2, json={"amount": 1})).status, 404)
+        # пауза убирает из дохода; удаление не трогает уже зачисленное
+        paused = await (await self.call("PATCH", f"/api/income/{advance['id']}", json={"active": False})).json()
+        self.assertFalse(paused["active"])
+        self.assertEqual((await (await self.call("GET", "/api/income")).json())["monthly"], {"BYN": 1400.5})
+        self.assertEqual((await self.call("DELETE", f"/api/income/{salary['id']}")).status, 200)
+        self.assertAlmostEqual((await (await self.call("GET", "/api/banks")).json())["accounts"][0]["balance"], 1500.5, places=2)
+
+    async def test_savings_goals_plan_per_month_and_contributions(self):
+        on = goals.today()
+        deadline = date(on.year + 1, on.month, min(on.day, 28)).isoformat()
+        car = await (await self.call("POST", "/api/goals", json={"title": "Машина", "emoji": "🚗", "target": "6000",
+                                                                 "saved": 600, "currency": "USD", "deadline": deadline})).json()
+        self.assertEqual((car["left"], car["months_left"]), (5400, 13 if on.day <= 28 else 12))
+        self.assertAlmostEqual(car["per_month"], round(5400 / car["months_left"], 2))
+        added = await (await self.call("POST", f"/api/goals/{car['id']}/add", json={"amount": "400,50"})).json()
+        self.assertEqual(added["saved"], 1000.5)
+        taken = await (await self.call("POST", f"/api/goals/{car['id']}/add", json={"amount": "-0.5"})).json()
+        self.assertEqual(taken["saved"], 1000)
+        self.assertEqual((await self.call("POST", f"/api/goals/{car['id']}/add", json={"amount": -5000})).status, 400)
+        await self.call("POST", "/api/goals", json={"title": "Наушники", "target": 100, "saved": 100, "currency": "USD"})
+        data = await (await self.call("GET", "/api/goals")).json()
+        self.assertEqual([g["title"] for g in data["items"]], ["Машина", "Наушники"])     # выполненные — в конце
+        self.assertTrue(data["items"][1]["done"])
+        self.assertEqual(data["per_month"], {"USD": data["items"][0]["per_month"]})
+        for bad in ({"title": "", "target": 1, "currency": "USD"}, {"title": "x", "target": 0, "currency": "USD"},
+                    {"title": "x", "target": 1, "currency": "XYZ"}, {"title": "x", "target": 1, "currency": "USD", "deadline": "завтра"}):
+            self.assertEqual((await self.call("POST", "/api/goals", json=bad)).status, 400, bad)
+        self.assertEqual((await self.call("POST", f"/api/goals/{car['id']}/add", uid=2, json={"amount": 1})).status, 404)
+        self.assertEqual((await self.call("DELETE", f"/api/goals/{car['id']}")).status, 200)
+        self.assertEqual(goals.months_left(date(2026, 12, 25), date(2026, 10, 22)), 3)
+        self.assertEqual(goals.months_left(date(2026, 10, 10), date(2026, 10, 22)), 1)
+
+    async def test_month_summary_counts_salary_and_spend_by_date(self):
+        db = self.app["db"]
+        on = date(2026, 10, 22)
+        income.save(db, 1, {"kind": "salary", "amount": 1000, "day": 20, "currency": "USD"})
+        income.save(db, 1, {"kind": "bonus", "amount": 300, "day": 28, "currency": "USD"})
+        db.execute("UPDATE income_items SET created_at='2026-08-01T00:00:00+00:00'")
+        spend.save(db, 1, {"title": "Netflix", "amount": 10, "currency": "EUR", "kind": "recurring", "period": "month",
+                           "category": "subs", "day": "2026-01-05"})
+        spend.save(db, 1, {"title": "Кроссовки", "amount": 90, "currency": "USD", "kind": "once", "category": "shopping",
+                           "day": "2026-10-03"})
+        db.commit()
+        r = summary.report(db, 1, "2026-10", on)
+        self.assertEqual((r["income"], r["income_ahead"]), ({"USD": 1000.0}, {"USD": 300.0}))
+        self.assertEqual(r["spend"], {"EUR": 10.0, "USD": 90.0})
+        self.assertEqual((r["day"], r["days"]), (22, 31))
+        self.assertEqual([h["month"] for h in r["history"]], ["2026-05", "2026-06", "2026-07", "2026-08", "2026-09", "2026-10"])
+        self.assertEqual(r["history"][2]["income"], {})                       # до того, как зарплату добавили, — пусто
+        self.assertEqual(r["history"][3]["income"], {"USD": 1300.0})
+        self.assertEqual(r["history"][-1]["income"], {"USD": 1300.0})          # текущий месяц — с ожидаемым
+        self.assertEqual(r["history"][0]["spend"], {"EUR": 10.0})
+        self.assertEqual((await self.call("GET", "/api/month?month=2026-13")).status, 400)
+        self.assertEqual((await self.call("GET", "/api/month")).status, 200)
+        year = spend.overview(db, 1, on, span="year")
+        self.assertEqual(year["this_month"], {"EUR": 120.0, "USD": 90.0})       # весь год: 12 списаний Netflix
+        self.assertEqual((await self.call("GET", "/api/spend?span=week")).status, 400)
+
+    async def test_friends_share_wishlists_and_split_expenses(self):
+        # 1 пригласил 2 и 3; 4 — чужой
+        for g in ("2", "3"):
+            partner.kv_set(self.db, f"guest:{g}", "1")
+            partner.kv_set(self.db, f"guest_by:{g}", "1")
+        partner.kv_set(self.db, "user_name:2", "Лена")
+        partner.kv_set(self.db, "guest:4", "1")
+        partner.kv_set(self.db, "guest_by:4", "99")
+        self.assertEqual(friends.circle(self.db, "2"), ["1", "3"])
+        self.assertEqual(friends.circle(self.db, "1"), ["2", "3"])
+        self.assertEqual(friends.circle(self.db, "4"), ["99"])
+        # вишлист Лены: виден друзьям, только когда она его открыла
+        wl = await (await self.call("POST", "/api/wishlists", uid=2, json={"title": "ДР"})).json()
+        wl = await (await self.call("POST", f"/api/wishlists/{wl['id']}/items", uid=2, json={"title": "Кофемашина", "price": 300})).json()
+        item = wl["items"][0]["id"]
+        lena = lambda d: next(f for f in d["friends"] if f["id"] == "2")
+        self.assertEqual(lena(await (await self.call("GET", "/api/friends")).json())["wishlists"], [])
+        self.assertEqual((await self.call("POST", f"/api/friends/wish/{item}")).status, 404)
+        shared = await (await self.call("PATCH", f"/api/wishlists/{wl['id']}", uid=2, json={"shared": True})).json()
+        self.assertTrue(shared["shared"])
+        data = await (await self.call("POST", f"/api/friends/wish/{item}")).json()
+        mine = lena(data)["wishlists"][0]["items"][0]
+        self.assertTrue(mine["reserved"] and mine["mine"])
+        other = lena(await (await self.call("GET", "/api/friends", uid=3)).json())["wishlists"][0]["items"][0]
+        self.assertTrue(other["reserved"] and not other["mine"])               # третий видит: занято
+        self.assertEqual((await self.call("POST", f"/api/friends/wish/{item}", uid=3)).status, 400)
+        self.assertEqual((await self.call("DELETE", f"/api/friends/wish/{item}", uid=3)).status, 400)
+        own = (await (await self.call("GET", "/api/lists", uid=2)).json())["wishlists"][0]["items"][0]
+        self.assertNotIn("reserved", own)                                       # сама Лена сюрприз не видит
+        self.assertEqual((await self.call("POST", f"/api/friends/wish/{item}", uid=4)).status, 404)
+        # общие траты: я заплатил 90 за троих, Лена вернула 20
+        r = await self.call("POST", "/api/friends/split", json={"title": "Пицца", "amount": 90, "currency": "BYN",
+                                                                "members": ["1", "2", "3"]})
+        self.assertEqual(r.status, 201, await r.text())
+        await self.call("POST", "/api/friends/split", json={"kind": "settle", "from": "2", "to": "1", "amount": 20, "currency": "BYN"})
+        data = await (await self.call("GET", "/api/friends")).json()
+        self.assertEqual(lena(data)["balance"], {"BYN": 10.0})                   # Лена ещё должна 10
+        self.assertEqual(next(f for f in data["friends"] if f["id"] == "3")["balance"], {"BYN": 30.0})
+        self.assertEqual(lena(await (await self.call("GET", "/api/friends", uid=3)).json())["balance"], {})
+        me3 = await (await self.call("GET", "/api/friends", uid=3)).json()
+        self.assertEqual(next(f for f in me3["friends"] if f["id"] == "1")["balance"], {"BYN": -30.0})
+        self.assertEqual(len(me3["split"]), 1)                                  # возврат Лены третьему не виден
+        for bad in ({"title": "x", "amount": 5, "currency": "BYN", "members": ["1", "4"]},
+                    {"title": "x", "amount": 5, "currency": "BYN", "members": ["1"]},
+                    {"title": "x", "amount": 5, "currency": "BYN", "payer": "2", "members": ["2", "3"]},
+                    {"kind": "settle", "from": "2", "to": "3", "amount": 5, "currency": "BYN"}):
+            self.assertEqual((await self.call("POST", "/api/friends/split", json=bad)).status, 400, bad)
+        pizza = next(x for x in data["split"] if x["title"] == "Пицца")
+        self.assertEqual((await self.call("DELETE", f"/api/friends/split/{pizza['id']}", uid=2)).status, 404)
+        self.assertEqual((await self.call("DELETE", f"/api/friends/split/{pizza['id']}")).status, 200)
+
+    def test_backup_snapshot_is_consistent_and_keeps_last_days(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "state.db"
+            db = sqlite3.connect(src)
+            db.execute("CREATE TABLE t (v TEXT)")
+            db.execute("INSERT INTO t VALUES ('карта')")
+            db.commit()
+            out = Path(tmp) / "backups"
+            for d in range(1, 10):
+                path = backup.snapshot(str(src), out, date(2026, 10, d))
+            db.close()
+            self.assertEqual(sorted(p.name for p in out.glob("*.gz"))[0], "state-2026-10-03.db.gz")
+            self.assertEqual(len(list(out.glob("*.gz"))), backup.KEEP)
+            self.assertTrue(backup.restore_check(path))
+            self.assertEqual(oct(path.stat().st_mode & 0o777), "0o600")
+            self.assertIsNone(backup.snapshot(str(Path(tmp) / "нет.db"), out))
+
+    def test_salary_pay_days_clamp_to_month_end_and_never_backfill(self):
+        d = date
+        self.assertEqual(income.pay_dates(31, d(2026, 1, 10), d(2026, 3, 5)), [d(2026, 1, 31), d(2026, 2, 28)])
+        self.assertEqual(income.next_pay(31, d(2026, 2, 1)), d(2026, 2, 28))
+        self.assertEqual(income.next_pay(5, d(2026, 12, 6)), d(2027, 1, 5))
+        db = self.app["db"]
+        acc = banks.save_account(db, 7, {"bank": "Приорбанк", "currency": "BYN", "balance": 0})
+        item = income.save(db, 7, {"kind": "bonus", "amount": 50, "day": 31, "account_id": acc["id"]})
+        db.execute("UPDATE income_items SET since='2026-01-10', credited=NULL WHERE id=?", (item["id"],))
+        db.commit()
+        self.assertEqual(income.credit_due(db, 7, d(2026, 3, 5)), 2)    # 31 января и 28 февраля
+        self.assertEqual(income.credit_due(db, 7, d(2026, 3, 5)), 0)    # второй раз — ничего
+        self.assertAlmostEqual(banks.account(db, 7, acc["id"])["balance"], 100.0)
+        # сменили число — прошедшие даты задним числом не зачисляются
+        moved = income.save(db, 7, {"day": 1}, item["id"])
+        self.assertEqual(moved["since"], income.today().isoformat())
 
     def test_spend_month_end_and_leap_year_dates(self):
         d = date
@@ -3421,7 +3640,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                     with self.subTest(module=module):
                         self.assertIn(f"{module}.py", shipped)
                         self.assertIn(f"{module}.py", rollbackable)
-        for module in ("activity", "lists", "banks", "insights", "projects", "spend"):
+        for module in ("activity", "lists", "banks", "insights", "projects", "spend", "income", "goals", "summary", "friends", "backup"):
             self.assertIn(f"{module}.py", shipped)
 
     async def test_guest_cannot_toggle_shared_account_polling(self):

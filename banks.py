@@ -322,6 +322,14 @@ def _op(db, account_id, amount_cents, balance_cents, note, source, at=None):
                (account_id, account_id, OPS_LIMIT))
 
 
+def credit(db, account_id, amount_cents, balance_cents, note, source, at):
+    """Зачисление по расписанию (зарплата): баланс и строка в истории; вызывать внутри транзакции."""
+    if abs(balance_cents) > MAX_CENTS:
+        raise ValueError("Баланс вне допустимого диапазона")
+    db.execute("UPDATE bank_accounts SET balance_cents=?,updated_at=? WHERE id=?", (balance_cents, now(), account_id))
+    _op(db, account_id, amount_cents, balance_cents, note, source, at)
+
+
 def delete_account(db, owner, account_id):
     with db:
         account(db, owner, account_id)
