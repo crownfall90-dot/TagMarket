@@ -660,6 +660,35 @@ class OneEventOneMessageTests(unittest.IsolatedAsyncioTestCase):
     def feed(self, user="1"):
         return partner.notifications_for(self.db, user)["items"]
 
+    async def test_profit_to_wallet_counts_as_withdrawn_before_mt5_row(self):
+        """Профит ушёл на баланс Tag Markets, а строки MT5 ещё нет (агенты офлайн):
+        деньги уже выведены и заработаны полностью, на стратегии остаётся капитал —
+        а не «2 009 + 13.29 профит», как будто вывода не было."""
+        day = trades.clock().replace(microsecond=0) - timedelta(hours=2)
+        store.save_deals(self.tdb, 123, [
+            {"ticket": 1, "time": day - timedelta(days=3), "symbol": "", "side": "", "volume": 0, "price": 0,
+             "profit": 1999.0, "swap": 0, "commission": 0, "net": 1999.0, "is_balance": True,
+             "is_closing": False, "is_opening": False, "comment": "Deposit"},
+            {"ticket": 2, "time": day, "symbol": "XAUUSD", "side": "SELL", "volume": 0.1, "price": 0,
+             "profit": 22.03, "swap": 0, "commission": 0, "net": 22.03, "is_balance": False,
+             "is_closing": True, "is_opening": False, "comment": "", "position": 2}])
+        leverage = trades._multiplier or 1
+        store.save_state(self.tdb, 123, 1999.0 * leverage + 22.03, 1999.0 * leverage + 22.03, "USD", "Demo", 5)
+        self.assertGreater(partner.cabinet_profit("CU1"), 1)
+        await self.hook("15.42", "tx-profit")
+        text = self.chat[0][1].replace("\u202f", " ").replace("\xa0", " ")
+        self.assertIn("Профит выведен на баланс Tag Markets", text)
+        self.assertIn("заработано полностью", text)
+        trades.use(accounts.load(1)[0])
+        self.assertIn(trades.amount(trades.capital(), "USD").replace("\u202f", " ").replace("\xa0", " "), text)
+        self.assertIn("работает дальше", text)
+        self.assertNotIn("профит</", text.split("💎")[-1])
+        # пришла строка MT5 о том же выводе — на стратегии ровно капитал, остаток работает дальше
+        self.deal(3, -15.42, "Profit Withdrawal", day + timedelta(minutes=30))
+        trades.use(accounts.load(1)[0])
+        self.assertEqual(trades.retained(), 0.0)
+        self.assertAlmostEqual(trades.invested(), trades.capital(), places=6)
+
     async def test_hook_first_then_mt5_edits_the_same_message(self):
         await self.hook()
         self.assertEqual(len(self.chat), 1)

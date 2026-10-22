@@ -136,12 +136,18 @@ def pretty_money(row: dict, signed: bool = False) -> str:
     return trades.amount(parsed[0], parsed[1], signed=signed)
 
 
-def cabinet_state(row) -> str:
+def cabinet_state(row, withdrawn: float = 0.0) -> str:
     """Что сейчас на стратегиях этого кабинета — капитал и накопленный профит.
 
     Вебхук говорит только про сумму движения. Рядом полезно видеть, сколько
     денег работает: тогда уведомление отвечает и на вопрос «сколько всего»,
     а не только «сколько пришло».
+
+    withdrawn — профит, который только что ушёл на баланс Tag Markets, а строки
+    MT5 о нём ещё нет (агент не успел или офлайн). Эти деньги уже выведены:
+    из профита на стратегии их вычитаем сразу, а не показываем «2 009 + 13.29
+    профит» до следующего опроса. Вывели больше накопленного чистыми (брокер
+    свою долю ещё не удержал) — значит, профит выведен целиком.
     """
     number = str(pick(row, "customer_no", "customer", "client_no") or "").strip()
     if not number:
@@ -162,15 +168,40 @@ def cabinet_state(row) -> str:
             kept += trades.retained()
         if not cap:
             return ""
+        if withdrawn:
+            kept = max(0.0, kept - withdrawn)
+            if kept < trades.DUST:
+                kept = 0.0
         # сколько стратегий сложили — иначе сумма по кабинету читается как
         # капитал одной стратегии и спорит с уведомлением о сделке
         where = f"на {len(seen)} стратегиях" if len(seen) > 1 else "на стратегии"
         line = f"💎 {where} <b>{trades.amount(cap, 'USD')}</b>"
         if kept >= 0.01:
             line += f" + <b>{trades.amount(kept)}</b> профит"
+        elif withdrawn:
+            line += " — работает дальше"
         return line
     except Exception:       # счета или база недоступны — обойдёмся без строки
         return ""
+
+
+def cabinet_profit(cabinet: str) -> float:
+    """Накопленный профит (чистыми) на всех стратегиях кабинета; 0 — нет или неизвестно."""
+    if not cabinet:
+        return 0.0
+    try:
+        import accounts
+        import trades
+        kept, seen = 0.0, set()
+        for acc in accounts.load():
+            if str(acc.get("cabinet") or "").strip() != cabinet or int(acc["login"]) in seen:
+                continue
+            seen.add(int(acc["login"]))
+            trades.use(acc)
+            kept += trades.retained()
+        return kept
+    except Exception:
+        return 0.0
 
 
 def wallet_add(db, cabinet: str, amount: float) -> None:
@@ -732,10 +763,16 @@ def fmt_wallet_income(row: dict, name: str, when: datetime,
         title = holder or f"Кабинет {cabinet}"
         sub = f"кабинет {html.escape(cabinet)}"
     total = (f"{trades.money(parsed[0])}{trades.sign(parsed[1])}" if parsed else money(row))
-    body = [f"🕒 <b>{trades.dow(when)}, {when:%d.%m.%Y  %H:%M:%S}</b>", "💳 <b>Пополнение баланса Tag Markets</b>",
+    # на стратегиях есть профит — значит, это он и пришёл: вывод на баланс Tag
+    # Markets и есть «забрал себе», эти деньги заработаны полностью
+    profit = cabinet_profit(cabinet) if parsed else 0.0
+    out = profit >= trades.DUST
+    body = [f"🕒 <b>{trades.dow(when)}, {when:%d.%m.%Y  %H:%M:%S}</b>",
+            "💸 <b>Профит выведен на баланс Tag Markets</b>" if out else "💳 <b>Пополнение баланса Tag Markets</b>",
             THIN, f"<b>{html.escape(total)}</b>",
-            "➡️ Деньги на балансе Tag Markets — их можно вывести на карту или завести в стратегию"]
-    state = cabinet_state(row)
+            "✅ Это ваши деньги — заработано полностью. Их можно вывести на карту или завести в стратегию"
+            if out else "➡️ Деньги на балансе Tag Markets — их можно вывести на карту или завести в стратегию"]
+    state = cabinet_state(row, parsed[0] if out else 0.0)
     if state:
         body.append(state)
     body = "\n".join(body)
