@@ -34,6 +34,7 @@ import banks
 import bot as logic
 import coordination
 import fx
+import income
 import insights
 import lists
 import spend
@@ -304,6 +305,7 @@ async def bootstrap(request):
     project_currencies |= {a["currency"] for a in banks.accounts(db, uid)}
     # и валюты трат: подписки часто в EUR
     project_currencies |= {r[0] for r in db.execute("SELECT DISTINCT currency FROM spend_items WHERE owner_id=?", (str(uid),))}
+    project_currencies |= {r[0] for r in db.execute("SELECT DISTINCT currency FROM income_items WHERE owner_id=?", (str(uid),))}
     display_currency = partner.kv_get(db, f"display_currency:{uid}", "USD")
     unsupported = currencies - {"USD", "RUB", "BYN"}
     byn_per_unit = fx_info = None
@@ -1476,6 +1478,22 @@ async def spend_api(request):
                              status=201 if method == "POST" else 200)
 
 
+async def income_api(request):
+    """Зарплата: GET — зачисления и сводка, POST — новое, PATCH/DELETE /{id}."""
+    uid, _ = authorize(request)
+    db = request.app["db"]
+    item_id, method = request.match_info.get("item_id"), request.method
+    if method == "GET":
+        income.credit_due(db, uid)
+        return web.json_response(income.overview(db, uid))
+    if method == "DELETE":
+        _section_call(lambda: income.delete(db, uid, item_id))
+        return web.json_response({"ok": True})
+    data = await json_object(request)
+    return web.json_response(_section_call(lambda: income.save(db, uid, data, item_id)),
+                             status=201 if method == "POST" else 200)
+
+
 async def banks_api(request):
     """Банки и счета: список, создание, правка, удаление, история и входящие сообщения."""
     uid, _ = authorize(request)
@@ -1484,6 +1502,7 @@ async def banks_api(request):
     data = await json_object(request) if method in {"POST", "PATCH"} else {}
     if path == "/api/banks":
         if method == "GET":
+            income.credit_due(db, uid)
             return web.json_response({**banks.overview(db, uid), "sync": activity.sync_status(db, uid),
                                       "sync_url": sync_url(request).replace("/activity/sync", "/banks/sync")})
         return web.json_response(_section_call(lambda: banks.save_account(db, uid, data)), status=201)
@@ -1623,6 +1642,10 @@ def insights_for(db, uid, display="USD", rates=None, tag=None):
                              datetime.now(timezone.utc) - datetime.fromisoformat(sync["last_sync"]) > timedelta(hours=36))
         now = lists.today()
         events = lists.events_between(db, uid, now.isoformat(), (now + timedelta(days=7)).isoformat())["events"]
+        income.credit_due(db, uid, now)
+        pay = income.overview(db, uid, now)
+        salary = sum(conv(v, c) or 0 for c, v in pay["monthly"].items())
+        paydays = [{**u, "converted": conv(u["amount"], u["currency"])} for u in pay["upcoming"] if u["in_days"] <= 3]
         bank_total = 0.0
         bank_known = False
         for a in banks.accounts(db, uid):
@@ -1635,7 +1658,8 @@ def insights_for(db, uid, display="USD", rates=None, tag=None):
                 if u["in_days"] <= 3]
         return insights.analyze({
             "finance": {"currency": display, "projects": projects, "tag": tag_part,
-                        "banks": bank_total if bank_known else None, "charges": soon},
+                        "banks": bank_total if bank_known else None, "charges": soon,
+                        "salary": salary, "paydays": paydays},
             "activity": {**summary, "sync": sync}, "tasks": lists.tasks(db, uid), "events": events,
             "wishlists": lists.wishlists(db, uid), "friends": len(logic.guests_of(db, uid))},
             now, hour=int(datetime.now(timezone(timedelta(hours=3))).strftime("%H")))
@@ -1717,6 +1741,7 @@ def setup(app):
     banks.setup(app["db"])
     lists.setup(app["db"])
     spend.setup(app["db"])
+    income.setup(app["db"])
     # Legacy copies lack provenance. Matching only a login is unsafe: an
     # independently added account may use that number with another password.
     with locked(accounts.PATH):
@@ -1758,6 +1783,10 @@ def setup(app):
     app.router.add_get("/api/activity/sync/key", activity_sync_key)
     app.router.add_post("/api/activity/sync/key", activity_sync_key)
     app.router.add_delete("/api/activity/sync/key", activity_sync_key)
+    app.router.add_get("/api/income", income_api)
+    app.router.add_post("/api/income", income_api)
+    app.router.add_patch("/api/income/{item_id}", income_api)
+    app.router.add_delete("/api/income/{item_id}", income_api)
     app.router.add_get("/api/spend", spend_api)
     app.router.add_post("/api/spend", spend_api)
     app.router.add_patch("/api/spend/{item_id}", spend_api)

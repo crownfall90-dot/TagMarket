@@ -36,6 +36,7 @@ import activity
 import banks
 import insights
 import spend
+import income
 import lists
 import projects
 import partner
@@ -1882,6 +1883,72 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.call("DELETE", f"/api/spend/{netflix['id']}")).status, 200)
         self.assertEqual(len((await (await self.call("GET", "/api/spend")).json())["items"]), 3)
 
+    async def test_salary_credits_the_card_once_per_pay_day(self):
+        """Зарплата: до трёх зачислений (аванс, зарплата, премия) на любое число; в день выплаты
+        сумма сама приходит на выбранную карту — один раз — и считается в доходе."""
+        today = income.today()
+        card = await (await self.call("POST", "/api/banks", json={"bank": "Альфа-Банк", "kind": "card", "currency": "BYN",
+                                                                  "balance": 100, "last4": "9490"})).json()
+        salary = await (await self.call("POST", "/api/income", json={"kind": "salary", "amount": "1 400,50", "day": today.day,
+                                                                     "account_id": card["id"]})).json()
+        self.assertEqual(salary["currency"], "BYN")                     # валюта — карты
+        self.assertEqual(salary["next"], today.isoformat())
+        self.assertEqual(salary["credited"], today.isoformat())         # сегодня день выплаты — уже на карте
+        banks_now = await (await self.call("GET", "/api/banks")).json()  # повторный запрос не зачисляет второй раз
+        self.assertAlmostEqual(banks_now["accounts"][0]["balance"], 1500.5, places=2)
+        ops = await (await self.call("GET", f"/api/banks/{card['id']}/ops")).json()
+        self.assertEqual([(o["amount"], o["source"]) for o in ops["operations"] if o["source"] == "salary"], [(1400.5, "salary")])
+        # аванс в другое число, без карты — только учёт дохода; вторую «зарплату» добавить нельзя
+        other = today.day % 28 + 1
+        advance = await (await self.call("POST", "/api/income", json={"kind": "advance", "amount": 600, "day": other,
+                                                                      "currency": "USD"})).json()
+        self.assertIsNone(advance["account_id"])
+        self.assertIsNone(advance["credited"])
+        self.assertEqual((await self.call("POST", "/api/income", json={"kind": "salary", "amount": 1, "day": 3,
+                                                                       "currency": "USD"})).status, 400)
+        data = await (await self.call("GET", "/api/income")).json()
+        self.assertEqual(data["monthly"], {"BYN": 1400.5, "USD": 600.0})
+        self.assertEqual(data["received"]["BYN"], 1400.5)
+        self.assertEqual(data["limit"], 3)
+        # доход — в круге жизни
+        circle = (await (await self.call("GET", "/api/bootstrap")).json())["insights"]
+        self.assertTrue(any(i["text"].startswith("Зарплата:") and i["href"] == "#income" for i in circle["insights"]),
+                        circle["insights"])
+        # проверка ввода, чужая карта и чужие зачисления
+        for bad in ({"kind": "bonus", "amount": 1, "day": 0, "currency": "USD"},
+                    {"kind": "bonus", "amount": 1, "day": 32, "currency": "USD"},
+                    {"kind": "bonus", "amount": 0, "day": 5, "currency": "USD"},
+                    {"kind": "tips", "amount": 1, "day": 5, "currency": "USD"},
+                    {"kind": "bonus", "amount": 1, "day": 5, "currency": "JPY"},
+                    {"kind": "bonus", "amount": 1, "day": 5, "currency": "USD", "owner_id": "2"}):
+            self.assertEqual((await self.call("POST", "/api/income", json=bad)).status, 400, bad)
+        self.assertEqual((await self.call("POST", "/api/income", uid=2, json={"kind": "bonus", "amount": 1, "day": 5,
+                                                                              "account_id": card["id"]})).status, 404)
+        self.assertEqual((await self.call("PATCH", f"/api/income/{salary['id']}", uid=2, json={"amount": 1})).status, 404)
+        # пауза убирает из дохода; удаление не трогает уже зачисленное
+        paused = await (await self.call("PATCH", f"/api/income/{advance['id']}", json={"active": False})).json()
+        self.assertFalse(paused["active"])
+        self.assertEqual((await (await self.call("GET", "/api/income")).json())["monthly"], {"BYN": 1400.5})
+        self.assertEqual((await self.call("DELETE", f"/api/income/{salary['id']}")).status, 200)
+        self.assertAlmostEqual((await (await self.call("GET", "/api/banks")).json())["accounts"][0]["balance"], 1500.5, places=2)
+
+    def test_salary_pay_days_clamp_to_month_end_and_never_backfill(self):
+        d = date
+        self.assertEqual(income.pay_dates(31, d(2026, 1, 10), d(2026, 3, 5)), [d(2026, 1, 31), d(2026, 2, 28)])
+        self.assertEqual(income.next_pay(31, d(2026, 2, 1)), d(2026, 2, 28))
+        self.assertEqual(income.next_pay(5, d(2026, 12, 6)), d(2027, 1, 5))
+        db = self.app["db"]
+        acc = banks.save_account(db, 7, {"bank": "Приорбанк", "currency": "BYN", "balance": 0})
+        item = income.save(db, 7, {"kind": "bonus", "amount": 50, "day": 31, "account_id": acc["id"]})
+        db.execute("UPDATE income_items SET since='2026-01-10', credited=NULL WHERE id=?", (item["id"],))
+        db.commit()
+        self.assertEqual(income.credit_due(db, 7, d(2026, 3, 5)), 2)    # 31 января и 28 февраля
+        self.assertEqual(income.credit_due(db, 7, d(2026, 3, 5)), 0)    # второй раз — ничего
+        self.assertAlmostEqual(banks.account(db, 7, acc["id"])["balance"], 100.0)
+        # сменили число — прошедшие даты задним числом не зачисляются
+        moved = income.save(db, 7, {"day": 1}, item["id"])
+        self.assertEqual(moved["since"], income.today().isoformat())
+
     def test_spend_month_end_and_leap_year_dates(self):
         d = date
         self.assertEqual(spend.next_charge(d(2026, 1, 31), "month", d(2026, 2, 10)), d(2026, 2, 28))
@@ -3421,7 +3488,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                     with self.subTest(module=module):
                         self.assertIn(f"{module}.py", shipped)
                         self.assertIn(f"{module}.py", rollbackable)
-        for module in ("activity", "lists", "banks", "insights", "projects", "spend"):
+        for module in ("activity", "lists", "banks", "insights", "projects", "spend", "income"):
             self.assertIn(f"{module}.py", shipped)
 
     async def test_guest_cannot_toggle_shared_account_polling(self):

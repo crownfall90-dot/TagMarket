@@ -341,6 +341,32 @@ def spend_ui(page, nav):
     close_dialog(page)
 
 
+def income_ui(page, nav):
+    """Зарплата: блок сразу после банков, дорожка месяца с днями выплат, свой экран и окно зачисления."""
+    page.locator(f'{nav} a[href="#projects"]').click()
+    page.locator('.fin-income .inc-card').wait_for()
+    assert page.evaluate("!!(document.querySelector('.wallet').compareDocumentPosition(document.querySelector('.fin-income')) & Node.DOCUMENT_POSITION_FOLLOWING)")
+    assert page.locator('.fin-income .inc-mark').count() == 3                      # аванс, зарплата, премия
+    assert page.locator('.fin-income .inc-row').count() == 3
+    assert '≈' in page.locator('.fin-hero .fin-sub').inner_text()                  # зарплата идёт в доход в день
+    fits(page)
+    page.locator('.fin-income .sec-row a[href="#income"]').click()
+    page.locator('.inc-head').wait_for()
+    assert page.locator(f'{nav} a[href="#projects"].active').count() == 1
+    assert page.locator('.inc-page .inc-mark').count() == 3
+    assert page.locator('[data-action="income-add"]').count() == 0                 # все три уже есть
+    fits(page)
+    page.locator('.spend-list .inc-row').first.click()
+    page.locator('#dialog input[name="day"]').wait_for()
+    assert page.locator('#dialog .inc-kind input:disabled').count() == 2           # занятые виды не выбрать
+    assert page.locator('#dialog .inc-only-card').is_visible()
+    page.locator('#dialog select[name="account_id"]').select_option('')            # без карты — нужна валюта
+    page.wait_for_function("!document.querySelector('#dialog .inc-only-free').hidden")
+    assert not page.locator('#dialog .inc-only-card').is_visible()
+    fits(page)
+    close_dialog(page)
+
+
 def station_sections(page, nav):
     """Главная Platformer, круг жизни, активности, планы (задачи, календарь, заметки, желания) и настройки."""
     page.locator(f'{nav} a[href="#overview"]').click()
@@ -1273,6 +1299,7 @@ def main():
                     station_sections(page, nav)
                     banks_ui(page, nav)
                     spend_ui(page, nav)
+                    income_ui(page, nav)
                     projects_ui(page, nav)
                     compact_ui_and_quiet_refresh(page, url)
                     modal_scroll_and_deferred_refresh(page, url)
