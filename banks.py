@@ -61,6 +61,10 @@ def setup(db):
         CREATE INDEX IF NOT EXISTS bank_inbox_owner ON bank_inbox(owner_id, received_at);
     """)
     db.execute("PRAGMA foreign_keys=ON")
+    # коды подтверждения и пароли, попавшие во «входящие» до того, как их стали отбрасывать, — удаляем
+    for item_id, text in db.execute("SELECT id, text FROM bank_inbox").fetchall():
+        if is_secret(text):
+            db.execute("DELETE FROM bank_inbox WHERE id=?", (item_id,))
     db.commit()
 
 
@@ -123,7 +127,33 @@ CURRENCY = r"(byn|byr|br\b|rub|rur|usd|eur|₽|\$|€|руб\.?|р\.|бел\.?\s
 BALANCE_RE = re.compile(rf"{BALANCE_WORDS}\s*(?:по\s+карте|на\s+счете|на\s+счёте|карты|счета)?\s*[:=]?\s*({SYMBOL})?\s*{NUMBER}\s*{CURRENCY}?", re.I)
 AMOUNT_RE = re.compile(rf"({SYMBOL})?\s*{NUMBER}\s*{CURRENCY}?", re.I)
 STAR_RE = re.compile(r"(?:\*+|[xх]{2,})\s*(\d{4})\b", re.I)
+# Альфа-Банк Беларусь прячет номер карты так: «Karta 4.9490» — первая цифра, точка, последние четыре
+MASK_RE = re.compile(r"\b(?:karta|карта|card)\s+\d\.(\d{4})\b", re.I)
+# Одноразовые коды и пароли — это секреты, а не операции: их не разбираем и не храним.
+# Пересылка «всех SMS от банка» приносит и их — «Код: 0537. Подтвердите перевод…»
+SECRET_RE = re.compile(r"код\s+подтвержд|никому\s+не\s+сообщ|не\s+сообщайте|подтвердите|пароль"
+                       r"|kod\s+podtverzhd|podtverdite|parol|password|passcode|one[\s-]?time|verification\s+code|\botp\b"
+                       r"|\b(?:код|kod|code)\s*:\s*\d{4,8}\b", re.I)
+DATE_RE = re.compile(r"\b(\d{2})\.(\d{2})\.(\d{4})[\sT,]+(\d{2}):(\d{2})(?::(\d{2}))?\b")
+BANK_ZONE = timezone(timedelta(hours=3))
 WORD_LAST4_RE = re.compile(r"\b(?:карт[аыуе]?|card|karta|сч[её]т[аё]?|acc\w*)\s*№?\s*(\d{4})\b(?!\s*[.,]?\d)(?!\s*(?:byn|byr|br\b|rub|rur|usd|eur|₽|\$|€|руб|р\.))", re.I)
+
+
+def is_secret(text):
+    return bool(SECRET_RE.search(str(text or "")))
+
+
+def message_time(text):
+    """Время операции из самого сообщения («15.10.2026 12:49:33», время Минска) в UTC, иначе None."""
+    m = DATE_RE.search(str(text or ""))
+    if not m:
+        return None
+    day, month, year, hh, mm, ss = (int(x or 0) for x in m.groups())
+    try:
+        at = datetime(year, month, day, hh, mm, ss, tzinfo=BANK_ZONE)
+    except ValueError:
+        return None
+    return at.astimezone(timezone.utc).isoformat(timespec="seconds")
 
 
 def amount_from_text(raw):
@@ -159,7 +189,7 @@ def parse_message(text):
     raw = str(text or "")[:MESSAGE_LIMIT]
     low = raw.lower()
     result = {"last4": None, "currency": None, "balance": None, "amount": None, "op": None}
-    match = STAR_RE.search(raw) or WORD_LAST4_RE.search(raw)
+    match = STAR_RE.search(raw) or MASK_RE.search(raw) or WORD_LAST4_RE.search(raw)
     if match:
         result["last4"] = match.group(1)
     span = None
@@ -174,7 +204,7 @@ def parse_message(text):
     minus = any(w in low for w in MINUS_WORDS)
     plus = any(w in low for w in PLUS_WORDS)
     result["op"] = "out" if minus and not plus else "in" if plus and not minus else None
-    star_spans = [m.span() for m in STAR_RE.finditer(raw)] + [m.span() for m in WORD_LAST4_RE.finditer(raw)]
+    star_spans = [m.span() for r in (STAR_RE, MASK_RE, WORD_LAST4_RE) for m in r.finditer(raw)]
     for m in AMOUNT_RE.finditer(raw):
         pre, num, post = m.group(1), m.group(2), m.group(3)
         if not (pre or post):
@@ -309,8 +339,13 @@ def operations(db, owner, account_id, limit=50):
 
 # ── входящие сообщения ───────────────────────────────────────────────────
 
-def _apply(db, acc, parsed, message, source="sms"):
-    """Обновляет счёт по разобранному сообщению; возвращает, что сделано."""
+def _apply(db, acc, parsed, message, source="sms", at=None):
+    """Обновляет счёт по разобранному сообщению; возвращает, что сделано.
+
+    at — время операции из самого сообщения. Если по счёту уже есть операция
+    позже (телефон переслал старые SMS после новых), она попадает в историю,
+    но баланс не откатывает назад.
+    """
     balance = parsed.get("balance")
     amount = parsed.get("amount")
     if balance is not None:
@@ -323,9 +358,12 @@ def _apply(db, acc, parsed, message, source="sms"):
         return {"applied": False}
     if abs(new) > MAX_CENTS:
         raise ValueError("Баланс вне допустимого диапазона")
-    db.execute("UPDATE bank_accounts SET balance_cents=?,updated_at=?,source=? WHERE id=?", (new, now(), source, acc["id"]))
-    _op(db, acc["id"], delta, new, message, source)
-    return {"applied": True, "balance": new / 100, "amount": delta / 100}
+    newer = at and db.execute("SELECT 1 FROM bank_ops WHERE account_id=? AND at>?", (acc["id"], at)).fetchone()
+    if not newer:
+        db.execute("UPDATE bank_accounts SET balance_cents=?,updated_at=?,source=? WHERE id=?", (new, now(), source, acc["id"]))
+    _op(db, acc["id"], delta, new, message, source, at)
+    return {"applied": True, "balance": (new if not newer else round(acc["balance"] * 100)) / 100,
+            "amount": delta / 100, **({"older": True} if newer else {})}
 
 
 def _match(db, owner, parsed):
@@ -346,6 +384,8 @@ def ingest(db, owner, message):
     if not isinstance(message, str) or not message.strip():
         raise ValueError("Пустое сообщение")
     message = message.strip()[:MESSAGE_LIMIT]
+    if is_secret(message):
+        return {"ok": True, "status": "ignored", "reason": "Код подтверждения или пароль — не сохраняем"}
     parsed = parse_message(message)
     if parsed["balance"] is None and parsed["amount"] is None:
         return {"ok": True, "status": "ignored", "reason": "В сообщении нет суммы или остатка"}
@@ -354,7 +394,7 @@ def ingest(db, owner, message):
         if acc is not None:
             if parsed["currency"] and parsed["currency"] != acc["currency"] and parsed["currency"] in CURRENCIES:
                 raise ValueError("Валюта сообщения не совпадает со счётом")
-            done = _apply(db, acc, parsed, message)
+            done = _apply(db, acc, parsed, message, at=message_time(message))
             if done["applied"]:
                 return {"ok": True, "status": "applied", "account": acc["id"], **done}
         inbox_id = uuid.uuid4().hex
