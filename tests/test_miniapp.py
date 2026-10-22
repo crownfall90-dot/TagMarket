@@ -2084,6 +2084,19 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(oct(path.stat().st_mode & 0o777), "0o600")
             self.assertIsNone(backup.snapshot(str(Path(tmp) / "нет.db"), out))
 
+    async def test_changing_the_kind_changes_the_title_too(self):
+        """Зарплату переделали в премию — название «Зарплата» не прилипает к премии."""
+        item = await (await self.call("POST", "/api/income", json={"kind": "salary", "amount": 100, "day": 5,
+                                                                   "currency": "USD"})).json()
+        self.assertEqual(item["title"], "Зарплата")
+        fixed = await (await self.call("PATCH", f"/api/income/{item['id']}", json={"kind": "bonus", "amount": 100,
+                                                                                   "day": 5})).json()
+        self.assertEqual((fixed["kind"], fixed["title"]), ("bonus", "Премия"))
+        # уже испорченная запись (тип премия, название «Зарплата») чинится при запуске
+        self.app["db"].execute("UPDATE income_items SET title='Зарплата' WHERE id=?", (item["id"],))
+        income.setup(self.app["db"])
+        self.assertEqual((await (await self.call("GET", "/api/income")).json())["items"][0]["title"], "Премия")
+
     def test_salary_pay_days_clamp_to_month_end_and_never_backfill(self):
         d = date
         self.assertEqual(income.pay_dates(31, d(2026, 1, 10), d(2026, 3, 5)), [d(2026, 1, 31), d(2026, 2, 28)])
