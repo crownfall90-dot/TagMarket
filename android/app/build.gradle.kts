@@ -15,7 +15,7 @@ val local = Properties().apply {
 fun setting(key: String, env: String, default: String) =
     (local.getProperty(key) ?: System.getenv(env))?.takeIf { it.isNotBlank() } ?: default
 
-val platformerUrl = setting("platformer.url", "PLATFORMER_URL", "")
+val platformerUrl = setting("platformer.url", "PLATFORMER_URL", "https://crownfail.shop/tagmarkets/app/")
 val platformerBot = setting("platformer.bot", "PLATFORMER_BOT", "tagmarketgold_bot")
 
 // Подпись для Google Play: ключ загрузки из переменных окружения CI (никогда не в репозитории)

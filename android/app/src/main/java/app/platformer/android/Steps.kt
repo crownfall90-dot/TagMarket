@@ -60,15 +60,25 @@ object Steps {
         )
     }
 
+    /** Отправить шаги сейчас (сегодня и вчера — то, что меняется); false — нечего или не вышло. */
+    suspend fun syncNow(context: Context): Boolean {
+        val token = TokenStore(context).token ?: return false
+        if (!granted(context)) return false
+        val days = lastDays(context, 2)
+        return runCatching {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { Api.sendSteps(token, days) }
+        }.isSuccess
+    }
+
     fun cancel(context: Context) {
         WorkManager.getInstance(context).cancelUniqueWork(PERIODIC)
         WorkManager.getInstance(context).cancelUniqueWork(NOW)
     }
 
-    suspend fun lastDays(context: Context): List<Pair<String, Long>> {
+    suspend fun lastDays(context: Context, days: Int = DAYS): List<Pair<String, Long>> {
         val client = HealthConnectClient.getOrCreate(context)
         val today = LocalDate.now()
-        return (DAYS - 1 downTo 0).map { back ->
+        return (days - 1 downTo 0).map { back ->
             val day = today.minusDays(back.toLong())
             val result = client.aggregate(
                 AggregateRequest(

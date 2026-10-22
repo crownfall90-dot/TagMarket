@@ -604,7 +604,7 @@ function toggle(label,note,action,on,attrs=''){return `<div class="settings-row"
 const MACHINE_STATE={polling:['Опрашивает','ok'],waiting:['Готова','ok'],legacy:['Старый код','warning'],offline:['Офлайн','muted']};
 function nextCheck(sec){if(sec==null)return '';const at=new Intl.DateTimeFormat('ru-RU',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Moscow'}).format(new Date(Date.now()+sec*1000));const wait=sec<60?'меньше минуты':`${Math.ceil(sec/60)} мин`;return ` Следующая проверка через ${wait}, в ${at} МСК.`;}
 function machineRow(m){const [label,cls]=MACHINE_STATE[m.state]||MACHINE_STATE.offline;return `<div class="machine-row state-${esc(m.state)}"><div class="machine-top"><b>${esc(m.host)}</b><span class="badge ${cls}">${label}</span></div><small>${m.role==='primary'?'Основная':m.role==='standby'?'Резервная':'Роль не определена'} · ${esc(agoText(m.idle))}${m.commit?` · <code>${esc(m.commit)}</code>`:''}</small>${m.blocked?`<p class="machine-warn">Обновление заблокировано: ${esc(m.blocked)}.${nextCheck(m.next_check)}</p>`:''}</div>`;}
-function serviceSummary(machines){return machines.some(m=>m.state==='polling')?'':'<div class="service-status bad"><b>Терминал никто не опрашивает</b><span>Данные не обновляются</span></div>';}
+function serviceSummary(machines){return machines.some(m=>m.state==='polling')?'':'<div class="service-status bad"><b>Терминал никто не опрашивает</b><span>Не обновляются только сделки TagMarket — остальное работает как обычно</span></div>';}
 function servicePanel(){const machines=state.admin?.machines||[];return `<section class="panel service-panel"><div class="service-head"><div><span class="eyebrow">ДЛЯ ВЛАДЕЛЬЦА</span><h2>Сервис</h2></div>${button('refresh','Обновить','secondary small','refresh')}</div>${state.admin?`${serviceSummary(machines)}<div class="machine-list">${machines.map(machineRow).join('')||'<p class="muted">Машины не отвечали.</p>'}</div>`:'<p class="muted mt">Загружаем состояние…</p>'}${toggle('Уведомления о сервисе','','alerts',state.data.update_alerts)}<div class="settings-row"><div><p>Сообщение пользователям</p></div>${button('broadcast','Написать','secondary small')}</div></section>`;}
 // Значок гаммы — мини-превью интерфейса в её цветах: карточка с графиком
 // доходности в акценте, заливка под линией, плашка второго цвета, свечение.
@@ -835,7 +835,7 @@ async function api(path,options={}){
  const token=appToken(),headers={...(token?{Authorization:`Bearer ${token}`}:{'X-Telegram-Init-Data':tg?.initData||''}),...options.headers};
  if(!isForm&&!headers['Content-Type'])headers['Content-Type']='application/json';
  const attempt=async()=>{
-  const response=await fetch(new URL('../api'+path,location.href),{...options,signal:AbortSignal.timeout(path==='/broadcast'?180000:20000),headers,cache:'no-store'});
+  const response=await fetch(new URL('../api'+path,location.href),{...options,signal:AbortSignal.timeout(path==='/broadcast'?180000:path.startsWith('/live')?40000:20000),headers,cache:'no-store'});
   const d=await response.json().catch(()=>({error:'Сервер вернул некорректный ответ'}));
   if(!response.ok){const error=new Error(d.error||`Ошибка ${response.status}`);error.status=response.status;if(token&&response.status===401){try{androidApp.signOut?.();}catch{}}throw error;}
   return d;
@@ -925,13 +925,26 @@ document.addEventListener('focusout',flushQuiet);document.querySelector('#dialog
 let lastOkAt=Date.now();
 function setOffline(offline){let bar=$('#offline-bar');if(!offline){bar?.remove();return;}const time=new Date(lastOkAt).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});if(!bar){bar=document.createElement('div');bar.id='offline-bar';bar.setAttribute('role','status');document.body.prepend(bar);}bar.innerHTML=`<span>Нет связи с сервером · данные от ${esc(time)}</span><button type="button" class="text-link" data-action="refresh">Повторить</button>`;}
 window.addEventListener('online',()=>{if($('#offline-bar'))refresh(true);});
+// Живая синхронизация: сервер отвечает на /api/live, как только данные изменились —
+// в другом окне, на телефоне (шаги, SMS банка), у друга, по зарплате или в TagMarket.
+// Экран обновляется сразу и тихо; фоновый круг остаётся запасным.
+let liveStarted=false,liveTimer=null;
+function startLive(){if(liveStarted||preview)return;liveStarted=true;liveLoop();}
+async function liveLoop(){
+ let rev=-1;
+ while(true){
+  if(document.hidden)await new Promise(resolve=>document.addEventListener('visibilitychange',resolve,{once:true}));
+  try{const r=await api(`/live?rev=${rev}`);if(rev>=0&&r.changed?.length){viewCache.clear();clearTimeout(liveTimer);liveTimer=setTimeout(()=>refresh(true),250);}rev=r.rev;}
+  catch{await new Promise(resolve=>setTimeout(resolve,5000));}
+ }
+}
 async function refresh(quiet=false){
  if(quiet&&uiEditing()){quietPending=true;return;}
  if(state.busy){if(quiet)quietPending=true;else {state.pendingRefresh=true;generation++;}return;}
  if(quiet)quietPending=false;
  state.busy=true;document.body.classList.add('is-loading');const gen=++generation;
  try{
- const data=await api('/bootstrap');if(gen!==generation)return;state.data=data;state.circle=null;lastOkAt=Date.now();setOffline(false);state.displayCurrency=data.display_currency||state.displayCurrency;$('#display-currency').value=state.displayCurrency;syncCurrencyUi();scheduleRefresh();
+ const data=await api('/bootstrap');if(gen!==generation)return;state.data=data;state.circle=null;lastOkAt=Date.now();setOffline(false);startLive();state.displayCurrency=data.display_currency||state.displayCurrency;$('#display-currency').value=state.displayCurrency;syncCurrencyUi();scheduleRefresh();
   const parts=await viewParts();
   const notifications=await api('/notifications').catch(()=>state.notifications);
   if(gen!==generation)return;

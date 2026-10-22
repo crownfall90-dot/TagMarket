@@ -850,6 +850,13 @@ async def agent_sync(request):
         raise web.HTTPServiceUnavailable(text="account data temporarily unavailable") from exc
     if new:
         log.info("счёт %s: %d новых сделок", login, new)
+        # новые сделки — у владельцев счёта (и гостей с копией) TagMarket обновится сразу
+        try:
+            import live
+            live.bump(request.app["db"], {str(a.get("owner")) for a in accounts.load()
+                                          if int(a.get("login", -1)) == login}, "tagmarket")
+        except Exception:
+            log.exception("не отметил обновление TagMarket для живой синхронизации")
 
     host = data.get("host")
     if host:

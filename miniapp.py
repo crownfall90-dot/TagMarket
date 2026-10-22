@@ -3,6 +3,7 @@
 Handlers do not yield while using the legacy trades calculation context.
 Only signed Telegram initData is accepted; no browser authentication bypass.
 """
+import asyncio
 import hashlib
 import hmac
 import html
@@ -40,6 +41,7 @@ import goals
 import income
 import insights
 import lists
+import live
 import spend
 import partner
 import projects
@@ -191,6 +193,7 @@ def authorize(request):
         _rates.popitem(last=False)
     if count >= 120:
         raise web.HTTPTooManyRequests(text="Слишком много запросов. Подождите минуту")
+    request["uid"] = uid
     return uid, user
 
 
@@ -1470,7 +1473,9 @@ async def activity_sync(request):
         payload = {k: v for k, v in (await request.post()).items() if isinstance(v, str)}
     else:
         payload = await request.json()
-    return web.json_response(_section_call(lambda: activity.ingest(db, owner, payload)))
+    result = _section_call(lambda: activity.ingest(db, owner, payload))
+    live.bump(db, owner, "activity")        # шаги с телефона — сразу на открытом экране
+    return web.json_response(result)
 
 
 async def activity_sync_key(request):
@@ -1498,6 +1503,36 @@ async def spend_api(request):
     data = await json_object(request)
     return web.json_response(_section_call(lambda: spend.save(db, uid, data, item_id)),
                              status=201 if method == "POST" else 200)
+
+
+LIVE_WAIT = 25          # секунд держим запрос /api/live, если ничего не меняется
+
+
+async def live_api(request):
+    """Живая синхронизация: ?rev= — последний известный номер. Ответ — как только
+    данные изменились (или через LIVE_WAIT секунд с тем же номером)."""
+    uid, _ = authorize(request)
+    db = request.app["db"]
+    try:
+        since = int(request.query.get("rev", "-1"))
+    except ValueError:
+        raise web.HTTPBadRequest(text="rev")
+    latest, changed = live.state(db, uid, max(since, 0))
+    deadline = time.monotonic() + LIVE_WAIT
+    while since >= 0 and latest <= since and time.monotonic() < deadline:
+        await asyncio.sleep(1)
+        latest, changed = live.state(db, uid, since)
+    return web.json_response({"rev": max(latest, since, 0), "changed": changed if since >= 0 and latest > since else []})
+
+
+@web.middleware
+async def live_marks(request, handler):
+    """Успешное изменение через API — отметка для живой синхронизации других копий приложения."""
+    response = await handler(request)
+    if (request.method in ("POST", "PUT", "PATCH", "DELETE") and request.path.startswith("/api/")
+            and request.get("uid") and getattr(response, "status", 500) < 400):
+        live.bump(request.app["db"], request["uid"], live.section_for(request.path))
+    return response
 
 
 async def device_pair(request):
@@ -1557,10 +1592,12 @@ async def friends_api(request):
     if path == "/api/friends":
         return web.json_response(friends.overview(db, uid))
     if method == "DELETE":
+        people = friends.participants(db, info["split_id"])
         _section_call(lambda: friends.delete_split(db, uid, info["split_id"]))
     else:
         data = await json_object(request)
-        _section_call(lambda: friends.add_split(db, uid, data))
+        people = friends.participants(db, _section_call(lambda: friends.add_split(db, uid, data)))
+    live.bump(db, people, "friends")        # долг меняется и у друзей — у них экран обновится сам
     return web.json_response(friends.overview(db, uid), status=201 if method == "POST" else 200)
 
 
@@ -1635,7 +1672,9 @@ async def banks_sync(request):
     if not isinstance(body, dict):
         raise ValueError("Ожидается JSON-объект")
     message = next((body[k] for k in ("text", "message", "sms", "body", "content") if isinstance(body.get(k), str)), None)
-    return web.json_response(_section_call(lambda: banks.ingest(db, owner, message)))
+    result = _section_call(lambda: banks.ingest(db, owner, message))
+    live.bump(db, owner, "banks")           # SMS банка — баланс обновляется на открытом экране
+    return web.json_response(result)
 
 
 async def lists_api(request):
@@ -1840,6 +1879,7 @@ def setup(app):
         if changed:
             accounts.save(accs)
     app.middlewares.append(api_errors)
+    app.middlewares.append(live_marks)
     app.router.add_get("/app", app_redirect)
     app.router.add_get("/app/", static)
     app.router.add_get("/app/{file}", static)
@@ -1863,6 +1903,7 @@ def setup(app):
     app.router.add_get("/api/activity/sync/key", activity_sync_key)
     app.router.add_post("/api/activity/sync/key", activity_sync_key)
     app.router.add_delete("/api/activity/sync/key", activity_sync_key)
+    app.router.add_get("/api/live", live_api)
     app.router.add_post("/api/device/pair", device_pair)
     app.router.add_get("/api/devices", devices_api)
     app.router.add_post("/api/devices/code", devices_api)

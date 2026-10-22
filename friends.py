@@ -152,6 +152,12 @@ def add_split(db, viewer, data):
     return item_id
 
 
+def participants(db, item_id):
+    """Кто затронут записью: платил и между кем делили."""
+    row = db.execute("SELECT payer, members FROM split_items WHERE id=?", (item_id,)).fetchone()
+    return sorted({row[0], *json.loads(row[1])}) if row else []
+
+
 def delete_split(db, viewer, item_id):
     with db:
         row = db.execute("SELECT created_by FROM split_items WHERE id=?", (item_id,)).fetchone()

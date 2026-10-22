@@ -3134,7 +3134,8 @@ async def main():
                     if not alive:
                         if last_alive and notify_ok:      # сообщаем один раз, не на каждом круге
                             text = (f"🔴 <b>Все агентские машины офлайн</b>\n{trades.THIN}\n"
-                                   f"Терминал никто не опрашивает — данные перестали обновляться.")
+                                   f"Терминал никто не опрашивает — не обновляются сделки и баланс TagMarket. "
+                                   f"Остальное в Platformer работает как обычно.")
                             await send(bot, chat_id, text)
                     elif active != last_active:
                         # роль конкретного хоста читаем из KV напрямую, а не из

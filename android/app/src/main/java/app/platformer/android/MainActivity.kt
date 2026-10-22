@@ -21,7 +21,10 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.health.connect.client.PermissionController
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /** Platformer в оболочке Android: веб-интерфейс Mini App + вход по коду и шаги из Health Connect. */
@@ -89,6 +92,16 @@ class MainActivity : ComponentActivity() {
 
         if (savedInstanceState != null) web.restoreState(savedInstanceState) else web.loadUrl(startUrl())
         offerSteps()
+        // пока приложение на экране — шаги уходят каждую минуту, и кольцо «Шаги» живое;
+        // в фоне их раз в 15 минут отправляет WorkManager
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                while (true) {
+                    Steps.syncNow(this@MainActivity)
+                    delay(60_000)
+                }
+            }
+        }
     }
 
     override fun onResume() {

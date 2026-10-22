@@ -184,6 +184,9 @@ def credit_due(db, owner, on=None):
                 banks.credit(db, account_id, cents, balance, title or KINDS.get(kind, "Зарплата"), "salary", stamp)
                 done += 1
             db.execute("UPDATE income_items SET credited=? WHERE id=?", (due[-1].isoformat(), item_id))
+    if done:
+        import live
+        live.bump(db, owner, "banks", "income")     # зарплата пришла на карту — видно сразу
     return done
 
 

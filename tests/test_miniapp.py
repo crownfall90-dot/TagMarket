@@ -41,6 +41,7 @@ import goals
 import friends
 import backup
 import devices
+import live
 import lists
 import projects
 import partner
@@ -2080,6 +2081,46 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(page.status, 200)
         self.assertIn("Health Connect", await page.text())
 
+    async def test_live_sync_answers_as_soon_as_data_changes(self):
+        """/api/live: изменение в любом окне, с телефона или у друга — сразу виден новый номер версии."""
+        start = await (await self.call("GET", "/api/live")).json()          # без rev — текущий номер сразу
+        self.assertEqual(start["changed"], [])
+        rev = start["rev"]
+        # изменение через API — у этого же пользователя в другой копии приложения
+        await self.call("POST", "/api/goals", json={"title": "Отпуск", "target": 100, "currency": "USD"})
+        got = await (await self.call("GET", f"/api/live?rev={rev}")).json()
+        self.assertGreater(got["rev"], rev)
+        self.assertIn("goals", got["changed"])
+        # ничего не поменялось — ждём (здесь 1 секунду вместо 25) и отдаём тот же номер
+        with patch.object(miniapp, "LIVE_WAIT", 1):
+            same = await (await self.call("GET", f"/api/live?rev={got['rev']}")).json()
+        self.assertEqual((same["rev"], same["changed"]), (got["rev"], []))
+        # чтение ничего не отмечает
+        await self.call("GET", "/api/goals")
+        with patch.object(miniapp, "LIVE_WAIT", 1):
+            self.assertEqual((await (await self.call("GET", f"/api/live?rev={got['rev']}")).json())["changed"], [])
+        # общая трата: у друга экран обновится сам
+        partner.kv_set(self.db, "guest:2", "1")
+        partner.kv_set(self.db, "guest_by:2", "1")
+        friend_rev = (await (await self.call("GET", "/api/live", uid=2)).json())["rev"]
+        r = await self.call("POST", "/api/friends/split", json={"title": "Пицца", "amount": 20, "currency": "BYN",
+                                                                "members": ["1", "2"]})
+        self.assertEqual(r.status, 201, await r.text())
+        friend = await (await self.call("GET", f"/api/live?rev={friend_rev}", uid=2)).json()
+        self.assertIn("friends", friend["changed"])
+        # шаги с телефона (без Telegram) — тоже
+        key = (await (await self.call("POST", "/api/activity/sync/key")).json())["key"]
+        before = (await (await self.call("GET", "/api/live")).json())["rev"]
+        await self.client.post("/api/activity/sync", headers={"Authorization": f"Bearer {key}"}, json={"steps": 1200})
+        steps = await (await self.call("GET", f"/api/live?rev={before}")).json()
+        self.assertIn("activity", steps["changed"])
+        # уведомление бота о сделке TagMarket (другой процесс, та же база)
+        before = steps["rev"]
+        partner.record_notification(self.db, "1", "trade:123:9", "trades", "SONIC · Сделка", "+1 $")
+        trade = await (await self.call("GET", f"/api/live?rev={before}")).json()
+        self.assertIn("tagmarket", trade["changed"])
+        self.assertEqual(live.section_for("/api/banks/x"), "banks")
+
     def test_backup_snapshot_is_consistent_and_keeps_last_days(self):
         with tempfile.TemporaryDirectory() as tmp:
             src = Path(tmp) / "state.db"
@@ -3656,7 +3697,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                     with self.subTest(module=module):
                         self.assertIn(f"{module}.py", shipped)
                         self.assertIn(f"{module}.py", rollbackable)
-        for module in ("activity", "lists", "banks", "insights", "projects", "spend", "income", "goals", "friends", "backup", "devices"):
+        for module in ("activity", "lists", "banks", "insights", "projects", "spend", "income", "goals", "friends", "backup", "devices", "live"):
             self.assertIn(f"{module}.py", shipped)
 
     async def test_guest_cannot_toggle_shared_account_polling(self):

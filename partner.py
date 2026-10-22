@@ -455,6 +455,8 @@ def open_db(path: str = None):
     db.execute("PRAGMA busy_timeout=10000")
     db.execute("CREATE TABLE IF NOT EXISTS seen (kind TEXT, id TEXT, PRIMARY KEY (kind, id))")
     db.execute("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT)")
+    import live
+    live.setup(db)          # номера версий данных — для живой синхронизации приложения
     db.execute("""CREATE TABLE IF NOT EXISTS notifications (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id TEXT NOT NULL,
@@ -491,6 +493,8 @@ def record_notification(db, user_id, event_key, kind, title, body) -> bool:
                      (str(user_id), str(event_key)[:180], str(kind)[:32],
                       str(title)[:160], str(body)[:1200], now))
     if cur.rowcount:
+        import live
+        live.bump(db, user_id, "notifications", "tagmarket" if kind in ("trades", "deposits", "withdrawals") else "data")
         # Keep a bounded personal history while preserving the latest events.
         db.execute("DELETE FROM notifications WHERE user_id=? AND id NOT IN "
                    "(SELECT id FROM notifications WHERE user_id=? ORDER BY id DESC LIMIT 200)",
