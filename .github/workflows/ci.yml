@@ -80,12 +80,17 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
-      - name: Chromium (из кэша — только системные библиотеки)
+      # Системные библиотеки Chromium на ubuntu-latest уже стоят. --with-deps
+      # тянул ещё шрифты и обновления apt с зеркала, которое порой отдаёт
+      # 40 КБ/с: 11 минут из 12 уходили на это. Ставим только сам браузер
+      # (headless shell — им тест и запускается); системные пакеты — лишь
+      # если браузер без них не стартует.
+      - name: Chromium
         run: |
-          if [ "${{ steps.browsers.outputs.cache-hit }}" = "true" ]; then
-            python -m playwright install-deps chromium
-          else
-            python -m playwright install --with-deps chromium
+          if [ "${{ steps.browsers.outputs.cache-hit }}" != "true" ]; then
+            python -m playwright install --only-shell chromium
           fi
+          python -c "from playwright.sync_api import sync_playwright as p; b=p().start().chromium.launch(); b.close()" \
+            || python -m playwright install-deps chromium
       - name: Предпросмотр на ${{ matrix.width }} px
         run: python tests/ui_smoke.py
