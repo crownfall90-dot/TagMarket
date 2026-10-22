@@ -5,7 +5,7 @@ const preview = new URLSearchParams(location.search).get('preview') === '1';
 const state = {data:null, people:null, admin:null, report:null, reportError:'', priceChart:null, notifications:{items:[],unread:0}, view:'overview', login:null, period:'today', kind:'trades', offset:0, from:'', to:'', filters:{tagmarket:{period:'today',from:'',to:''},account:{period:'today',from:'',to:''}}, busy:false, currency:null};
 try{state.displayCurrency=localStorage.getItem('tag-display-currency')||'USD';}catch{state.displayCurrency='USD';}
 let generation = 0, refreshTimer, toastTimer, notificationsStarted = false, lastNotificationId = 0;
-state.projects=null;state.projectsError='';state.banks=null;state.banksError='';state.projectId=null;try{state.assetMode=localStorage.getItem('tag-asset-mode')||'tag';}catch{state.assetMode='tag';}state.forecast={horizon:'1m',until:'',bonus:true,selected:null,result:null,tag:null};
+state.projects=null;state.projectsError='';state.banks=null;state.banksError='';state.spend=null;state.spendError='';state.projectId=null;try{state.assetMode=localStorage.getItem('tag-asset-mode')||'tag';}catch{state.assetMode='tag';}state.forecast={horizon:'1m',until:'',bonus:true,selected:null,result:null,tag:null};
 const paths = {overview:'M3 10l9-7 9 7v10H3z M9 20v-7h6v7',accounts:'M3 7h18v14H3z M3 7V4h14v3 M16 12h5v5h-5z',deals:'M4 5h16 M4 12h16 M4 19h16 M8 2v6 M16 9v6 M9 16v6',people:'M16 21v-3a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v3 M9 10a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M17 3a4 4 0 0 1 0 8 M22 21v-3a4 4 0 0 0-3-4',settings:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M12 2v3 M12 19v3 M2 12h3 M19 12h3 M5 5l2 2 M17 17l2 2 M5 19l2-2 M17 7l2-2',plus:'M12 5v14 M5 12h14',arrow:'M5 12h14 M14 7l5 5-5 5',up:'M7 17 17 7 M7 7h10v10',down:'M7 7l10 10 M7 17h10V7',refresh:'M20 7A8 8 0 0 0 6 5L3 8 M3 3v5h5 M4 17a8 8 0 0 0 14 2l3-3 M21 21v-5h-5',sun:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M12 1v2 M12 21v2 M1 12h2 M21 12h2 M4 4l2 2 M18 18l2 2 M4 20l2-2 M18 6l2-2',chevron:'M9 5l7 7-7 7',chart:'M3 19h18 M4 15l5-5 5 3 6-9',check:'m5 12 4 4L19 6',clock:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 7v5l3 2',link:'M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-2 2 M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l2-2',back:'M19 12H5 M10 7l-5 5 5 5',shield:'M12 2l9 4v6c0 5-9 10-9 10S3 17 3 12V6z M8 12l3 3 5-6',copy:'M8 8h13v13H8z M16 8V3H3v13h5'};
 paths.bell='M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9 M10 21h4';paths.exit='M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4 M16 17l5-5-5-5 M21 12H9';paths.palette='M12 3a9 9 0 1 0 0 18c1.4 0 2-.9 2-1.8 0-1.4-1.2-1.6-1.2-2.8 0-.9.7-1.4 1.6-1.4H17a4 4 0 0 0 4-4c0-4.4-4-8-9-8z';
 Object.assign(paths,{
@@ -85,6 +85,8 @@ function composerValidate(values){
 function broadcastPreview(text){return esc(text).replace(/&lt;(\/?)(b|i|code|blockquote)&gt;/g,'<$1$2>');}
 function fileSize(bytes){return `${number(bytes/1024/1024)} МБ`;}
 async function mediaKind(file){const b=new Uint8Array(await file.slice(0,12).arrayBuffer());if(b[0]===255&&b[1]===216&&b[2]===255)return 'photo';if([137,80,78,71,13,10,26,10].every((v,i)=>b[i]===v))return 'photo';if(b[4]===102&&b[5]===116&&b[6]===121&&b[7]===112)return 'video';return null;}
+paths.minus='M5 12h14';
+paths.repeat='M17 2l3 3-3 3 M4 11V9a4 4 0 0 1 4-4h12 M7 22l-3-3 3-3 M20 13v2a4 4 0 0 1-4 4H4';
 paths.upload='M12 15V4 M7 9l5-5 5 5 M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4';
 paths.projects='M3 7h7l2 2h9v11H3z M3 7V4h7l2 3 M7 13h10 M7 16h6';
 paths.activity='M3 12h4l3-8 4 16 3-8h4';paths.lists='M12 21s-7-4.4-9.3-9A5.2 5.2 0 0 1 12 6.6 5.2 5.2 0 0 1 21.3 12C19 16.6 12 21 12 21z';paths.calendar='M4 6h16v14H4z M4 10h16 M8 3v5 M16 3v5';paths.note='M5 3h10l4 4v14H5z M15 3v4h4 M8 12h8 M8 16h6';paths.bank='M3 10l9-6 9 6 M5 10v8 M9.5 10v8 M14.5 10v8 M19 10v8 M3 20h18';paths.plans='M4 6h16v14H4z M4 10h16 M8 3v5 M16 3v5 M9 15l2 2 4-4';paths.circle='M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z M12 7.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9z M12 11a1 1 0 1 0 0 2 1 1 0 0 0 0-2z';
@@ -102,7 +104,7 @@ const NAV_ROOTS=['#desktop-nav','#mobile-nav'];
 function reducedMotion(){return !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;}
 function nav(){
  document.body.classList.toggle('onboarding-only',onboardingOnly());
- const active=['account','accounts','project','forecast','tagmarket','onboarding','banks'].includes(state.view)?'projects':['faq','circle'].includes(state.view)?'overview':state.view;
+ const active=['account','accounts','project','forecast','tagmarket','onboarding','banks','spend'].includes(state.view)?'projects':['faq','circle'].includes(state.view)?'overview':state.view;
  for(const selector of NAV_ROOTS){
   const root=$(selector);
   if(!root.dataset.ready){
@@ -632,7 +634,8 @@ function heroSwap(from,to){if(from===to||matchMedia('(prefers-reduced-motion:red
 // Плавающая «+» живёт вне #main: у #main при смене экрана transform-анимация, а fixed внутри
 // трансформированного предка уезжал бы вместе с ним. Несколько действий — меню по нажатию.
 const FABS={plans:()=>{const [a,l]=PLAN_ADD[state.listsTab]||PLAN_ADD.tasks;return [[a,l,'plus']];},
- projects:()=>[['bank-add','Счёт или карта','bank'],['project-create','Проект','projects']],
+ projects:()=>[['bank-add','Счёт или карта','bank'],['spend-add','Трата или подписка','minus'],['project-create','Проект','projects']],
+ spend:()=>[['spend-add','Новая трата','plus']],
  activity:()=>[['activity-add','Записать','plus']]};
 function paintFab(){
  const root=$('#fab-root');if(!root)return;
@@ -665,7 +668,7 @@ function render(preserve=false){const snapshot=preserve?captureUiState():null;$(
   const fingerprint=[...strip.querySelectorAll('button')].map(b=>b.dataset.value||b.textContent).join('|');
   prevThumbs.set(fingerprint, {left:active.offsetLeft, width:active.offsetWidth});
  });
- const views={overview,tagmarket:tagmarketView,activity:activityView,plans:listsView,circle:circleView,banks:banksView,accounts:accountsView,account:accountView,projects:projectsView,project:projectView,forecast:forecastView,people:peopleView,settings:settingsView,faq:faqView,onboarding:welcomeView};$('#main').innerHTML=(preview?'<div class="preview-label">Демо-режим · вымышленные данные. Отправка сообщений и управление счетами работают только при запуске из <a href="https://t.me/tagmarketgold_bot" target="_blank" rel="noopener">бота в Telegram</a>.</div>':'')+(views[state.view]||overview)()+(state.view==='settings'&&state.admin?.network?.length?networkView():'');$('#avatar').textContent=state.data.user.name.slice(0,1).toUpperCase();
+ const views={overview,tagmarket:tagmarketView,activity:activityView,plans:listsView,circle:circleView,banks:banksView,accounts:accountsView,account:accountView,projects:projectsView,spend:spendView,project:projectView,forecast:forecastView,people:peopleView,settings:settingsView,faq:faqView,onboarding:welcomeView};$('#main').innerHTML=(preview?'<div class="preview-label">Демо-режим · вымышленные данные. Отправка сообщений и управление счетами работают только при запуске из <a href="https://t.me/tagmarketgold_bot" target="_blank" rel="noopener">бота в Telegram</a>.</div>':'')+(views[state.view]||overview)()+(state.view==='settings'&&state.admin?.network?.length?networkView():'');$('#avatar').textContent=state.data.user.name.slice(0,1).toUpperCase();
  // сначала все замеры, потом все записи: чередование чтения и записи в одном
  // цикле заставляет браузер пересчитывать вёрстку на каждой полосе
  const centering=[];
@@ -804,7 +807,7 @@ async function api(path,options={}){
   if(path==='/notifications'){const at=m=>new Date(Date.now()-m*60000).toISOString();return {items:[{id:5,kind:'withdrawals',event_key:'trade:10001:124',title:'SONIC · Вывод профита',body:'−11,14 $\n➡️ Профит списан со стратегии на баланс Tag Markets\n💰 Капитал стратегии: 2 500,00 $ (не изменился)',created_at:at(2),read_at:null},{id:4,kind:'trades',event_key:'trade:10001:123',title:'SONIC · Сделка в плюс',body:'+18,42 $ чистыми +0,15%\n🔢 Третья сделка за день\nXAUUSD SELL · до комиссии +26,31\n💵 За день: +61,20 $ (3 сделки)',created_at:at(3),read_at:null},{id:3,kind:'deposits',event_key:'trade:10002:55',title:'NEO.FX · Пополнение стратегии',body:'+250,00 $\n⬅️ Заведено на стратегию — капитал вырос\n💰 Капитал: было 4 950,00 $ → стало 5 200,00 $',created_at:at(95),read_at:null},{id:2,kind:'message',title:'Сообщение от сервиса',body:'Завтра с 03:00 до 03:10 возможны короткие перерывы в обновлении данных.',created_at:at(60*30),read_at:at(60*20)},{id:1,kind:'registration',title:'Новый гость',body:'Виктория Орлова приняла приглашение',created_at:at(60*52),read_at:at(60*50)}],unread:3};}
   if(options.method&&options.method!=='GET')throw new Error('В предпросмотре изменения отключены');
   const d=previewData(await fetch('preview.json',{cache:'no-store'}).then(r=>r.json()));
-  if(path==='/bootstrap')return {...d.bootstrap,fx:d.bootstrap.fx||{source:'MYFIN · НБРБ',provider:'myfin',stale:false,currency:'USD',byn_per_unit:{BYN:1,USD:3,RUB:0.03},byn_per_usd:3,byn_per_100_rub:3,updated_at:PREVIEW_STAMP},insights:previewInsights()};
+  if(path==='/bootstrap')return {...d.bootstrap,fx:d.bootstrap.fx||{source:'MYFIN · НБРБ',provider:'myfin',stale:false,currency:'USD',byn_per_unit:{BYN:1,USD:3,RUB:0.03,EUR:3.4},byn_per_usd:3,byn_per_100_rub:3,updated_at:PREVIEW_STAMP},insights:previewInsights()};
   if(path==='/insights')return previewInsights();
   if(path==='/people')return d.people;
   if(path.startsWith('/tagmarket/forecast')){const until=new URLSearchParams(path.split('?')[1]||'').get('until'),start=new Date(`${projectToday()}T00:00:00Z`),count=(end)=>{let n=0;for(let t=start.getTime()+864e5;t<=Date.parse(`${end}T00:00:00Z`);t+=864e5)if(![0,6].includes(new Date(t).getUTCDay()))n++;return n;},add=n=>new Date(start.getTime()+n*864e5).toISOString().slice(0,10),month=(()=>{const m=new Date(start);m.setUTCMonth(m.getUTCMonth()+1);return m.toISOString().slice(0,10);})(),average=.0042,days={day:count(add(1)),week:count(add(7)),month:count(month),selected:count(until)};return {sufficient:true,days_used:23,min_days:5,window_days:30,average_daily_return:average,average_daily_profit:null,until,trading_days:days,multipliers:Object.fromEntries(Object.entries(days).map(([k,n])=>[k,(1+average)**n])),model:'compound_average_daily_return'};}
@@ -851,6 +854,7 @@ async function viewParts(){
  if(['tagmarket','account'].includes(state.view))jobs.push((async()=>{try{out.report=await loadReport();out.reportError='';}catch(error){out.report=null;out.reportError=error.message;}})());
  if(state.view==='tagmarket'){const sonic=state.data.accounts.find(a=>/sonic|sonik/i.test(`${a.strategy||''} ${a.name||''}`));jobs.push((async()=>{out.priceChart=sonic?await api(`/accounts/${sonic.login}/candles?period=${state.period==='custom'?'week':state.period}`).catch(()=>null):null;})());}
  if(state.view==='people')jobs.push((async()=>{out.people=await api('/people');})());
+ if(['projects','spend'].includes(state.view))jobs.push((async()=>{try{out.spend=preview?previewSpend():await api('/spend');out.spendError='';}catch(error){out.spend=state.spend;out.spendError=error.message;}})());
  if(['overview','projects','banks'].includes(state.view))jobs.push((async()=>{try{out.banks=preview?previewBanks():await api('/banks');out.banksError='';}catch(error){out.banks=state.banks;out.banksError=error.message;}})());
  if(['overview','activity'].includes(state.view))jobs.push((async()=>{try{out.activity=preview?previewActivity(state.activityDays):await api(`/activity?days=${state.view==='overview'?7:state.activityDays}`);out.activityError='';}catch(error){out.activity=state.activity;out.activityError=error.message;}})());
  if(['overview','plans'].includes(state.view))jobs.push((async()=>{try{const [from,to]=monthBounds(state.calMonth);const [lists,events]=await Promise.all([preview?previewLists():api('/lists'),state.view==='plans'?(preview?previewLists():api(`/events?from=${from}&to=${to}`)):Promise.resolve(state.events)]);out.lists=lists;out.events=events;out.listsError='';}catch(error){out.lists=state.lists;out.listsError=error.message;}})());
@@ -866,9 +870,9 @@ async function viewParts(){
 // Свежесть держит фоновое обновление; старше его интервала — грузим заново
 const viewCache=new Map();
 function viewKey(){return [state.view,state.login,state.projectId,state.period,state.from,state.to,state.currency,state.kind,state.offset,state.view==='activity'?state.activityDays:'',state.view==='plans'?state.calMonth:''].join('|');}
-function remember(){viewCache.set(viewKey(),{report:state.report,reportError:state.reportError,priceChart:state.priceChart,projects:state.projects,projectsError:state.projectsError,banks:state.banks,activity:state.activity,lists:state.lists,events:state.events,at:Date.now()});}
+function remember(){viewCache.set(viewKey(),{report:state.report,reportError:state.reportError,priceChart:state.priceChart,projects:state.projects,projectsError:state.projectsError,banks:state.banks,spend:state.spend,activity:state.activity,lists:state.lists,events:state.events,at:Date.now()});}
 function refreshEvery(){return Math.max(30,Number(state.data?.refresh_seconds)||60)*1000;}
-const VIEW_NEEDS_DATA=view=>['overview','tagmarket','activity','plans','circle','banks','account','people','projects','project','forecast'].includes(view)||(view==='settings'&&!!state.data?.founder);
+const VIEW_NEEDS_DATA=view=>['overview','tagmarket','activity','plans','circle','banks','spend','account','people','projects','project','forecast'].includes(view)||(view==='settings'&&!!state.data?.founder);
 // Смена периода, вкладки истории, страницы, валюты: то же, что переход —
 // из памяти, если свежее, иначе догружаем только отчёт раздела. Раньше каждое
 // такое нажатие перегружало всё (4 запроса), и частые переключения упирались
@@ -946,7 +950,7 @@ async function navigate(){
  let [view,login]=location.hash.slice(1).split('/');
  if(view==='lists'){view='plans';login='wish';}   // прежняя ссылка на вишлисты
  if(view==='plans'){if(['tasks','calendar','notes','wish'].includes(login))state.listsTab=login;login=undefined;}
- const next=['overview','tagmarket','activity','plans','circle','banks','accounts','account','projects','project','forecast','people','settings','faq'].includes(view)?view:'overview';
+ const next=['overview','tagmarket','activity','plans','circle','banks','spend','accounts','account','projects','project','forecast','people','settings','faq'].includes(view)?view:'overview';
  const direction=Math.sign((VIEW_ORDER[next]??0)-(VIEW_ORDER[state.view]??0));
  const moved=next!==state.view||(!!login&&(next==='project'?login!==state.projectId:Number(login)!==state.login));
  // тот же раздел (повторное событие hashchange) — экран уже верный
@@ -963,6 +967,7 @@ async function navigate(){
  if(cached&&next==='tagmarket')state.priceChart=cached.priceChart;
  if(cached&&['projects','project','forecast','overview'].includes(next)){state.projects=cached.projects;state.projectsError=cached.projectsError||'';}
  if(cached&&['overview','projects','banks'].includes(next))state.banks=cached.banks??state.banks;
+ if(cached&&['projects','spend'].includes(next))state.spend=cached.spend??state.spend;
  if(cached&&['overview','activity','plans'].includes(next)){state.activity=cached.activity??state.activity;state.lists=cached.lists??state.lists;state.events=cached.events??state.events;}
  // подсветка панели едет сразу по нажатию, а старый экран уходит параллельно:
  // ждать отрисовки нового значило бы показать задержку на самом заметном месте
@@ -1057,6 +1062,67 @@ function projectsDynamics(portfolio){const cur=state.displayCurrency,rows=[],tag
  known.sort((a,b)=>b.work-a.work);const withIncome=known.filter(r=>r.daily!=null),daily=withIncome.reduce((a,r)=>a+r.daily,0),peak=Math.max(...known.map(r=>r.work));
  const row=r=>`<li><div class="feed-day pd"><span class="feed-date"><b>${esc(r.name)}</b><small>${esc(r.note)}</small></span><span class="feed-bar"><i style="--w:${Math.max(3,r.work/peak*100).toFixed(1)}%"></i></span><span class="feed-sum"><b>${money(r.work,cur)}</b><small>${(r.work/total*100).toFixed(1).replace('.',',')}% портфеля${r.daily==null?'':` · ≈ ${money(r.daily,cur,true)} / день`}</small></span></div></li>`;
  return `<section class="project-dynamics"><div class="panel-head"><div><span class="eyebrow">ДОХОД</span><h2>По всем проектам</h2></div><span class="badge">${countLabel(known.length,['проект','проекта','проектов'])}</span></div><div class="pd-summary"><div><small>Доход в день</small><b class="${daily<0?'negative':'positive'}">${withIncome.length?`≈ ${money(daily,cur,true)}`:'—'}</b></div><div><small>За 30 дней</small><b class="${daily<0?'negative':'positive'}">${withIncome.length?`≈ ${money(daily*30,cur,true)}`:'—'}</b></div></div><ol class="feed pd-list">${known.map(row).join('')}</ol>${partial||withIncome.length<known.length?'<p class="feed-note">Часть проектов не вошла в сумму: нет курса валют или расчёт ограничен.</p>':''}</section>`;}
+// ── Траты: подписки, регулярные списания и покупки ──
+// Регулярная трата знает период и дату — следующее списание сервер считает сам.
+const SPEND_BRANDS=[[/netflix|нетфликс/i,'#e50914','#5c0307'],[/spotify|спотифай/i,'#1db954','#0b4f22'],[/youtube|ютуб/i,'#ff0033','#6b0012'],[/apple|icloud|айклауд/i,'#8e9aa6','#2e3338'],[/яндекс|yandex/i,'#fc3f1d','#7a1606'],[/telegram|телеграм/i,'#2aabee','#0d5a85'],[/chatgpt|openai/i,'#10a37f','#064a39'],[/claude|anthropic/i,'#d97757','#6b3220'],[/google|гугл/i,'#4285f4','#163e8a'],[/кинопоиск|kinopoisk/i,'#ff6600','#7a3000'],[/okko|окко/i,'#5b2be0','#24106b'],[/ivi|иви/i,'#ea003d','#66001b'],[/steam/i,'#2a475e','#101c27'],[/xbox/i,'#107c10','#053b05'],[/playstation|psn/i,'#0070d1','#00285c'],[/мтс|mts/i,'#e30611','#6b0307'],[/a1|а1/i,'#e2001a','#66000c'],[/life|лайф/i,'#7a2fa8','#32104a']];
+const SPEND_CATS={subs:'Подписки',connect:'Связь и интернет',home:'Жильё и ЖКУ',transport:'Транспорт',food:'Еда',shopping:'Покупки',health:'Здоровье',fun:'Развлечения',learn:'Обучение',other:'Другое'};
+const SPEND_PERIODS={week:'раз в неделю',month:'раз в месяц',year:'раз в год'};
+function spendLogo(title,small=false){const hit=SPEND_BRANDS.find(([re])=>re.test(title)),h=hashHue(title);const [c1,c2]=hit?[hit[1],hit[2]]:[`hsl(${h} 60% 50%)`,`hsl(${(h+40)%360} 55% 22%)`];return `<span class="sp-logo${small?' small':''}" style="--c1:${c1};--c2:${c2}" aria-hidden="true">${esc(String(title||'?').trim().slice(0,1).toUpperCase())}</span>`;}
+function sumIn(totals){let sum=0,partial=false;for(const [c,v] of Object.entries(totals||{})){const x=displayAmount(v,c);if(x==null)partial=true;else sum+=x;}return {sum,partial};}
+function spendWhen(u){return u.in_days===0?'сегодня':u.in_days===1?'завтра':dueLabel(u.date);}
+function spendSection(){
+ const d=state.spend,cur=state.displayCurrency;
+ if(!d)return '';
+ const head=`<div class="sec-row"><h2>Траты</h2><a class="text-link" href="#spend">Все ${icon('chevron')}</a></div>`;
+ if(!d.items.length)return `<section class="fin-spend" data-ui-key="fin-spend">${head}<a href="#spend" class="spend-sum empty"><span class="sp-orb">${icon('repeat')}</span><span><b>Подписки и покупки</b><small>Запишите — Platformer покажет, сколько уходит в месяц и что скоро спишется</small></span>${icon('chevron')}</a></section>`;
+ const m=sumIn(d.monthly),t=sumIn(d.this_month),next=d.upcoming[0],subs=d.items.filter(i=>i.kind==='recurring'&&i.active);
+ return `<section class="fin-spend" data-ui-key="fin-spend">${head}<a href="#spend" class="spend-sum"><span class="sp-glow" aria-hidden="true"></span><span class="ss-main"><small>Регулярно в месяц</small><b>${m.partial&&!m.sum?'—':countUp(m.sum,`money:${cur}`)}</b><em>в этом месяце всего ${money(t.sum,cur)}</em></span>${subs.length?`<span class="ss-logos">${subs.slice(0,5).map(i=>spendLogo(i.title,true)).join('')}${subs.length>5?`<i>+${subs.length-5}</i>`:''}</span>`:''}${next?`<span class="ss-next">${spendLogo(next.title,true)}<span><b>${esc(next.title)}</b><small>${esc(spendWhen(next))}</small></span><b>${esc(bankMoney(next.amount,next.currency))}</b></span>`:''}</a></section>`;
+}
+function spendView(){
+ const back='<a href="#projects" class="button secondary small back">← Финансы</a>',d=state.spend,cur=state.displayCurrency;
+ const m=d?sumIn(d.monthly):null,t=d?sumIn(d.this_month):null;
+ const hero=`<div class="project-space">${back}</div><div class="page-head sec-hero tone-spend spend-head"><div class="sec-glow" aria-hidden="true"><i></i><i></i><i></i></div><div><span class="sec-eyebrow">Регулярно в месяц</span><b class="spend-total">${!d?'…':countUp(m.sum,`money:${cur}`)}</b><p>${d?`В этом месяце всего ${esc(money(t.sum,cur))}${m.partial||t.partial?' · часть без курса валют':''}`:'Подписки, платежи и покупки'}</p></div><div class="head-actions">${button('spend-add','Трата','primary head-primary','plus')}</div></div>`;
+ if(!d)return hero+(state.spendError?sectionError(state.spendError,'spend-reload'):skeleton('list'));
+ if(!d.items.length)return hero+`<section class="lists-empty spend-empty"><span class="empty-orb">${icon('repeat')}</span><b>Запишите первую трату</b><p>Подписки и регулярные платежи — Platformer сам посчитает, когда и сколько спишется. Разовые покупки — чтобы видеть, куда уходят деньги.</p>${button('spend-add','Добавить трату','primary','plus')}</section>`;
+ const cats=d.by_category.map(c=>({...c,v:sumIn(c.totals).sum})).filter(c=>c.v>0),whole=cats.reduce((n,c)=>n+c.v,0),[yy,mm]=d.month.split('-').map(Number);
+ const catBlock=whole?`<section class="spend-cats" data-ui-key="spend-cats"><div class="sec-row"><h2>Куда уходит</h2><small class="muted">${MONTH_NAMES[mm-1]}</small></div><div class="fin-alloc">${cats.map((c,i)=>`<i class="cat-${esc(c.category)}" style="--w:${(c.v/whole*100).toFixed(1)}%;--d:${i*110}ms"></i>`).join('')}</div><div class="fin-legend">${cats.map(c=>`<span><i class="cat-${esc(c.category)}"></i>${esc(c.label)} <em>${money(c.v,cur)}</em></span>`).join('')}</div></section>`:'';
+ const up=d.upcoming.length?`<section class="spend-upcoming" data-ui-key="spend-upcoming"><div class="sec-row"><h2>Скоро спишется</h2></div><div class="sp-timeline">${d.upcoming.map((u,i)=>{const [,um,ud]=u.date.split('-').map(Number);return `<button type="button" class="sp-up${u.in_days<=1?' soon':''}" style="--i:${i}" data-action="spend-edit" data-id="${esc(u.id)}"><span class="sp-when"><b>${ud}</b><small>${MONTH_NAMES[um-1].slice(0,3).toLowerCase()}</small></span>${spendLogo(u.title)}<span class="sp-body"><b>${esc(u.title)}</b><small>${esc(spendWhen(u))}</small></span><b class="sp-amount">${esc(bankMoney(u.amount,u.currency))}</b></button>`;}).join('')}</div></section>`:'';
+ const rec=d.items.filter(i=>i.kind==='recurring').sort((a,b)=>(b.active-a.active)||String(a.next||'').localeCompare(String(b.next||'')));
+ const row=r=>`<button type="button" class="sp-row${r.active?'':' off'}" data-action="spend-edit" data-id="${esc(r.id)}">${spendLogo(r.title)}<span class="sp-body"><b>${esc(r.title)}</b><small>${r.active?`${esc(r.period_label)} · ${esc(dueLabel(r.next).toLowerCase())}`:'на паузе'} · ${esc(r.category_label)}</small></span><span class="sp-right"><b>${esc(bankMoney(r.amount,r.currency))}</b>${r.active&&r.period!=='month'?`<small>≈ ${esc(bankMoney(r.monthly,r.currency))} в мес</small>`:''}</span></button>`;
+ const recList=rec.length?`<section class="spend-list" data-ui-key="spend-recurring"><div class="sec-row"><h2>Подписки и регулярные</h2><span class="badge">${rec.filter(r=>r.active).length}</span></div>${rec.map(row).join('')}</section>`:'';
+ const once=d.items.filter(i=>i.kind==='once'),now=once.filter(i=>i.day.slice(0,7)===d.month),older=once.filter(i=>i.day.slice(0,7)!==d.month);
+ const buy=i=>`<button type="button" class="sp-row" data-action="spend-edit" data-id="${esc(i.id)}">${spendLogo(i.title)}<span class="sp-body"><b>${esc(i.title)}</b><small>${esc(shortDay(i.day))} · ${esc(i.category_label)}</small></span><span class="sp-right"><b>${esc(bankMoney(i.amount,i.currency))}</b></span></button>`;
+ const buys=now.length||older.length?`<section class="spend-list" data-ui-key="spend-once"><div class="sec-row"><h2>Покупки</h2><small class="muted">${MONTH_NAMES[mm-1].toLowerCase()} ${yy}</small></div>${now.map(buy).join('')||'<p class="muted sp-none">В этом месяце покупок нет.</p>'}${older.length?`<details class="sp-older"><summary>Ранее · ${older.length}</summary>${older.slice(0,60).map(buy).join('')}</details>`:''}</section>`:'';
+ return hero+up+catBlock+recList+buys;
+}
+async function spendEditor(item=null){
+ const cats=state.spend?.categories||SPEND_CATS,periods=state.spend?.periods||SPEND_PERIODS,currencies=state.spend?.currencies||['USD','EUR','RUB','BYN'];
+ let error='',draft=item?{...item}:{kind:'recurring',title:'',amount:'',currency:currencies.includes(state.displayCurrency)?state.displayCurrency:'USD',category:'subs',period:'month',day:projectToday(),note:'',active:true};
+ while(true){
+  const rec=draft.kind==='recurring';
+  const body=`${error?notice(error,true):''}<div class="sp-kind segmented" role="radiogroup" aria-label="Тип траты">${[['recurring','Регулярно'],['once','Покупка']].map(([id,l])=>`<label class="${draft.kind===id?'active':''}"><input type="radio" name="kind" value="${id}" ${draft.kind===id?'checked':''} data-spend-kind>${l}</label>`).join('')}</div>${field('Название','title','text',draft.title,'required maxlength="80" placeholder="Netflix, телефон, кроссовки…" autocomplete="off"')}<div class="field-row">${field('Сумма','amount','text',draft.amount===''?'':String(draft.amount).replace('.',','),'required inputmode="decimal" placeholder="0,00" autocomplete="off"')}<label class="field">Валюта<select name="currency">${currencies.map(c=>`<option ${c===draft.currency?'selected':''}>${c}</option>`).join('')}</select></label></div><div class="field-row"><label class="field sp-only-rec" ${rec?'':'hidden'}>Как часто<select name="period">${Object.entries(periods).map(([id,l])=>`<option value="${id}" ${id===(draft.period||'month')?'selected':''}>${esc(l)}</option>`).join('')}</select></label><label class="field"><span data-spend-day>${rec?'Ближайшее списание':'Дата покупки'}</span><input type="date" name="day" value="${esc(draft.day||projectToday())}" required></label></div><label class="field">Категория<select name="category">${Object.entries(cats).map(([id,l])=>`<option value="${id}" ${id===draft.category?'selected':''}>${esc(l)}</option>`).join('')}</select></label>${field('Заметка (необязательно)','note','text',draft.note||'','maxlength="300"')}${item&&rec?`<label class="check sp-only-rec"><input type="checkbox" name="active" ${draft.active?'checked':''}>Подписка активна — учитывать в тратах</label>`:''}${item?`<div class="guest-danger">${button('spend-delete','Удалить трату','danger small','',`data-id="${esc(item.id)}"`)}</div>`:''}`;
+  const values=await dialog(item?(rec?'Регулярная трата':'Покупка'):'Новая трата',body);if(!values)return;
+  const kind=values.kind==='once'?'once':'recurring';
+  draft={...draft,kind,title:values.title,amount:values.amount,currency:values.currency,category:values.category,period:values.period||'month',day:values.day,note:values.note||'',active:item&&kind==='recurring'?values.active==='on':true};
+  const payload={title:draft.title,amount:String(draft.amount).replace(/\s/g,'').replace(',','.'),currency:draft.currency,category:draft.category,kind,day:draft.day,note:draft.note,active:draft.active};if(kind==='recurring')payload.period=draft.period;
+  if(preview){toast('В демо-режиме траты не сохраняются');return;}
+  try{await api('/spend'+(item?'/'+item.id:''),{method:item?'PATCH':'POST',body:JSON.stringify(payload)});tg?.HapticFeedback?.notificationOccurred('success');toast('Сохранено');await sectionReload();return;}catch(exc){error=exc.message;}
+ }
+}
+// переключатель «Регулярно / Покупка» в окне траты: период нужен только регулярной
+document.addEventListener('change',event=>{const r=event.target.closest?.('[data-spend-kind]');if(!r)return;const d=$('#dialog'),rec=r.value==='recurring';d.querySelectorAll('.sp-only-rec').forEach(x=>x.hidden=!rec);const label=d.querySelector('[data-spend-day]');if(label)label.textContent=rec?'Ближайшее списание':'Дата покупки';d.querySelectorAll('.sp-kind label').forEach(l=>l.classList.toggle('active',l.contains(r)));});
+async function spendAction(action,el){
+ if(action==='spend-add')return spendEditor();
+ if(action==='spend-reload')return sectionReload();
+ if(action==='spend-edit')return spendEditor(state.spend?.items.find(i=>i.id===el.dataset.id));
+ if(action==='spend-delete'){if(!await closeDialogFirst())return;if(await confirm('Удалить трату?','Она исчезнет из сумм и ближайших списаний.','Удалить')){if(!preview)await api('/spend/'+el.dataset.id,{method:'DELETE'});await sectionReload();}return;}
+}
+function previewSpend(){
+ const t=projectToday(),mk=(id,title,amount,currency,category,kind,day,period=null,active=true)=>({id,title,amount,currency,category,category_label:SPEND_CATS[category],kind,period,period_label:period?SPEND_PERIODS[period]:undefined,day,active,note:'',next:kind==='recurring'&&active?day:null,monthly:period==='week'?amount*52/12:period==='year'?amount/12:amount});
+ const items=[mk('p1','Netflix',12.99,'EUR','subs','recurring',addDaysIso(t,1),'month'),mk('p2','Spotify',5.99,'USD','subs','recurring',addDaysIso(t,4),'month'),mk('p3','МТС',25,'BYN','connect','recurring',addDaysIso(t,9),'month'),mk('p4','Спортзал',30,'USD','health','recurring',addDaysIso(t,2),'week'),mk('p5','iCloud',119,'USD','subs','recurring',addDaysIso(t,140),'year'),mk('p6','YouTube Premium',4.99,'USD','subs','recurring',addDaysIso(t,20),'month',false),mk('p7','Кроссовки',89.5,'USD','shopping','once',t),mk('p8','Ужин в ресторане',64,'BYN','food','once',addDaysIso(t,-3)),mk('p9','Наушники',120,'USD','shopping','once',addDaysIso(t,-40))];
+ const up=items.filter(i=>i.next&&i.next<=addDaysIso(t,30)).map(i=>({id:i.id,title:i.title,amount:i.amount,currency:i.currency,category:i.category,date:i.next,in_days:Math.round((Date.parse(i.next)-Date.parse(t))/864e5)})).sort((a,b)=>a.date.localeCompare(b.date));
+ return {items,monthly:{EUR:12.99,USD:5.99+30*52/12+119/12,BYN:25},this_month:{EUR:12.99,USD:5.99+120+89.5,BYN:89},by_category:[{category:'shopping',label:'Покупки',totals:{USD:89.5}},{category:'health',label:'Здоровье',totals:{USD:120}},{category:'subs',label:'Подписки',totals:{EUR:12.99,USD:5.99}},{category:'food',label:'Еда',totals:{BYN:64}},{category:'connect',label:'Связь и интернет',totals:{BYN:25}}],upcoming:up,categories:SPEND_CATS,periods:SPEND_PERIODS,currencies:['USD','EUR','RUB','BYN'],month:t.slice(0,7)};
+}
 // Цвета карт: у известных банков — фирменные, у остальных — свой оттенок по названию
 const BANK_BRANDS=[[/альфа|alfa/i,'#ef3124','#8f1015'],[/приор/i,'#f6c500','#a77c00'],[/бнб|bnb/i,'#1fae6c','#0b5c3a'],[/беларусбанк|belarusbank/i,'#1c9a52','#0b4f2a'],[/белагро/i,'#0b8f4a','#044a26'],[/белинвест/i,'#00a3e0','#00557a'],[/белвэб|belveb/i,'#0a6fc2','#063b69'],[/мтб|mtb/i,'#e30613','#6d0309'],[/сбер|sber/i,'#21a038','#0c5a1e'],[/т-банк|т банк|тинькофф|tinkoff|t-bank/i,'#ffdd2d','#2f2f2f'],[/втб|vtb/i,'#1b4fd8','#0a2468'],[/revolut/i,'#2f3542','#0d0f14'],[/wise/i,'#9fe870','#1f4d12'],[/наличн|cash/i,'#6f7f69','#2b3329']];
 function hashHue(text){let h=0;for(const ch of String(text||''))h=(h*31+ch.codePointAt(0))%360;return h;}
@@ -1095,7 +1161,7 @@ function projectsView(){
  const alloc=whole>0?`<div class="fin-alloc" role="img" aria-label="Из чего состоят активы">${parts.map(([l,v,k],i)=>`<i class="fa-${k}" style="--w:${(v/whole*100).toFixed(1)}%;--d:${i*120}ms"></i>`).join('')}</div><div class="fin-legend">${parts.map(([l,v,k])=>`<span><i class="fa-${k}"></i>${l} <em>${Math.round(v/whole*100)}%</em></span>`).join('')}</div>`:'';
  const hero=`<div class="page-head sec-hero tone-fin fin-hero" data-ui-key="fin-hero"><div class="sec-glow" aria-hidden="true"><i></i><i></i><i></i></div><div class="fin-main"><span class="sec-eyebrow">Все активы</span><b class="fin-total">${portfolio.own==null?'—':countUp(portfolio.own,`money:${cur}`)}</b><p class="fin-sub"><b class="${daily<0?'negative':'positive'}">${known?`≈ ${money(daily,cur,true)}`:'—'}</b> в день · рабочий капитал <b>${portfolio.working==null?'—':money(portfolio.working,cur)}</b></p></div><a class="button secondary forecast-link" href="#forecast">${icon('chart')}<span>Прогноз</span></a></div>${alloc}`;
  const projects=state.projects.length?`<div class="project-grid">${projectCard({id:'tagmarket-system',name:'TagMarket',total:portfolio.tag,currency:cur,rate_percent:0,period:'month',multi:true,accounts:state.data.accounts,system:true})}${state.projects.map(projectCard).join('')}</div>`:`<div class="project-grid">${projectCard({id:'tagmarket-system',name:'TagMarket',total:portfolio.tag,currency:cur,rate_percent:0,period:'month',multi:true,accounts:state.data.accounts,system:true})}</div><section class="lists-empty fin-empty"><span class="empty-orb">${icon('projects')}</span><b>Добавьте первый проект</b><p>Вклад, инвестиции или любой доход с процентом — Platformer сам посчитает начисления каждый день.</p>${button('project-create','Добавить проект','primary','plus')}</section>`;
- return `<div class="project-space fin">${hero}${state.projectsError?notice('Не удалось обновить проекты. Показаны последние данные.',true):''}${walletSection()}<section class="fin-projects" data-ui-key="fin-projects"><div class="sec-row"><h2>Проекты</h2>${state.projects.length?`<button type="button" class="text-link head-primary-link" data-action="project-create">${icon('plus')} Проект</button>`:''}</div>${projects}</section>${projectsDynamics(portfolio)}</div>`;
+ return `<div class="project-space fin">${hero}${state.projectsError?notice('Не удалось обновить проекты. Показаны последние данные.',true):''}${walletSection()}<section class="fin-projects" data-ui-key="fin-projects"><div class="sec-row"><h2>Проекты</h2>${state.projects.length?`<button type="button" class="text-link head-primary-link" data-action="project-create">${icon('plus')} Проект</button>`:''}</div>${projects}</section>${spendSection()}${projectsDynamics(portfolio)}</div>`;
 }
 function projectView(){
  const p=state.projects?.find(p=>p.id===state.projectId),back='<a href="#projects" class="button secondary small back">← Проекты</a>';
@@ -1746,6 +1812,7 @@ document.addEventListener('click',async event=>{const el=event.target.closest('[
  else if(/^(activity|lists|cal|wish|note|event|task)-/.test(action))await sectionAction(action,el);
  else if(/^(home|sync)-/.test(action))await stationAction(action,el);
  else if(action.startsWith('bank-'))await bankAction(action,el);
+ else if(action.startsWith('spend-'))await spendAction(action,el);
  else if(action==='fab-toggle')fabToggle();
  else if(action==='refresh')await refresh();
  else if(action==='notifications')await openNotifications();

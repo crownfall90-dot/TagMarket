@@ -36,6 +36,7 @@ import coordination
 import fx
 import insights
 import lists
+import spend
 import partner
 import projects
 import store
@@ -301,6 +302,8 @@ async def bootstrap(request):
     project_currencies = {p[0] for p in db.execute("SELECT currency FROM projects WHERE owner_id=?", (str(uid),))}
     # валюты банковских счетов тоже нужны курсу: баланс в BYN или RUB показывается в валюте отображения
     project_currencies |= {a["currency"] for a in banks.accounts(db, uid)}
+    # и валюты трат: подписки часто в EUR
+    project_currencies |= {r[0] for r in db.execute("SELECT DISTINCT currency FROM spend_items WHERE owner_id=?", (str(uid),))}
     display_currency = partner.kv_get(db, f"display_currency:{uid}", "USD")
     unsupported = currencies - {"USD", "RUB", "BYN"}
     byn_per_unit = fx_info = None
@@ -1458,6 +1461,21 @@ async def activity_sync_key(request):
     return web.json_response({**activity.sync_status(db, uid), "url": sync_url(request)})
 
 
+async def spend_api(request):
+    """Траты: GET — список и сводка, POST — новая, PATCH/DELETE /{id}."""
+    uid, _ = authorize(request)
+    db = request.app["db"]
+    item_id, method = request.match_info.get("item_id"), request.method
+    if method == "GET":
+        return web.json_response(spend.overview(db, uid))
+    if method == "DELETE":
+        _section_call(lambda: spend.delete(db, uid, item_id))
+        return web.json_response({"ok": True})
+    data = await json_object(request)
+    return web.json_response(_section_call(lambda: spend.save(db, uid, data, item_id)),
+                             status=201 if method == "POST" else 200)
+
+
 async def banks_api(request):
     """Банки и счета: список, создание, правка, удаление, история и входящие сообщения."""
     uid, _ = authorize(request)
@@ -1613,9 +1631,11 @@ def insights_for(db, uid, display="USD", rates=None, tag=None):
                 if value is not None:
                     bank_total += value
                     bank_known = True
+        soon = [{**u, "converted": conv(u["amount"], u["currency"])} for u in spend.overview(db, uid, now)["upcoming"]
+                if u["in_days"] <= 3]
         return insights.analyze({
             "finance": {"currency": display, "projects": projects, "tag": tag_part,
-                        "banks": bank_total if bank_known else None},
+                        "banks": bank_total if bank_known else None, "charges": soon},
             "activity": {**summary, "sync": sync}, "tasks": lists.tasks(db, uid), "events": events,
             "wishlists": lists.wishlists(db, uid), "friends": len(logic.guests_of(db, uid))},
             now, hour=int(datetime.now(timezone(timedelta(hours=3))).strftime("%H")))
@@ -1696,6 +1716,7 @@ def setup(app):
     activity.setup(app["db"])
     banks.setup(app["db"])
     lists.setup(app["db"])
+    spend.setup(app["db"])
     # Legacy copies lack provenance. Matching only a login is unsafe: an
     # independently added account may use that number with another password.
     with locked(accounts.PATH):
@@ -1737,6 +1758,10 @@ def setup(app):
     app.router.add_get("/api/activity/sync/key", activity_sync_key)
     app.router.add_post("/api/activity/sync/key", activity_sync_key)
     app.router.add_delete("/api/activity/sync/key", activity_sync_key)
+    app.router.add_get("/api/spend", spend_api)
+    app.router.add_post("/api/spend", spend_api)
+    app.router.add_patch("/api/spend/{item_id}", spend_api)
+    app.router.add_delete("/api/spend/{item_id}", spend_api)
     app.router.add_post("/api/banks/sync", banks_sync)
     app.router.add_get("/api/banks", banks_api)
     app.router.add_post("/api/banks", banks_api)

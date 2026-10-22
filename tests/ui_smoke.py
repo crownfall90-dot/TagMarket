@@ -315,6 +315,32 @@ def banks_ui(page, nav):
     close_dialog(page)
 
 
+def spend_ui(page, nav):
+    """Траты: блок в Финансах после проектов, экран с ближайшими списаниями, подписками и покупками, окно траты."""
+    page.locator(f'{nav} a[href="#projects"]').click()
+    page.locator('.fin-spend .spend-sum').wait_for()
+    assert page.evaluate("!!(document.querySelector('.fin-projects').compareDocumentPosition(document.querySelector('.fin-spend')) & Node.DOCUMENT_POSITION_FOLLOWING)")
+    page.locator('.fin-spend .spend-sum').click()
+    page.locator('.spend-head').wait_for()
+    assert page.locator(f'{nav} a[href="#projects"].active').count() == 1      # траты — часть «Финансов»
+    assert page.locator('.sp-up').count() >= 3 and page.locator('.sp-up.soon').count() >= 1
+    assert page.locator('.spend-list[data-ui-key="spend-recurring"] .sp-row').count() == 6
+    assert page.locator('.sp-row.off').count() == 1                               # подписка на паузе
+    assert page.locator('.spend-cats .fin-alloc i').count() >= 3
+    assert 'без курса' not in page.locator('.spend-head').inner_text()
+    fits(page)
+    if page.viewport_size['width'] <= 740:
+        assert page.locator('#fab-root .fab[data-action="spend-add"]').is_visible()
+    page.locator('.spend-list .sp-row').first.click()
+    page.locator('#dialog input[name="title"]').wait_for()
+    assert page.locator('#dialog select[name="period"]').is_visible()
+    page.locator('#dialog .sp-kind label').nth(1).click()                          # «Покупка»: периода нет
+    page.wait_for_function("document.querySelector('#dialog select[name=period]').closest('label').hidden")
+    assert page.locator('#dialog [data-spend-day]').inner_text() == 'Дата покупки'
+    fits(page)
+    close_dialog(page)
+
+
 def station_sections(page, nav):
     """Главная Platformer, круг жизни, активности, планы (задачи, календарь, заметки, желания) и настройки."""
     page.locator(f'{nav} a[href="#overview"]').click()
@@ -442,7 +468,7 @@ def projects_ui(page, nav):
     if page.viewport_size['width'] <= 740:        # «+» на телефоне: меню «Счёт или карта» и «Проект»
         page.locator('#fab-root .fab').click()
         page.locator('#fab-root .fab-item').first.wait_for()
-        assert page.locator('#fab-root .fab-item').count() == 2
+        assert page.locator('#fab-root .fab-item').count() == 3      # счёт, трата, проект
         assert page.locator('#fab-root .fab-item[data-action="bank-add"]').count() == 1
         page.locator('#fab-root .fab').click()
         page.wait_for_function("!document.querySelector('#fab-root').classList.contains('open')")
@@ -1246,6 +1272,7 @@ def main():
                         page.screenshot(path=str(screenshots / "tagmarkets-mobile-velvet-smoke.png"), full_page=True)
                     station_sections(page, nav)
                     banks_ui(page, nav)
+                    spend_ui(page, nav)
                     projects_ui(page, nav)
                     compact_ui_and_quiet_refresh(page, url)
                     modal_scroll_and_deferred_refresh(page, url)

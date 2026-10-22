@@ -83,6 +83,10 @@ def analyze(data, today, hour=12):
             out.append((50, "finance", "info", f"«{p['name']}» на паузе — в доход и баланс не входит", "#projects"))
         for p in waiting[:2]:
             out.append((55, "finance", "info", f"Начисления по «{p['name']}» начнутся {_date(p['income_starts'])}", "#projects"))
+        for c in fin.get("charges") or []:
+            when = "сегодня" if c["in_days"] == 0 else "завтра" if c["in_days"] == 1 else f"через {c['in_days']} {plural(c['in_days'], 'день', 'дня', 'дней')}"
+            amount = money(c["converted"], cur, True) if c.get("converted") is not None else money(c["amount"], c["currency"], True)
+            out.append((10 + c["in_days"], "finance", "info", f"{when.capitalize()} спишется «{c['title']}» — {amount}", "#spend"))
         if bank is not None:
             # банки и счета — главное в финансах: этот вывод идёт раньше проектов
             out.append((28, "finance", "info" if bank >= 0 else "warn", f"На банковских счетах: {money(bank, cur)}", "#banks"))
