@@ -315,6 +315,32 @@ def banks_ui(page, nav):
     close_dialog(page)
 
 
+def spend_ui(page, nav):
+    """Траты: блок в Финансах после проектов, экран с ближайшими списаниями, подписками и покупками, окно траты."""
+    page.locator(f'{nav} a[href="#projects"]').click()
+    page.locator('.fin-spend .spend-sum').wait_for()
+    assert page.evaluate("!!(document.querySelector('.fin-projects').compareDocumentPosition(document.querySelector('.fin-spend')) & Node.DOCUMENT_POSITION_FOLLOWING)")
+    page.locator('.fin-spend .spend-sum').click()
+    page.locator('.spend-head').wait_for()
+    assert page.locator(f'{nav} a[href="#projects"].active').count() == 1      # траты — часть «Финансов»
+    assert page.locator('.sp-up').count() >= 3 and page.locator('.sp-up.soon').count() >= 1
+    assert page.locator('.spend-list[data-ui-key="spend-recurring"] .sp-row').count() == 6
+    assert page.locator('.sp-row.off').count() == 1                               # подписка на паузе
+    assert page.locator('.spend-cats .fin-alloc i').count() >= 3
+    assert 'без курса' not in page.locator('.spend-head').inner_text()
+    fits(page)
+    if page.viewport_size['width'] <= 740:
+        assert page.locator('#fab-root .fab[data-action="spend-add"]').is_visible()
+    page.locator('.spend-list .sp-row').first.click()
+    page.locator('#dialog input[name="title"]').wait_for()
+    assert page.locator('#dialog select[name="period"]').is_visible()
+    page.locator('#dialog .sp-kind label').nth(1).click()                          # «Покупка»: периода нет
+    page.wait_for_function("document.querySelector('#dialog select[name=period]').closest('label').hidden")
+    assert page.locator('#dialog [data-spend-day]').inner_text() == 'Дата покупки'
+    fits(page)
+    close_dialog(page)
+
+
 def station_sections(page, nav):
     """Главная Platformer, круг жизни, активности, планы (задачи, календарь, заметки, желания) и настройки."""
     page.locator(f'{nav} a[href="#overview"]').click()
@@ -346,8 +372,12 @@ def station_sections(page, nav):
     page.locator(f'{nav} a[href="#activity"]').click()
     page.locator('.act-grid').wait_for()
     glider_on_active(page, nav)
-    assert page.locator('.act-card').count() == 2          # только вес и тренировки — то, что пишут сами
-    assert page.locator('[data-ui-key="act-chart-steps"]').count() == 0 and page.locator('.sync-banner').count() == 0
+    # шаги приходят только с телефона (в предпросмотре — пришли): живая карточка без «+» и без ручного ввода
+    assert page.locator('.act-card').count() == 3 and page.locator('.steps-card').count() == 1
+    assert page.locator('.steps-card [data-action]').count() == 0 and page.locator('.steps-card .live-tag').count() == 1
+    assert page.locator('[data-ui-key="act-chart-steps"]').count() == 1 and page.locator('.sync-banner').count() == 0
+    assert page.locator('.steps-off').count() == 0
+    assert 'инструкц' not in page.locator('#main').inner_text().lower()
     bars = '[data-ui-key="act-chart-workout"] .act-bars .bar'
     assert page.locator(bars).count() == 30
     assert page.locator('.act-entry').count() > 0
@@ -356,6 +386,7 @@ def station_sections(page, nav):
     page.locator('.act-card[data-kind="workout"]').click()
     page.locator('#dialog[open]').wait_for()
     assert page.locator('#dialog .act-fields-workout').is_visible()
+    assert page.locator('#dialog select[name="kind"] option[value="steps"]').count() == 0   # шаги вручную не вводят
     page.locator('#dialog select[name="kind"]').select_option('weight')
     assert page.locator('#dialog .act-fields-daily').is_visible() and page.locator('#dialog .act-fields-workout').is_hidden()
     fits(page)
@@ -363,7 +394,12 @@ def station_sections(page, nav):
     page.locator('.act-entry-main').first.click()           # запись можно исправить
     page.locator('#dialog input[name="day"]').wait_for()
     close_dialog(page)
-    assert page.locator('[data-action="activity-sync"]').count() == 0, "синхронизации здоровья больше нет"
+    assert page.locator('#main [data-action="activity-sync"]').count() == 0, "в «Активностях» никаких инструкций по подключению"
+    # нет шагов с телефона — одна строка, что на устройстве не обновляются
+    page.evaluate("state.activity.summary.steps={today:null,series:[]};state.activity.sync={connected:false};render()")
+    page.locator('.steps-off').wait_for()
+    assert page.locator('.steps-card').count() == 0 and 'не обновляются' in page.locator('.steps-off').inner_text()
+    page.evaluate("state.activity=null;render()")
     page.locator(f'{nav} a[href="#plans"]').click()
     page.locator('.task-quick').wait_for()
     # «Планы» — мобильное приложение: «+» внизу экрана на телефоне, кнопка в шапке — на широком экране
@@ -416,7 +452,7 @@ def station_sections(page, nav):
     # настройки Platformer — в общих «Настройках»
     page.locator('#settings-link').click()
     page.locator('.station-settings').wait_for()
-    assert page.locator('.station-row').count() == 4
+    assert page.locator('.station-row').count() == 5      # + «Шаги с телефона» — только ссылка
     fits(page)
 
 
@@ -432,7 +468,7 @@ def projects_ui(page, nav):
     if page.viewport_size['width'] <= 740:        # «+» на телефоне: меню «Счёт или карта» и «Проект»
         page.locator('#fab-root .fab').click()
         page.locator('#fab-root .fab-item').first.wait_for()
-        assert page.locator('#fab-root .fab-item').count() == 2
+        assert page.locator('#fab-root .fab-item').count() == 3      # счёт, трата, проект
         assert page.locator('#fab-root .fab-item[data-action="bank-add"]').count() == 1
         page.locator('#fab-root .fab').click()
         page.wait_for_function("!document.querySelector('#fab-root').classList.contains('open')")
@@ -1236,6 +1272,7 @@ def main():
                         page.screenshot(path=str(screenshots / "tagmarkets-mobile-velvet-smoke.png"), full_page=True)
                     station_sections(page, nav)
                     banks_ui(page, nav)
+                    spend_ui(page, nav)
                     projects_ui(page, nav)
                     compact_ui_and_quiet_refresh(page, url)
                     modal_scroll_and_deferred_refresh(page, url)

@@ -2085,3 +2085,85 @@ li.done>.wish-check{background:var(--accent);border-color:var(--accent)}
 .settings-row.station-row b,.settings-row.station-row p{display:block;font-size:14px;font-weight:550;color:var(--text);margin:0}
 .settings-row.station-row small{display:block;margin-top:3px;font-size:12px;color:var(--muted)}
 .settings-row.station-row>svg{width:16px;height:16px;color:var(--muted)}
+
+/* ═══ Шаги с телефона: живая карточка или одна строка, что на устройстве не обновляются ═══ */
+.live-tag{display:inline-flex;align-items:center;gap:5px;margin-left:auto;font-style:normal;font-size:10px;color:var(--muted)}
+.live-tag i{width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px rgb(var(--accent-rgb) / .7);animation:late-ping 2.4s ease-out infinite}
+.home-steps .live-tag{margin-left:0}
+.steps-card .act-card-head{display:flex;align-items:center;gap:8px}
+.steps-card{background:linear-gradient(160deg,rgb(var(--accent-rgb) / .14),color-mix(in srgb,var(--panel) 92%,transparent) 65%)}
+.home-steps{display:flex;align-items:center;gap:14px}
+.home-steps>div{display:grid;gap:2px}
+.steps-off{display:flex;align-items:center;gap:10px;margin:2px 4px 18px;font-size:13px;color:var(--muted)}
+.steps-off svg{width:16px;height:16px;flex-shrink:0;opacity:.7}
+@media(prefers-reduced-motion:reduce){.live-tag i{animation:none}}
+.steps-card .act-ring{position:absolute;right:16px;top:50%;transform:translateY(-35%)}
+.steps-card{position:relative}
+.home-steps .ring{flex:none}
+.home-activity-body>.home-steps{display:flex;align-items:center;gap:14px}
+
+/* ═══ Траты: подписки, регулярные платежи и покупки ═══ */
+.tone-spend{--g1:#f29ac0;--g2:#f0b46b;--g3:var(--purple)}
+.spend-head .spend-total{display:block;font-size:clamp(32px,10vw,48px);line-height:1.04;font-weight:500;letter-spacing:-.055em}
+.spend-head p{margin-top:8px;font-size:13px;color:var(--muted)}
+.sp-logo{display:grid;place-items:center;width:42px;height:42px;flex-shrink:0;border-radius:14px;font-size:17px;font-weight:700;color:#fff;
+ background:linear-gradient(140deg,var(--c1),var(--c2));box-shadow:0 8px 18px -10px var(--c1),inset 0 1px 0 rgb(255 255 255 / .2)}
+.sp-logo.small{width:30px;height:30px;border-radius:10px;font-size:13px}
+/* блок в Финансах */
+.fin-spend{margin:0 0 30px}
+.spend-sum{position:relative;display:grid;gap:14px;padding:18px;border-radius:22px;overflow:hidden;isolation:isolate;color:var(--text);
+ background:linear-gradient(150deg,color-mix(in srgb,#f29ac0 22%,var(--panel)),color-mix(in srgb,#f0b46b 10%,var(--panel)) 60%,var(--panel));border:1px solid color-mix(in srgb,#f29ac0 25%,transparent)}
+.spend-sum .sp-glow{position:absolute;right:-30%;top:-60%;width:80%;aspect-ratio:1;border-radius:50%;z-index:-1;background:radial-gradient(circle,rgb(242 154 192 / .35),transparent 65%);animation:aurora-drift 16s ease-in-out infinite alternate}
+.spend-sum .ss-main{display:grid;gap:4px}
+.spend-sum .ss-main small{font-size:12px;color:var(--muted)}
+.spend-sum .ss-main b{font-size:28px;font-weight:550;letter-spacing:-.045em;line-height:1.1}
+.spend-sum .ss-main em{font-style:normal;font-size:12px;color:var(--muted)}
+.spend-sum .ss-logos{display:flex}
+.spend-sum .ss-logos .sp-logo{margin-right:-8px;box-shadow:0 0 0 2px var(--panel)}
+.spend-sum .ss-logos i{display:grid;place-items:center;width:30px;height:30px;margin-left:12px;border-radius:10px;font-style:normal;font-size:11px;background:color-mix(in srgb,var(--text) 10%,transparent)}
+.spend-sum .ss-next{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:16px;background:color-mix(in srgb,var(--bg) 55%,transparent)}
+.spend-sum .ss-next>span:not(.sp-logo){flex:1;min-width:0;display:grid}
+.spend-sum .ss-next span b{font-size:14px;font-weight:550;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.spend-sum .ss-next span small{font-size:11px;color:#f0b46b}
+.spend-sum .ss-next>b{font-size:14px;font-weight:600}
+.spend-sum.empty{grid-template-columns:auto minmax(0,1fr) auto;align-items:center}
+.spend-sum.empty .sp-orb{display:grid;place-items:center;width:44px;height:44px;border-radius:15px;background:rgb(242 154 192 / .16);color:#f29ac0}
+.spend-sum.empty b{display:block;font-size:15px}
+.spend-sum.empty small{display:block;margin-top:3px;font-size:12px;color:var(--muted)}
+.spend-sum.empty>svg{width:16px;height:16px;color:var(--muted)}
+/* ближайшие списания — лента */
+.spend-upcoming,.spend-cats,.spend-list{margin:0 0 26px}
+.sp-timeline{display:grid;gap:8px}
+.sp-up{display:flex;align-items:center;gap:12px;width:100%;padding:10px 12px 10px 8px;border:0;border-radius:18px;text-align:left;color:var(--text);
+ background:color-mix(in srgb,var(--panel) 72%,transparent);animation:row-in .45s var(--ease-out,cubic-bezier(.16,1,.3,1)) both;animation-delay:calc(var(--i,0) * 50ms)}
+.sp-up.soon{background:linear-gradient(100deg,rgb(240 180 107 / .16),color-mix(in srgb,var(--panel) 72%,transparent) 70%)}
+.sp-when{display:grid;justify-items:center;width:42px;flex-shrink:0;line-height:1.05}
+.sp-when b{font-size:20px;font-weight:600;letter-spacing:-.03em}
+.sp-when small{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.sp-up.soon .sp-when b{color:#f0b46b}
+.sp-body{flex:1;min-width:0;display:grid;gap:2px}
+.sp-body b{font-size:15px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sp-body small{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sp-amount{font-size:15px;font-weight:600;letter-spacing:-.02em;flex-shrink:0}
+/* списки подписок и покупок — открытые строки */
+.sp-row{display:flex;align-items:center;gap:12px;width:100%;padding:12px 2px;border:0;border-bottom:1px solid color-mix(in srgb,var(--text) 6%,transparent);background:none;color:var(--text);text-align:left}
+.sp-row:last-of-type{border-bottom:0}
+.sp-row.off{opacity:.5}
+.sp-row.off .sp-logo{filter:grayscale(1)}
+.sp-right{display:grid;justify-items:end;gap:2px;flex-shrink:0}
+.sp-right b{font-size:15px;font-weight:600;letter-spacing:-.02em}
+.sp-right small{font-size:11px;color:var(--muted)}
+.sp-older summary{padding:12px 2px;color:var(--muted);font-size:13px;cursor:pointer}
+.sp-none{padding:8px 2px 4px;font-size:13px}
+/* цвета категорий */
+.cat-subs{background:linear-gradient(90deg,#f29ac0,#e86aa0)}.cat-connect{background:linear-gradient(90deg,#7ab8f5,#4d8fd6)}
+.cat-home{background:linear-gradient(90deg,#f0b46b,#d98c32)}.cat-transport{background:linear-gradient(90deg,#9aa6b2,#6b7682)}
+.cat-food{background:linear-gradient(90deg,#ffb38a,#f07c4a)}.cat-shopping{background:linear-gradient(90deg,var(--purple),#8a6fd6)}
+.cat-health{background:linear-gradient(90deg,#2bd4b0,#17a386)}.cat-fun{background:linear-gradient(90deg,#ffd166,#e0a92e)}
+.cat-learn{background:linear-gradient(90deg,var(--accent),color-mix(in srgb,var(--accent) 60%,#2bd4b0))}.cat-other{background:color-mix(in srgb,var(--text) 35%,transparent)}
+/* окно траты: переключатель «Регулярно / Покупка» */
+.sp-kind{display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:4px;margin:4px 0 6px;border-radius:14px}
+.sp-kind label{position:relative;display:grid;place-items:center;min-height:42px;border-radius:11px;font-size:14px;color:var(--muted);cursor:pointer;transition:background .2s,color .2s}
+.sp-kind label.active{background:var(--raised);color:var(--text);box-shadow:0 1px 0 rgb(255 255 255 / .06) inset}
+.sp-kind input{position:absolute;opacity:0;pointer-events:none}
+@media(prefers-reduced-motion:reduce){.sp-up,.spend-sum .sp-glow{animation:none}}

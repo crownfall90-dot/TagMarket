@@ -52,6 +52,16 @@ def setup(db):
             target REAL NOT NULL,
             PRIMARY KEY (owner_id, kind)
         );
+        CREATE TABLE IF NOT EXISTS activity_hc_steps (
+            owner_id TEXT NOT NULL,
+            origin TEXT NOT NULL,
+            start_time TEXT NOT NULL,
+            rid TEXT NOT NULL DEFAULT '',
+            day TEXT NOT NULL,
+            count INTEGER NOT NULL,
+            PRIMARY KEY (owner_id, origin, start_time)
+        );
+        CREATE INDEX IF NOT EXISTS activity_hc_steps_day ON activity_hc_steps(owner_id, day);
         CREATE TABLE IF NOT EXISTS activity_sync (
             owner_id TEXT PRIMARY KEY,
             token_hash TEXT NOT NULL UNIQUE,
@@ -307,6 +317,71 @@ def _sync_day(value):
     return _day(str(value)[:10])
 
 
+# ── HC Webhook (Android, Health Connect) ───────────────────────────────
+# Приложение раз в 15+ минут присылает не итог дня, а отрезки шагов, появившиеся
+# с прошлой отправки (или правки старых): {"steps": [{"count", "start_time",
+# "end_time", "metadata": {"id", "data_origin"}}], "deleted": [{"type", "id"}]}.
+# Поэтому отрезки храним и складываем по дням сами. Ключ отрезка — источник и
+# начало: так повтор (правка) или пересобранный итог дня заменяют прежний.
+# Шаги одного дня от двух источников (счётчик телефона и Google Fit) — это одни
+# и те же шаги, поэтому за день берём больший из итогов источников, а не сумму.
+HC_ZONE = timezone(timedelta(hours=3))
+
+
+def _hc_day(value):
+    """День отрезка: со смещением телефона — по нему, время в UTC — по UTC+3."""
+    if not isinstance(value, str):
+        return None
+    try:
+        moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if moment.tzinfo is None or moment.utcoffset() == timedelta(0):
+        moment = moment.replace(tzinfo=moment.tzinfo or timezone.utc).astimezone(HC_ZONE)
+    return moment.date().isoformat()
+
+
+def is_health_connect(payload):
+    return isinstance(payload, dict) and (isinstance(payload.get("steps"), list)
+                                          or ("app_version" in payload and "timestamp" in payload))
+
+
+def ingest_health_connect(db, owner, payload):
+    touched, skipped = set(), []
+    owner = str(owner)
+    with db:
+        for gone in payload.get("deleted") or []:
+            if isinstance(gone, dict) and gone.get("type") == "steps" and isinstance(gone.get("id"), str) and gone["id"]:
+                for (day,) in db.execute("SELECT day FROM activity_hc_steps WHERE owner_id=? AND rid=?", (owner, gone["id"])).fetchall():
+                    touched.add(day)
+                db.execute("DELETE FROM activity_hc_steps WHERE owner_id=? AND rid=?", (owner, gone["id"]))
+        for item in payload.get("steps") or []:
+            if not isinstance(item, dict):
+                continue
+            meta = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+            count, start = loose_number(item.get("count")), item.get("start_time")
+            day = _hc_day(start)
+            if count is None or not 0 <= count <= 200_000 or day is None:
+                skipped.append("steps")
+                continue
+            origin = str(meta.get("data_origin") or "")[:120]
+            db.execute("INSERT INTO activity_hc_steps (owner_id,origin,start_time,rid,day,count) VALUES (?,?,?,?,?,?) "
+                       "ON CONFLICT(owner_id,origin,start_time) DO UPDATE SET rid=excluded.rid, day=excluded.day, count=excluded.count",
+                       (owner, origin, start, str(meta.get("id") or "")[:200], day, round(count)))
+            touched.add(day)
+    saved = {}
+    for day in sorted(touched):
+        rows = db.execute("SELECT origin, SUM(count) FROM activity_hc_steps WHERE owner_id=? AND day=? GROUP BY origin",
+                          (owner, day)).fetchall()
+        total = max((r[1] for r in rows), default=0)
+        try:
+            add(db, owner, {"kind": "steps", "day": day, "value": float(min(total, 200_000))}, source="auto")
+            saved.setdefault(day, {})["steps"] = total
+        except ValueError:          # день из будущего или старше 2000 года — не наш
+            skipped.append(f"{day}:steps")
+    return saved, skipped
+
+
 def ingest(db, owner, payload):
     """Сохраняет присланные показатели за день (или за несколько дней в "days").
 
@@ -316,6 +391,9 @@ def ingest(db, owner, payload):
     """
     if not isinstance(payload, dict):
         raise ValueError("Ожидается JSON-объект")
+    if is_health_connect(payload):
+        saved, skipped = ingest_health_connect(db, owner, payload)
+        return _synced(db, owner, saved, skipped)
     days = payload.get("days")
     batches = days if isinstance(days, list) else [payload]
     if not batches or len(batches) > MAX_SYNC_DAYS:
@@ -358,6 +436,10 @@ def ingest(db, owner, payload):
                 source="auto")
             saved.setdefault(day, {}).setdefault("workouts", 0)
             saved[day]["workouts"] += 1
+    return _synced(db, owner, saved, skipped)
+
+
+def _synced(db, owner, saved, skipped):
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     with db:
         db.execute("UPDATE activity_sync SET last_sync=?, last_saved=? WHERE owner_id=?",

@@ -35,6 +35,7 @@ import miniapp
 import activity
 import banks
 import insights
+import spend
 import lists
 import projects
 import partner
@@ -1568,6 +1569,61 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         data = await (await self.call("GET", "/api/activity?days=7")).json()
         self.assertEqual([e["value"] for e in data["entries"] if e["kind"] == "steps"], [7000])
 
+    async def test_health_connect_webhook_steps_add_up_per_day(self):
+        """HC Webhook шлёт не итог дня, а новые отрезки шагов с прошлой отправки: их надо
+        хранить и складывать. Повтор отрезка (правка) заменяет его, удалённый — вычитается,
+        два источника за один день не задваивают шаги."""
+        created = await (await self.call("POST", "/api/activity/sync/key")).json()
+        url = f"/api/activity/sync?key={created['key']}"
+        today = activity.today()
+        at = lambda h, m=0, d=today: f"{d.isoformat()}T{h:02d}:{m:02d}:00+03:00"
+
+        def payload(*steps, deleted=None):
+            body = {"timestamp": at(12), "app_version": "2.4.0", "timezone": "Europe/Minsk"}
+            if steps:
+                body["steps"] = list(steps)
+            if deleted:
+                body["deleted"] = deleted
+            return body
+
+        def rec(rid, start, end, count, origin="com.google.android.apps.healthdata"):
+            return {"count": count, "start_time": start, "end_time": end,
+                    "metadata": {"id": rid, "data_origin": origin, "recording_method": "automatically_recorded"}}
+
+        async def steps_today():
+            data = await (await self.call("GET", "/api/activity?days=7")).json()
+            return data["summary"]["steps"]["today"]
+
+        first = await self.client.post(url, json=payload(rec("a", at(8), at(9), 1200), rec("b", at(9), at(10), 800)))
+        self.assertEqual(first.status, 200, await first.text())
+        self.assertEqual((await first.json())["saved"][today.isoformat()]["steps"], 2000)
+        self.assertEqual(await steps_today(), 2000)
+        # следующая отправка — только новые отрезки: итог дня растёт, а не заменяется ими
+        await self.client.post(url, json=payload(rec("c", at(10), at(11), 500)))
+        self.assertEqual(await steps_today(), 2500)
+        # тот же отрезок пришёл повторно с правкой — заменяет, а не прибавляется
+        await self.client.post(url, json=payload(rec("b", at(9), at(10), 900)))
+        self.assertEqual(await steps_today(), 2600)
+        # удалённая в Health Connect запись вычитается
+        await self.client.post(url, json=payload(deleted=[{"type": "steps", "id": "a"}]))
+        self.assertEqual(await steps_today(), 1400)
+        # второй источник (например, Google Fit) пишет те же шаги — берём больший итог, не сумму
+        await self.client.post(url, json=payload(rec("g1", at(8), at(11), 1500, origin="com.google.android.apps.fitness")))
+        self.assertEqual(await steps_today(), 1500)
+        # время в UTC («Z») раскладывается по дню пользователя, вчерашние шаги — во вчера
+        yesterday = today - timedelta(days=1)
+        await self.client.post(url, json=payload(rec("y", f"{yesterday.isoformat()}T10:00:00Z", f"{yesterday.isoformat()}T11:00:00Z", 4321)))
+        data = await (await self.call("GET", "/api/activity?days=7")).json()
+        self.assertIn({"day": yesterday.isoformat(), "value": 4321}, data["summary"]["steps"]["series"])
+        self.assertEqual([e["source"] for e in data["entries"] if e["kind"] == "steps"], ["auto", "auto"])
+        # чужой ключ не пишет в мои шаги, мусор не роняет приём
+        self.assertEqual((await self.client.post("/api/activity/sync?key=" + "x" * 32, json=payload(rec("z", at(8), at(9), 1)))).status, 401)
+        bad = await self.client.post(url, json=payload({"count": "много", "start_time": "вчера"}, rec("ok", at(11), at(12), 100)))
+        self.assertEqual(bad.status, 200, await bad.text())
+        self.assertEqual(await steps_today(), 1500)       # «ok» — от первого источника, его итог 1500 → max не меняется
+        status = await (await self.call("GET", "/api/activity/sync/key")).json()
+        self.assertIsNotNone(status["last_sync"])
+
     async def test_phone_sync_saves_health_data_without_telegram(self):
         # без ключа — отказ; ключ выдаётся только своему владельцу через Mini App
         self.assertEqual((await self.client.post("/api/activity/sync", json={"steps": 1})).status, 401)
@@ -1730,7 +1786,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await (await self.call("GET", "/api/preferences/station", uid=2)).json())["home"],
                          ["circle", "finance", "activity", "tasks", "events", "wish"])
         for bad in ({"home": ["casino"]}, {"home": ["finance", "finance"]}, {"theme": []}, {"quick": "steps"},
-                    {"metrics": ["steps"]}, {"quick": ["sleep"]}):    # шаги и сон с главной убраны
+                    {"metrics": ["sleep"]}, {"quick": ["sleep"]}):    # сон и пульс убраны; шаги — только с телефона
             self.assertEqual((await self.call("PUT", "/api/preferences/station", json=bad)).status, 400, bad)
 
     async def test_notes_import_from_phone_skips_duplicates(self):
@@ -1747,6 +1803,68 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len((await (await self.call("GET", "/api/lists", uid=2)).json())["notes"]), 0)
         for bad in ({"notes": []}, {"notes": "текст"}, {"notes": ["строка"]}, {"notes": [{"title": "a"}] * 501}):
             self.assertEqual((await self.call("POST", "/api/notes/import", json=bad)).status, 400, str(bad)[:40])
+
+    async def test_spend_subscriptions_and_purchases(self):
+        """Траты: регулярные (подписки) сами считают следующее списание и сумму в месяц,
+        разовые покупки идут в «этот месяц»; ближайшие списания попадают в круг жизни."""
+        today = spend.today()
+        tomorrow = today + timedelta(days=1)
+        netflix = await (await self.call("POST", "/api/spend", json={
+            "title": "Netflix", "amount": "12,99", "currency": "EUR", "category": "subs",
+            "kind": "recurring", "period": "month", "day": (tomorrow - timedelta(days=62)).isoformat()})).json()
+        self.assertEqual(netflix["amount"], 12.99)
+        self.assertGreaterEqual(netflix["next"], today.isoformat())       # якорь в прошлом — дата сдвинулась вперёд
+        await self.call("POST", "/api/spend", json={"title": "Спортзал", "amount": 30, "currency": "USD",
+                                                    "category": "health", "kind": "recurring", "period": "week",
+                                                    "day": today.isoformat()})
+        await self.call("POST", "/api/spend", json={"title": "Год облака", "amount": 120, "currency": "USD",
+                                                    "category": "subs", "kind": "recurring", "period": "year",
+                                                    "day": (today + timedelta(days=200)).isoformat()})
+        await self.call("POST", "/api/spend", json={"title": "Кроссовки", "amount": 89.5, "currency": "USD",
+                                                    "category": "shopping", "kind": "once", "day": today.isoformat()})
+        data = await (await self.call("GET", "/api/spend")).json()
+        self.assertEqual(len(data["items"]), 4)
+        self.assertAlmostEqual(data["monthly"]["USD"], round(30 * 52 / 12 + 120 / 12, 2), places=2)
+        self.assertAlmostEqual(data["monthly"]["EUR"], 12.99, places=2)
+        self.assertIn("USD", data["this_month"])
+        self.assertTrue(any(c["category"] == "shopping" for c in data["by_category"]))
+        titles = [u["title"] for u in data["upcoming"]]
+        self.assertIn("Спортзал", titles)                                  # сегодня — в ближайших
+        self.assertNotIn("Кроссовки", titles)                              # разовая покупка не «спишется»
+        # пауза подписки убирает её из «в месяц» и из ближайших, правка — частичная
+        gym = next(i for i in data["items"] if i["title"] == "Спортзал")
+        paused = await (await self.call("PATCH", f"/api/spend/{gym['id']}", json={"active": False})).json()
+        self.assertFalse(paused["active"])
+        self.assertIsNone(paused["next"])
+        data = await (await self.call("GET", "/api/spend")).json()
+        self.assertNotIn("Спортзал", [u["title"] for u in data["upcoming"]])
+        self.assertAlmostEqual(data["monthly"]["USD"], 10.0, places=2)
+        # ближайшее списание — в круге жизни, со ссылкой на траты
+        circle = (await (await self.call("GET", "/api/bootstrap")).json())["insights"]
+        self.assertTrue(any("спишется «Netflix»" in i["text"] and i["href"] == "#spend" for i in circle["insights"]), circle["insights"])
+        # проверка ввода и чужие траты
+        for bad in ({"title": "", "amount": 1, "currency": "USD", "kind": "once"},
+                    {"title": "x", "amount": 0, "currency": "USD", "kind": "once"},
+                    {"title": "x", "amount": "nan", "currency": "USD", "kind": "once"},
+                    {"title": "x", "amount": 1, "currency": "JPY", "kind": "once"},
+                    {"title": "x", "amount": 1, "currency": "USD", "kind": "recurring", "period": "day"},
+                    {"title": "x", "amount": 1, "currency": "USD", "kind": "once", "category": "casino"},
+                    {"title": "x", "amount": 1, "currency": "USD", "kind": "once", "day": "22.10.2026"}):
+            self.assertEqual((await self.call("POST", "/api/spend", json=bad)).status, 400, bad)
+        self.assertEqual((await self.call("PATCH", f"/api/spend/{netflix['id']}", json={"title": "Чужое"}, uid=2)).status, 404)
+        self.assertEqual(len((await (await self.call("GET", "/api/spend", uid=2)).json())["items"]), 0)
+        self.assertEqual((await self.call("DELETE", f"/api/spend/{netflix['id']}")).status, 200)
+        self.assertEqual(len((await (await self.call("GET", "/api/spend")).json())["items"]), 3)
+
+    def test_spend_month_end_and_leap_year_dates(self):
+        d = date
+        self.assertEqual(spend.next_charge(d(2026, 1, 31), "month", d(2026, 2, 10)), d(2026, 2, 28))
+        self.assertEqual(spend.next_charge(d(2026, 1, 31), "month", d(2026, 3, 1)), d(2026, 3, 31))
+        self.assertEqual(spend.next_charge(d(2024, 2, 29), "year", d(2026, 10, 22)), d(2027, 2, 28))
+        self.assertEqual(spend.next_charge(d(2026, 10, 1), "week", d(2026, 10, 22)), d(2026, 10, 22))
+        self.assertEqual(spend.next_charge(d(2026, 10, 1), "week", d(2026, 10, 23)), d(2026, 10, 29))
+        self.assertEqual(spend.charges(d(2026, 1, 31), "month", d(2026, 2, 1), d(2026, 4, 30)),
+                         [d(2026, 2, 28), d(2026, 3, 31), d(2026, 4, 30)])
 
     async def test_wishlists_notes_and_calendar(self):
         created = await (await self.call("POST", "/api/wishlists", json={"title": "Фото", "emoji": "📷"})).json()
@@ -3277,7 +3395,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                     with self.subTest(module=module):
                         self.assertIn(f"{module}.py", shipped)
                         self.assertIn(f"{module}.py", rollbackable)
-        for module in ("activity", "lists", "banks", "insights", "projects"):
+        for module in ("activity", "lists", "banks", "insights", "projects", "spend"):
             self.assertIn(f"{module}.py", shipped)
 
     async def test_guest_cannot_toggle_shared_account_polling(self):
