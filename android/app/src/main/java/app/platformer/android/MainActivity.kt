@@ -38,6 +38,7 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     private lateinit var store: TokenStore
     private lateinit var web: WebView
+    private var updater: Updater? = null
     private var fileCallback: ValueCallback<Array<Uri>>? = null
     private var loaded = false
 
@@ -111,6 +112,7 @@ class MainActivity : ComponentActivity() {
         }
         root.addView(web, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
         setContentView(root)
+        updater = Updater(this, root)
         // контент — между системными панелями и вырезом камеры; фон под ними — цвет темы страницы
         ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
             val bars = insets.getInsets(
@@ -146,6 +148,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        updater?.onResume()                 // новая версия приложения — проверяем при каждом входе
         if (::web.isInitialized) lifecycleScope.launch { if (Steps.granted(this@MainActivity)) Steps.schedule(this@MainActivity) }
     }
 

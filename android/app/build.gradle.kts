@@ -17,6 +17,12 @@ fun setting(key: String, env: String, default: String) =
 
 val platformerUrl = setting("platformer.url", "PLATFORMER_URL", "https://crownfail.shop/tagmarkets/app/")
 val platformerBot = setting("platformer.bot", "PLATFORMER_BOT", "tagmarketgold_bot")
+// Откуда сборка «direct» (APK не из Google Play) узнаёт о новой версии: latest.json из
+// релиза android-latest на GitHub — его после каждого слияния в main обновляет CI
+val platformerUpdates = setting(
+    "platformer.updates", "PLATFORMER_UPDATES",
+    "https://github.com/crownfall90-dot/TagMarket/releases/download/android-latest/latest.json"
+)
 
 // Подпись для Google Play: ключ загрузки из переменных окружения CI (никогда не в репозитории)
 val keystoreFile = System.getenv("PLATFORMER_KEYSTORE")?.let { file(it) }?.takeIf { it.exists() }
@@ -29,8 +35,9 @@ android {
         applicationId = "app.platformer.android"
         minSdk = 26                 // Health Connect работает с Android 8
         targetSdk = 36              // требование Google Play к новым приложениям
-        versionCode = (System.getenv("PLATFORMER_VERSION_CODE") ?: "3").toInt()
-        versionName = System.getenv("PLATFORMER_VERSION_NAME") ?: "0.2.0"
+        // в CI — 100 + номер запуска сборки: каждая новая версия выше предыдущей
+        versionCode = (System.getenv("PLATFORMER_VERSION_CODE") ?: "100").toInt()
+        versionName = System.getenv("PLATFORMER_VERSION_NAME") ?: "0.3.0"
         buildConfigField("String", "BASE_URL", "\"$platformerUrl\"")
         buildConfigField("String", "BOT_USERNAME", "\"$platformerBot\"")
     }
@@ -55,6 +62,20 @@ android {
         }
     }
 
+    // direct — APK для установки напрямую, обновляется сам из релизов GitHub;
+    // play — для Google Play: обновления только через Play (свои APK Play запрещает качать)
+    flavorDimensions += "store"
+    productFlavors {
+        create("direct") {
+            dimension = "store"
+            buildConfigField("String", "UPDATE_URL", "\"$platformerUpdates\"")
+        }
+        create("play") {
+            dimension = "store"
+            buildConfigField("String", "UPDATE_URL", "\"\"")
+        }
+    }
+
     buildFeatures { buildConfig = true }
 
     compileOptions {
@@ -74,4 +95,7 @@ dependencies {
     implementation("androidx.webkit:webkit:1.14.0")
     implementation("androidx.work:work-runtime-ktx:2.10.5")
     implementation("androidx.health.connect:connect-client:1.1.0")
+    "playImplementation"("com.google.android.play:app-update-ktx:2.1.0")
+    // app-update тянет старый Fragment 1.1 — с ним ActivityResult API работает неверно
+    "playImplementation"("androidx.fragment:fragment-ktx:1.8.9")
 }

@@ -15,6 +15,17 @@
 - **Шаги из Health Connect.** Приложение читает только `READ_STEPS`, плюс чтение в фоне,
   если телефон это поддерживает. Это суммы по дням за неделю. Они уходят в
   `/api/activity/sync` раз в 15 минут через WorkManager и при каждом открытии приложения.
+- **Обновляется само.** Два варианта сборки:
+  - `direct` — APK для установки напрямую. При каждом входе приложение читает `latest.json`
+    из релиза `android-latest` на GitHub. Если версия новее, оно скачивает APK и сверяет
+    SHA-256, имя пакета, номер версии и подпись с установленным. Потом ставит его через
+    PackageInstaller: на Android 12+ без вопросов, на старых — одно «Установить». В первый
+    раз Android попросит разрешить Platformer устанавливать приложения.
+  - `play` — для Google Play: обновление через Play (In-App Updates, сразу при входе).
+    Права ставить APK у этой сборки нет: Google Play запрещает приложениям обновляться в обход Play.
+
+  Веб-интерфейс внутри обоих вариантов обновляется с сервера после каждого деплоя. Новый APK
+  нужен только при изменениях самой оболочки.
 - **Без интернета.** Показывается своя страница с кнопкой «Повторить».
 - **Ссылки.** Ссылки на Telegram и сайты открываются во внешних приложениях.
   Мост `window.PlatformerAndroid` доступен только страницам Platformer.
@@ -33,8 +44,8 @@
 ```bash
 cd android
 printf "sdk.dir=/путь/к/android-sdk\nplatformer.url=https://ваш-домен/app/\n" > local.properties
-./gradlew :app:assembleDebug      # APK для установки на телефон
-./gradlew :app:bundleRelease      # AAB для Google Play
+./gradlew :app:assembleDirectRelease   # APK для установки на телефон (обновляется сам)
+./gradlew :app:bundlePlayRelease       # AAB для Google Play
 ```
 
 `platformer.url` — это тот же адрес, что `MINI_APP_URL` на сервере. Без него приложение
@@ -60,7 +71,8 @@ keytool -genkeypair -v -keystore upload.jks -alias upload -keyalg RSA -keysize 4
 base64 -w0 upload.jks     # → секрет PLATFORMER_KEYSTORE_B64
 ```
 
-`versionCode` в CI — это номер запуска сборки, поэтому каждая новая сборка выше предыдущей.
+`versionCode` в CI — это 100 + номер запуска сборки, поэтому каждая новая сборка выше
+предыдущей. У собранной вручную `versionCode` равен 100.
 
 ## Публикация в Google Play — что сделать владельцу
 
