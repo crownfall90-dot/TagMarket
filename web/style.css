@@ -2324,12 +2324,12 @@ li.done>.wish-check{background:var(--accent);border-color:var(--accent)}
 @media(prefers-reduced-motion:reduce){.month-card .sp-glow,.mb-bars i,.goal-card,.friend-card{animation:none}}
 .month-plan p{margin:-4px 0 14px}
 /* ── Полировка: единый ритм, появление и отклик на касание ── */
-#main:not(.quiet-paint)>*{animation:sec-rise .55s cubic-bezier(.2,.8,.2,1) both}
-#main:not(.quiet-paint)>*:nth-child(2){animation-delay:40ms}
-#main:not(.quiet-paint)>*:nth-child(3){animation-delay:80ms}
-#main:not(.quiet-paint)>*:nth-child(4){animation-delay:120ms}
-#main:not(.quiet-paint)>*:nth-child(5){animation-delay:160ms}
-#main:not(.quiet-paint)>*:nth-child(n+6){animation-delay:200ms}
+#main:not(.quiet-paint)>*{animation:sec-rise .38s cubic-bezier(.2,.8,.2,1) both}
+#main:not(.quiet-paint)>*:nth-child(2){animation-delay:25ms}
+#main:not(.quiet-paint)>*:nth-child(3){animation-delay:50ms}
+#main:not(.quiet-paint)>*:nth-child(4){animation-delay:75ms}
+#main:not(.quiet-paint)>*:nth-child(5){animation-delay:100ms}
+#main:not(.quiet-paint)>*:nth-child(n+6){animation-delay:120ms}
 @keyframes sec-rise{from{opacity:0;transform:translateY(12px)}}
 :is(.button,.sp-row,.inc-row,.inc-mark,.goal-card,.month-card,.spend-sum,.pcard,.fo-step,.fw-gift,.account-card,.home-card,.split-row,.wish-add,.fab,.sp-up,.text-link){transition:transform .16s cubic-bezier(.2,.8,.2,1),background-color .2s,opacity .2s}
 :is(.button,.sp-row,.inc-row,.goal-card,.month-card,.spend-sum,.pcard,.fo-step,.fw-gift,.account-card,.home-card,.wish-add,.sp-up):active{transform:scale(.975)}

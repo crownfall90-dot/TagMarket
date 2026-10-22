@@ -7,6 +7,7 @@ from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import base64
+import contextlib
 import os
 import tempfile
 from threading import Thread
@@ -116,11 +117,12 @@ def rapid_taps_render_once(page, nav):
         window.render = (...a) => { window.__renders++; return window.__realRender(...a); }; }""")
     # оба нажатия — из страницы, с паузой 50 мс: время самих кликов Playwright не должно
     # сдвигать второе нажатие за конец ухода старого экрана
-    page.evaluate("""([nav]) => new Promise(resolve => {
-        document.querySelector(nav + ' a[href="#projects"]').click();
-        setTimeout(() => { document.querySelector(nav + ' a[href="#overview"]').click(); resolve(); }, 50);
-    })""", [nav])
-    page.wait_for_timeout(1200)
+    with real_speed(page):
+        page.evaluate("""([nav]) => new Promise(resolve => {
+            document.querySelector(nav + ' a[href="#projects"]').click();
+            setTimeout(() => { document.querySelector(nav + ' a[href="#overview"]').click(); resolve(); }, 50);
+        })""", [nav])
+        page.wait_for_timeout(1200)
     renders, view = page.evaluate("[window.__renders, state.view]")
     page.evaluate("window.render = window.__realRender")
     assert view == "overview", f"открылся не последний раздел: {view}"
@@ -856,6 +858,8 @@ def compact_ui_and_quiet_refresh(page, url):
     close_dialog(page)
     page.goto(url+'#people', wait_until='domcontentloaded')
     page.locator('.people-card').first.wait_for()
+    # загрузка раздела ещё может идти: её ответ затёр бы подменённых гостей
+    page.wait_for_function("!state.busy && !document.body.classList.contains('is-loading')")
     page.evaluate("""() => {
       window.__uxApi=window.api;window.__guestCalls=[];window.__uxMutate=window.mutate;
       const own=state.people.shareable[0];
@@ -983,6 +987,47 @@ def modal_scroll_and_deferred_refresh(page, url):
     page.evaluate('window.api=__uxApi;void 0')
 
 
+ANIM_RATE = float(os.getenv("TAGMARKETS_UI_SMOKE_ANIM_RATE", "6"))
+_anim = {}
+
+
+def speed_up_animations(page):
+    """CSS-анимации и переходы — в ANIM_RATE раз быстрее (DevTools Animation.setPlaybackRate).
+
+    Тест почти всё время ждал окончания анимаций: процессор занят ~10 с из
+    ~110. Таймеры JS не трогаем — логика приложения работает как обычно;
+    после перехода по адресу скорость выставляется заново."""
+    if ANIM_RATE == 1:
+        return
+    cdp = page.context.new_cdp_session(page)
+    _anim[page] = [cdp, ANIM_RATE]
+
+    def apply(*_):
+        try:
+            cdp.send("Animation.enable")
+            cdp.send("Animation.setPlaybackRate", {"playbackRate": _anim[page][1]})
+        except Exception:
+            pass
+    apply()
+    page.on("load", apply)
+
+
+@contextlib.contextmanager
+def real_speed(page):
+    """Проверки, где важно настоящее время анимации (нажатие, пока экран ещё уезжает)."""
+    item = _anim.get(page)
+    if not item:
+        yield
+        return
+    item[1] = 1
+    item[0].send("Animation.setPlaybackRate", {"playbackRate": 1})
+    try:
+        yield
+    finally:
+        item[1] = ANIM_RATE
+        item[0].send("Animation.setPlaybackRate", {"playbackRate": ANIM_RATE})
+
+
 def close_dialog(page):
     """Закрыть диалог крестиком в шапке: у информационных окон кнопка
     «Отмена» спрятана, а крестик есть у всех. Изменённые поля подтверждаем."""
@@ -1011,6 +1056,7 @@ def main():
             try:
                 for width in WIDTHS:
                     page = browser.new_page(viewport={"width": width, "height": 844})
+                    speed_up_animations(page)
                     errors = []
                     page.on("pageerror", lambda error, errors=errors: errors.append(str(error)))
                     page.route("https://telegram.org/js/telegram-web-app.js",
@@ -1135,7 +1181,8 @@ def main():
                     page.locator('.home-grid').wait_for()
                     rapid_switching_stays_under_limit(page, nav)
                     guest_with_shared_account_sees_home_and_opens_guide_on_demand(page)
-                    faq_opens_smoothly(page, url)
+                    with real_speed(page):          # проверяет саму анимацию раскрытия
+                        faq_opens_smoothly(page, url)
                     page.goto(url + "#tagmarket", wait_until="domcontentloaded")
                     page.locator('.hero').wait_for()
                     rapid_period_taps_load_once(page)
