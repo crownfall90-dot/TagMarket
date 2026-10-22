@@ -3,7 +3,7 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp" android:height="108dp"
     android:viewportWidth="108" android:viewportHeight="108">
-    <path android:fillColor="#C8F08F" android:pathData="M32,64h18a4,4 0,0 1,4 4v8a4,4 0,0 1,-4 4H32a4,4 0,0 1,-4 -4v-8a4,4 0,0 1,4 -4z" />
-    <path android:fillColor="#C8F08F" android:fillAlpha="0.75" android:pathData="M45,46h18a4,4 0,0 1,4 4v8a4,4 0,0 1,-4 4H45a4,4 0,0 1,-4 -4v-8a4,4 0,0 1,4 -4z" />
-    <path android:fillColor="#C8F08F" android:fillAlpha="0.5" android:pathData="M58,28h18a4,4 0,0 1,4 4v8a4,4 0,0 1,-4 4H58a4,4 0,0 1,-4 -4v-8a4,4 0,0 1,4 -4z" />
+    <path android:fillColor="#F2F2F3" android:pathData="M32,64h18a4,4 0,0 1,4 4v8a4,4 0,0 1,-4 4H32a4,4 0,0 1,-4 -4v-8a4,4 0,0 1,4 -4z" />
+    <path android:fillColor="#F2F2F3" android:fillAlpha="0.75" android:pathData="M45,46h18a4,4 0,0 1,4 4v8a4,4 0,0 1,-4 4H45a4,4 0,0 1,-4 -4v-8a4,4 0,0 1,4 -4z" />
+    <path android:fillColor="#F2F2F3" android:fillAlpha="0.5" android:pathData="M58,28h18a4,4 0,0 1,4 4v8a4,4 0,0 1,-4 4H58a4,4 0,0 1,-4 -4v-8a4,4 0,0 1,4 -4z" />
 </vector>

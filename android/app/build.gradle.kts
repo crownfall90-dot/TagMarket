@@ -29,8 +29,8 @@ android {
         applicationId = "app.platformer.android"
         minSdk = 26                 // Health Connect работает с Android 8
         targetSdk = 36              // требование Google Play к новым приложениям
-        versionCode = (System.getenv("PLATFORMER_VERSION_CODE") ?: "1").toInt()
-        versionName = System.getenv("PLATFORMER_VERSION_NAME") ?: "0.1.0"
+        versionCode = (System.getenv("PLATFORMER_VERSION_CODE") ?: "3").toInt()
+        versionName = System.getenv("PLATFORMER_VERSION_NAME") ?: "0.2.0"
         buildConfigField("String", "BASE_URL", "\"$platformerUrl\"")
         buildConfigField("String", "BOT_USERNAME", "\"$platformerBot\"")
     }

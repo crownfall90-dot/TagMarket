@@ -2,10 +2,17 @@
 <resources>
     <string name="app_name">Platformer</string>
     <string name="login_title">Вход в Platformer</string>
-    <string name="login_hint">Отправьте боту Platformer в Telegram команду /app — он пришлёт код из 8 символов. Код одноразовый и действует 10 минут.</string>
+    <string name="login_subtitle">Без паролей — код для входа пришлёт бот в Telegram</string>
+    <string name="login_step1">Нажмите «Запросить код» — откроется бот</string>
+    <string name="login_step2">В чате нажмите «Скопировать код»</string>
+    <string name="login_step3">Вернитесь сюда — код подставится сам</string>
+    <string name="login_footer">Код одноразовый и действует 10 минут</string>
+    <string name="login_entering">Входим…</string>
     <string name="login_code">Код из бота</string>
     <string name="login_enter">Войти</string>
-    <string name="login_open_bot">Открыть бота в Telegram</string>
+    <string name="login_request">Запросить код</string>
+    <string name="login_request_again">Запросить ещё раз</string>
+    <string name="login_sent">Код отправлен в Telegram. Нажмите в чате «Скопировать код» и вернитесь в приложение.</string>
     <string name="login_short">Введите все 8 символов кода</string>
     <string name="login_failed">Не удалось войти. Проверьте интернет и попробуйте ещё раз</string>
     <string name="login_not_configured">Сборка без адреса сервера: задайте platformer.url</string>

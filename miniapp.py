@@ -1554,6 +1554,15 @@ async def device_pair(request):
     return web.json_response({"token": result["token"], "device_id": result["device_id"]}, status=201)
 
 
+async def device_logout(request):
+    """Выход из приложения для Android: отзываем токен, которым пришёл запрос."""
+    token = device_token(request)
+    if not token:
+        raise web.HTTPBadRequest(text="Выход — только из приложения для Android")
+    devices.revoke_token(request.app["db"], token)
+    return web.json_response({"ok": True})
+
+
 async def devices_api(request):
     """Привязанные устройства: GET — список, POST /code — код для входа, DELETE /{id} — отвязать."""
     uid, _ = authorize(request)
@@ -1905,6 +1914,7 @@ def setup(app):
     app.router.add_delete("/api/activity/sync/key", activity_sync_key)
     app.router.add_get("/api/live", live_api)
     app.router.add_post("/api/device/pair", device_pair)
+    app.router.add_post("/api/device/logout", device_logout)
     app.router.add_get("/api/devices", devices_api)
     app.router.add_post("/api/devices/code", devices_api)
     app.router.add_delete("/api/devices/{device_id}", devices_api)

@@ -2078,6 +2078,9 @@ async def main():
     @dp.message(Command("start", "help"))
     async def start(msg: Message, command: CommandObject = None):
         token = (command.args or "").strip() if command else ""
+        if token == "login":                    # кнопка «Запросить код» в приложении для Android
+            await send_app_code(msg)
+            return
         invited = False
         if token:
             invited = await accept_invite(msg, token)
@@ -2836,7 +2839,14 @@ async def main():
 
     @dp.message(Command("app"))
     async def app_cmd(msg: Message):
-        """Вход в приложение для Android: одноразовый код на 10 минут."""
+        await send_app_code(msg)
+
+    async def send_app_code(msg: Message):
+        """Вход в приложение для Android: одноразовый код на 10 минут.
+
+        Приходит по кнопке «Запросить код» в приложении (t.me/бот?start=login)
+        или по /app. Кнопка под кодом копирует его одним касанием — приложение
+        само подставит скопированный код."""
         import devices
         devices.setup(db)
         me = msg.from_user.id
@@ -2845,11 +2855,13 @@ async def main():
         code = devices.new_code(db, me)
         linked = devices.devices(db, me)
         tail = (f"\n\nПривязано устройств: <b>{len(linked)}</b>. Отвязать все: /app_logout" if linked else "")
+        copy = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="📋 Скопировать код", copy_text=CopyTextButton(text=code))]])
         await send(bot, msg.chat.id,
                    "📱 <b>Вход в приложение Platformer</b>\n" + trades.THIN +
                    f"\nКод: <code>{code}</code>\n"
-                   "Введите его в приложении на телефоне. Код одноразовый и действует 10 минут — "
-                   "никому его не пересылайте." + tail)
+                   "Скопируйте его и вернитесь в приложение — код подставится сам. Он одноразовый, "
+                   "действует 10 минут; никому его не пересылайте." + tail, copy)
 
     @dp.message(Command("app_logout"))
     async def app_logout_cmd(msg: Message):

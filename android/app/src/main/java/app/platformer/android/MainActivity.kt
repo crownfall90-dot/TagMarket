@@ -4,20 +4,27 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.view.View
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.core.graphics.ColorUtils
+import androidx.core.view.HapticFeedbackConstantsCompat
+import androidx.core.view.WindowCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.health.connect.client.PermissionController
@@ -54,16 +61,43 @@ class MainActivity : ComponentActivity() {
             return
         }
 
-        val root = FrameLayout(this).apply { setBackgroundColor(Color.parseColor("#0f1214")) }
+        val root = FrameLayout(this).apply { setBackgroundColor(BG) }
+        WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
         web = WebView(this).apply {
-            setBackgroundColor(Color.parseColor("#0f1214"))
+            setBackgroundColor(BG)
             overScrollMode = View.OVER_SCROLL_NEVER
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-            settings.allowFileAccess = false
-            settings.allowContentAccess = false
-            settings.userAgentString = settings.userAgentString + " PlatformerAndroid/" + BuildConfig.VERSION_NAME
-            addJavascriptInterface(WebBridge(store) { runOnUiThread { signOut() } }, "PlatformerAndroid")
+            isVerticalScrollBarEnabled = false
+            isHorizontalScrollBarEnabled = false
+            with(settings) {
+                javaScriptEnabled = true
+                domStorageEnabled = true
+                allowFileAccess = false
+                allowContentAccess = false
+                mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                setGeolocationEnabled(false)
+                javaScriptCanOpenWindowsAutomatically = false
+                setSupportMultipleWindows(false)
+                setSupportZoom(false)
+                builtInZoomControls = false
+                displayZoomControls = false
+                mediaPlaybackRequiresUserGesture = true
+                // крупный системный шрифт уважаем, но в разумных пределах — иначе вёрстка ломается
+                textZoom = (resources.configuration.fontScale * 100).toInt().coerceIn(85, 120)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) safeBrowsingEnabled = true
+                userAgentString = userAgentString + " PlatformerAndroid/" + BuildConfig.VERSION_NAME
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, true)
+            }
+            addJavascriptInterface(
+                WebBridge(
+                    store,
+                    onSignOut = { runOnUiThread { signOut() } },
+                    onHaptic = { kind -> runOnUiThread { haptic(kind) } },
+                    onTheme = { color -> runOnUiThread { root.setBackgroundColor(color); setBackgroundColor(color); barIcons(color) } },
+                ),
+                "PlatformerAndroid",
+            )
             webViewClient = PlatformerClient()
             webChromeClient = object : WebChromeClient() {
                 override fun onShowFileChooser(view: WebView, callback: ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
@@ -77,16 +111,22 @@ class MainActivity : ComponentActivity() {
         }
         root.addView(web, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
         setContentView(root)
-        // контент — между системными панелями: страница сама рисует фон под ними
+        // контент — между системными панелями и вырезом камеры; фон под ними — цвет темы страницы
         ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
-            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.ime())
+            val bars = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout() or WindowInsetsCompat.Type.ime()
+            )
             view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
             WindowInsetsCompat.CONSUMED
         }
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (web.canGoBack()) web.goBack() else finish()
+                // сначала страница: открытое окно или меню закрываются «Назад», как в обычном приложении
+                web.evaluateJavascript("window.platformerBack ? window.platformerBack() : false") { handled ->
+                    if (handled == "true") return@evaluateJavascript
+                    if (web.canGoBack()) web.goBack() else finish()
+                }
             }
         })
 
@@ -130,6 +170,33 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** Светлая тема страницы — тёмные значки статус-бара и жестов, тёмная — светлые. */
+    private fun barIcons(color: Int) {
+        val light = ColorUtils.calculateLuminance(color) > 0.5
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = light
+            isAppearanceLightNavigationBars = light
+        }
+    }
+
+    private fun haptic(kind: String) {
+        val type = when (kind) {
+            "success" -> HapticFeedbackConstantsCompat.CONFIRM
+            "warning", "error" -> HapticFeedbackConstantsCompat.REJECT
+            "impact" -> HapticFeedbackConstantsCompat.VIRTUAL_KEY
+            else -> HapticFeedbackConstantsCompat.CLOCK_TICK
+        }
+        ViewCompat.performHapticFeedback(web, type)
+    }
+
+    override fun onDestroy() {
+        if (::web.isInitialized && web.parent != null) {
+            (web.parent as? ViewGroup)?.removeView(web)
+            web.destroy()
+        }
+        super.onDestroy()
+    }
+
     private fun signOut() {
         store.token = null
         Steps.cancel(this)
@@ -156,6 +223,14 @@ class MainActivity : ComponentActivity() {
             loaded = true
         }
 
+        /** Процесс страницы упал или система забрала память — пересоздаём экран, а не роняем приложение. */
+        override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+            (view.parent as? ViewGroup)?.removeView(view)
+            view.destroy()
+            recreate()
+            return true
+        }
+
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
             if (!request.isForMainFrame) return
             loaded = true
@@ -166,9 +241,15 @@ class MainActivity : ComponentActivity() {
     }
 
     private companion object {
-        const val OFFLINE_PAGE = """<!doctype html><html lang="ru"><head><meta name="viewport" content="width=device-width,initial-scale=1">
-<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0f1214;color:#e8ece6;font:16px system-ui,sans-serif;text-align:center}
-b{display:block;font-size:22px;margin-bottom:8px}p{color:#8e9a92;margin:0 24px 22px}a{display:inline-block;padding:13px 22px;border-radius:14px;background:#c8f08f;color:#22301b;text-decoration:none;font-weight:600}</style>
-</head><body><div><b>Нет соединения</b><p>Platformer откроется, как только появится интернет.</p><a href="{retry}">Повторить</a></div></body></html>"""
+        val BG = Color.parseColor("#0B0B0C")
+        const val OFFLINE_PAGE = """<!doctype html><html lang="ru"><head><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<style>*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(420px 320px at 85% 0%,#ffffff12,transparent),#0b0b0c;color:#f5f5f6;font:16px system-ui,sans-serif;text-align:center;-webkit-user-select:none;user-select:none}
+.card{width:min(360px,100%);padding:32px 24px;border-radius:26px;background:#161618e6;border:1px solid #ffffff14;animation:in .5s cubic-bezier(.2,.9,.3,1) both}
+.dot{width:56px;height:56px;margin:0 auto 18px;border-radius:18px;display:grid;place-items:center;background:#ffffff14;color:#f2f2f3;font-size:26px}
+b{display:block;font-size:21px;margin-bottom:8px;letter-spacing:-.02em}p{color:#8d8d93;margin:0 0 24px;line-height:1.45}
+a{display:block;padding:15px 22px;border-radius:16px;background:linear-gradient(180deg,#fff,#e4e4e7);color:#0b0b0c;text-decoration:none;font-weight:650;transition:transform .15s}a:active{transform:scale(.97)}
+@keyframes in{from{opacity:0;transform:translateY(14px)}}@media(prefers-reduced-motion:reduce){.card{animation:none}}</style>
+</head><body><div class="card"><div class="dot">⟳</div><b>Нет соединения</b><p>Platformer откроется сам, как только появится интернет.</p><a href="{retry}">Повторить</a></div>
+<script>addEventListener('online',function(){location.href=document.querySelector('a').href})</script></body></html>"""
     }
 }
