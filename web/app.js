@@ -2,6 +2,9 @@
 const $ = (s, root = document) => root.querySelector(s);
 const tg = window.Telegram?.WebApp;
 const preview = new URLSearchParams(location.search).get('preview') === '1';
+// Приложение для Android (Google Play): вместо подписи Telegram — токен устройства из нативной оболочки
+const androidApp = window.PlatformerAndroid;
+function appToken(){try{return String(androidApp?.token?.()||'');}catch{return '';}}
 const state = {data:null, people:null, admin:null, report:null, reportError:'', priceChart:null, notifications:{items:[],unread:0}, view:'overview', login:null, period:'today', kind:'trades', offset:0, from:'', to:'', filters:{tagmarket:{period:'today',from:'',to:''},account:{period:'today',from:'',to:''}}, busy:false, currency:null};
 try{state.displayCurrency=localStorage.getItem('tag-display-currency')||'USD';}catch{state.displayCurrency='USD';}
 let generation = 0, refreshTimer, toastTimer, notificationsStarted = false, lastNotificationId = 0;
@@ -829,12 +832,12 @@ async function api(path,options={}){
   throw new Error('Этот раздел недоступен в предпросмотре');
  }
  const isForm=options.body instanceof FormData;
- const headers={'X-Telegram-Init-Data':tg?.initData||'',...options.headers};
+ const token=appToken(),headers={...(token?{Authorization:`Bearer ${token}`}:{'X-Telegram-Init-Data':tg?.initData||''}),...options.headers};
  if(!isForm&&!headers['Content-Type'])headers['Content-Type']='application/json';
  const attempt=async()=>{
   const response=await fetch(new URL('../api'+path,location.href),{...options,signal:AbortSignal.timeout(path==='/broadcast'?180000:20000),headers,cache:'no-store'});
   const d=await response.json().catch(()=>({error:'Сервер вернул некорректный ответ'}));
-  if(!response.ok){const error=new Error(d.error||`Ошибка ${response.status}`);error.status=response.status;throw error;}
+  if(!response.ok){const error=new Error(d.error||`Ошибка ${response.status}`);error.status=response.status;if(token&&response.status===401){try{androidApp.signOut?.();}catch{}}throw error;}
   return d;
  };
  // чтение безопасно повторить: один повтор после короткой паузы закрывает
@@ -948,7 +951,7 @@ async function refresh(quiet=false){
   if(!quiet)render();
   else if(key!==paintedKey){if(uiEditing())quietPending=true;else {render(true);paintedKey=key;}}
  }catch(error){
-  if(!state.data){if(!preview&&!tg?.initData){$('#main').innerHTML=authScreen();}else $('#main').innerHTML=empty('Не удалось открыть кабинет',error.message,button('refresh','Попробовать снова','primary','refresh'));}
+  if(!state.data){if(!preview&&!tg?.initData&&!appToken()){$('#main').innerHTML=authScreen();}else $('#main').innerHTML=empty('Не удалось открыть кабинет',error.message,button('refresh','Попробовать снова','primary','refresh'));}
   else{setOffline(true);if(!quiet)toast('Не удалось обновить данные. Показаны последние полученные значения.');}
  }finally{state.busy=false;document.body.classList.remove('is-loading');if(state.pendingRefresh){state.pendingRefresh=false;await refresh();}else if(quietPending&&!uiEditing())flushQuiet();}
 }

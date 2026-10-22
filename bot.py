@@ -630,6 +630,12 @@ def wipe_user(db, uid) -> dict:
     """
     kv_set(db, f"left:{uid}", "1")          # перекрывает даже список в .env
     kv_del_exact(db, f"guest:{uid}")
+    try:                                    # приложение для Android больше не впустит
+        import devices
+        devices.setup(db)
+        devices.revoke(db, uid)
+    except Exception:
+        log.exception("не отозвал устройства пользователя")
 
     killed = 0
     for token, inv in invite_list(db, uid):
@@ -2827,6 +2833,30 @@ async def main():
             pass
         text = await finish_add(bot, msg.chat.id, msg.from_user.id, data)
         await send(bot, msg.chat.id, text, menu("today", owner=msg.from_user.id))
+
+    @dp.message(Command("app"))
+    async def app_cmd(msg: Message):
+        """Вход в приложение для Android: одноразовый код на 10 минут."""
+        import devices
+        devices.setup(db)
+        me = msg.from_user.id
+        if kv_get(db, f"user_name:{me}") is None and msg.from_user.first_name:
+            kv_set(db, f"user_name:{me}", msg.from_user.first_name[:64])
+        code = devices.new_code(db, me)
+        linked = devices.devices(db, me)
+        tail = (f"\n\nПривязано устройств: <b>{len(linked)}</b>. Отвязать все: /app_logout" if linked else "")
+        await send(bot, msg.chat.id,
+                   "📱 <b>Вход в приложение Platformer</b>\n" + trades.THIN +
+                   f"\nКод: <code>{code}</code>\n"
+                   "Введите его в приложении на телефоне. Код одноразовый и действует 10 минут — "
+                   "никому его не пересылайте." + tail)
+
+    @dp.message(Command("app_logout"))
+    async def app_logout_cmd(msg: Message):
+        import devices
+        devices.setup(db)
+        n = devices.revoke(db, msg.from_user.id)
+        await send(bot, msg.chat.id, f"📱 Отвязано устройств: <b>{n}</b>. Чтобы войти снова — /app")
 
     @dp.message(Command("accounts"))
     async def accounts_cmd(msg: Message):

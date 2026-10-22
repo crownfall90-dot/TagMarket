@@ -31,6 +31,7 @@ os.environ["TRADES_SOURCE"] = "store"
 import accounts
 import activity
 import banks
+import devices
 import bot as logic
 import coordination
 import friends
@@ -153,13 +154,30 @@ def validate_init_data(raw, token, now=None):
     return user
 
 
+def device_token(request):
+    """Токен приложения для Android из «Authorization: Bearer pld_…», иначе None."""
+    auth = request.headers.get("Authorization", "")
+    token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+    return token if token.startswith(devices.TOKEN_PREFIX) else None
+
+
 def authorize(request):
-    try:
-        user = validate_init_data(request.headers.get("X-Telegram-Init-Data", ""),
-                                  os.getenv("TELEGRAM_BOT_TOKEN", ""))
-    except (ValueError, TypeError, KeyError, AttributeError):
-        raise web.HTTPUnauthorized(text="Откройте приложение заново через Telegram")
-    uid, db = str(user["id"]), request.app["db"]
+    db = request.app["db"]
+    token = device_token(request)
+    if token:
+        # приложение для Android: устройство привязано кодом из бота (/app)
+        owner = devices.owner_for(db, token)
+        if owner is None:
+            raise web.HTTPUnauthorized(text="Устройство отвязано — войдите заново кодом из бота")
+        user = {"id": int(owner) if owner.isdigit() else owner,
+                "first_name": partner.kv_get(db, f"user_name:{owner}") or ""}
+    else:
+        try:
+            user = validate_init_data(request.headers.get("X-Telegram-Init-Data", ""),
+                                      os.getenv("TELEGRAM_BOT_TOKEN", ""))
+        except (ValueError, TypeError, KeyError, AttributeError):
+            raise web.HTTPUnauthorized(text="Откройте приложение заново через Telegram")
+    uid = str(user["id"])
     allowed = {x.strip() for x in os.getenv("ALLOWED_USERS", "").split(",") if x.strip()}
     if (partner.kv_get(db, f"left:{uid}") == "1" or
             (allowed and uid not in allowed and partner.kv_get(db, f"guest:{uid}") != "1")):
@@ -1437,7 +1455,8 @@ async def activity_sync(request):
     key = (auth[7:].strip() if auth.lower().startswith("bearer ") else
            request.headers.get("X-Sync-Key") or request.query.get("key"))
     db = request.app["db"]
-    owner = activity.owner_for(db, key)
+    # приложение для Android шлёт шаги из Health Connect со своим токеном устройства
+    owner = devices.owner_for(db, key) or activity.owner_for(db, key)
     if owner is None or partner.kv_get(db, f"left:{owner}") == "1":
         raise web.HTTPUnauthorized(text="Ключ синхронизации не подходит — создайте новый в приложении")
     now = time.monotonic()
@@ -1479,6 +1498,38 @@ async def spend_api(request):
     data = await json_object(request)
     return web.json_response(_section_call(lambda: spend.save(db, uid, data, item_id)),
                              status=201 if method == "POST" else 200)
+
+
+async def device_pair(request):
+    """Приложение для Android: код из бота (/app) → токен устройства. Без Telegram, с ограничением частоты."""
+    ip = request.remote or "?"
+    now = time.monotonic()
+    start, count = _rates.pop(f"pair:{ip}", (now, 0))
+    if now - start >= 60:
+        start, count = now, 0
+    _rates[f"pair:{ip}"] = (start, count + 1)
+    if count >= 10:
+        raise web.HTTPTooManyRequests(text="Слишком много попыток. Подождите минуту")
+    data = await json_object(request)
+    db = request.app["db"]
+    result = _section_call(lambda: devices.pair(db, data.get("code"), data.get("name")))
+    if partner.kv_get(db, f"left:{result['owner']}") == "1":
+        devices.revoke(db, result["owner"])
+        raise web.HTTPForbidden(text="Доступ закрыт. Запросите приглашение в боте")
+    return web.json_response({"token": result["token"], "device_id": result["device_id"]}, status=201)
+
+
+async def devices_api(request):
+    """Привязанные устройства: GET — список, POST /code — код для входа, DELETE /{id} — отвязать."""
+    uid, _ = authorize(request)
+    db = request.app["db"]
+    if request.method == "DELETE":
+        _section_call(lambda: devices.revoke(db, uid, request.match_info["device_id"]))
+        return web.json_response({"ok": True})
+    if request.path.endswith("/code"):
+        return web.json_response({"code": devices.new_code(db, uid), "minutes": int(devices.CODE_TTL.total_seconds() // 60)},
+                                 status=201)
+    return web.json_response({"devices": devices.devices(db, uid)})
 
 
 async def goals_api(request):
@@ -1769,6 +1820,7 @@ def setup(app):
     spend.setup(app["db"])
     income.setup(app["db"])
     goals.setup(app["db"])
+    devices.setup(app["db"])
     friends.setup(app["db"])
     # Legacy copies lack provenance. Matching only a login is unsafe: an
     # independently added account may use that number with another password.
@@ -1811,6 +1863,10 @@ def setup(app):
     app.router.add_get("/api/activity/sync/key", activity_sync_key)
     app.router.add_post("/api/activity/sync/key", activity_sync_key)
     app.router.add_delete("/api/activity/sync/key", activity_sync_key)
+    app.router.add_post("/api/device/pair", device_pair)
+    app.router.add_get("/api/devices", devices_api)
+    app.router.add_post("/api/devices/code", devices_api)
+    app.router.add_delete("/api/devices/{device_id}", devices_api)
     app.router.add_get("/api/goals", goals_api)
     app.router.add_post("/api/goals", goals_api)
     app.router.add_patch("/api/goals/{goal_id}", goals_api)

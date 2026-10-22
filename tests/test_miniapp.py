@@ -40,6 +40,7 @@ import income
 import goals
 import friends
 import backup
+import devices
 import lists
 import projects
 import partner
@@ -2038,6 +2039,43 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.call("DELETE", f"/api/friends/split/{pizza['id']}", uid=2)).status, 404)
         self.assertEqual((await self.call("DELETE", f"/api/friends/split/{pizza['id']}")).status, 200)
 
+    async def test_android_app_signs_in_with_a_code_from_the_bot(self):
+        """Приложение для Android: код из бота → токен устройства; он открывает те же разделы и принимает шаги."""
+        db = self.app["db"]
+        code = devices.new_code(db, 1)
+        self.assertRegex(code, r"^[A-Z2-9]{4}-[A-Z2-9]{4}$")
+        r = await self.client.post("/api/device/pair", json={"code": code.lower().replace("-", " "), "name": "Realme"})
+        self.assertEqual(r.status, 201, await r.text())
+        token = (await r.json())["token"]
+        self.assertTrue(token.startswith("pld_"))
+        self.assertNotIn(token, str(db.execute("SELECT * FROM app_devices").fetchall()))      # в базе только хэш
+        # код одноразовый
+        self.assertEqual((await self.client.post("/api/device/pair", json={"code": code})).status, 400)
+        auth = {"Authorization": f"Bearer {token}"}
+        boot = await self.client.get("/api/bootstrap", headers=auth)
+        self.assertEqual(boot.status, 200, await boot.text())
+        self.assertEqual((await boot.json())["user"]["id"], 1)
+        # шаги из Health Connect — тем же токеном
+        sync = await self.client.post("/api/activity/sync", headers=auth, json={"steps": 4321})
+        self.assertEqual(sync.status, 200, await sync.text())
+        act = await (await self.call("GET", "/api/activity?days=7")).json()
+        self.assertEqual(act["summary"]["steps"]["today"], 4321)
+        # список устройств и отвязка
+        listed = await (await self.client.get("/api/devices", headers=auth)).json()
+        self.assertEqual([d["name"] for d in listed["devices"]], ["Realme"])
+        self.assertEqual((await self.client.delete(f"/api/devices/{listed['devices'][0]['id']}", headers=auth)).status, 200)
+        self.assertEqual((await self.client.get("/api/bootstrap", headers=auth)).status, 401)
+        # неверный, просроченный код и чужой токен
+        self.assertEqual((await self.client.post("/api/device/pair", json={"code": "ABCD-EFGH"})).status, 400)
+        old = devices.new_code(db, 1)
+        db.execute("UPDATE app_pairing SET expires_at='2000-01-01T00:00:00+00:00'")
+        db.commit()
+        self.assertEqual((await self.client.post("/api/device/pair", json={"code": old})).status, 400)
+        self.assertEqual((await self.client.get("/api/bootstrap", headers={"Authorization": "Bearer pld_nope"})).status, 401)
+        # код для входа можно получить и из Mini App
+        made = await (await self.call("POST", "/api/devices/code")).json()
+        self.assertEqual(made["minutes"], 10)
+
     def test_backup_snapshot_is_consistent_and_keeps_last_days(self):
         with tempfile.TemporaryDirectory() as tmp:
             src = Path(tmp) / "state.db"
@@ -3614,7 +3652,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                     with self.subTest(module=module):
                         self.assertIn(f"{module}.py", shipped)
                         self.assertIn(f"{module}.py", rollbackable)
-        for module in ("activity", "lists", "banks", "insights", "projects", "spend", "income", "goals", "friends", "backup"):
+        for module in ("activity", "lists", "banks", "insights", "projects", "spend", "income", "goals", "friends", "backup", "devices"):
             self.assertIn(f"{module}.py", shipped)
 
     async def test_guest_cannot_toggle_shared_account_polling(self):
