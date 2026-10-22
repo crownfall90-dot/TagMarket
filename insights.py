@@ -7,13 +7,12 @@
 данных о сфере нет, оценки нет (None) и круг показывает её пустой.
 """
 from datetime import date, timedelta
-import math
 
 SPHERES = (
     ("finance", "Финансы", "#projects"),
     ("tasks", "Дела", "#plans/tasks"),
     ("plans", "Планы", "#plans/calendar"),
-    ("dreams", "Мечты", "#plans/wish"),
+    ("dreams", "Мечты", "#projects"),
 )
 SIGNS = {"USD": "$", "RUB": "₽", "BYN": "Br", "EUR": "€"}
 
@@ -42,7 +41,7 @@ def _clamp(value):
 
 
 def analyze(data, today, hour=12):
-    """data: finance, activity, tasks, events, wishlists, friends — см. miniapp.insights_data.
+    """data: finance, activity, tasks, events, goals, friends — см. miniapp.insights_data.
 
     Возвращает {"overall", "spheres": [...], "insights": [...]}; наблюдения
     отсортированы по важности, не больше восьми.
@@ -140,19 +139,20 @@ def analyze(data, today, hour=12):
             out.append((10, "plans", "info", f"Завтра: {e['title']}" + (" — подарок уже выбран?" if gift else ""), "#plans/calendar"))
     plans_status = f"{len(soon)} {plural(len(soon), 'событие', 'события', 'событий')} на неделе" if soon else "неделя свободна"
 
-    # ── мечты ──
-    wishlists = data.get("wishlists") or []
-    items = [i for w in wishlists for i in w["items"]]
-    if wishlists:
-        done = sum(i["done"] for i in items)
-        scores["dreams"] = 40 + (60 * done / len(items) if items else 0)
-        priced = sorted((i for i in items if not i["done"] and i.get("price") and (i.get("currency") or "USD") == cur), key=lambda i: i["price"])
-        if priced and daily > 0:
-            first = priced[0]
-            days = math.ceil(first["price"] / daily)
-            out.append((42, "dreams", "good", f"«{first['title']}» за {money(first['price'], cur)} — это ≈ {days} {plural(days, 'день', 'дня', 'дней')} дохода", "#plans/wish"))
-    dreams_status = (f"{sum(not i['done'] for i in items)} {plural(sum(not i['done'] for i in items), 'желание', 'желания', 'желаний')}"
-                     if wishlists else "создайте первый вишлист")
+    # ── мечты: цели накоплений ──
+    goals = data.get("goals") or []
+    if goals:
+        scores["dreams"] = sum(g["progress"] for g in goals) / len(goals) * 100
+        pending = sorted((g for g in goals if not g["done"] and g.get("deadline")), key=lambda g: g["deadline"])
+        if pending and pending[0].get("per_month"):
+            g = pending[0]
+            out.append((44, "dreams", "info", f"«{g['title']}»: откладывайте ≈ {money(g['per_month'], g['currency'])} в месяц, чтобы успеть к сроку", "#projects"))
+        for g in goals:
+            if g["done"]:
+                out.append((46, "dreams", "good", f"Цель «{g['title']}» накоплена", "#projects"))
+                break
+    n_open = sum(not g["done"] for g in goals)
+    dreams_status = (f"{n_open} {plural(n_open, 'цель', 'цели', 'целей')} копится" if n_open else "все цели накоплены") if goals else "добавьте цель накоплений"
 
     statuses = {"finance": fin_status, "tasks": tasks_status,
                 "plans": plans_status, "dreams": dreams_status}

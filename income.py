@@ -39,6 +39,12 @@ def setup(db):
             UNIQUE(owner_id, kind)
         );
     """)
+    # у зачислений, которым сменили тип, прежнее название («Зарплата») осталось
+    # от старого типа: «Премия» показывалась как «Зарплата»
+    for kind, label in KINDS.items():
+        marks = ",".join("?" for _ in KINDS if _ != kind)
+        db.execute(f"UPDATE income_items SET title='' WHERE kind=? AND title IN ({marks})",
+                   (kind, *[v for k, v in KINDS.items() if k != kind]))
     db.commit()
 
 
@@ -99,7 +105,10 @@ def save(db, owner, data, item_id=None):
     if set(data) - allowed:
         raise ValueError("Неизвестное поле: " + ", ".join(sorted(set(data) - allowed)))
     old = get(db, owner, item_id) if item_id else None
-    merged = {**(old or {}), **data}
+    # название по умолчанию — название типа; своё сохраняем только если его задали,
+    # иначе при смене типа к новому типу прилипало бы название старого
+    own_title = "" if not old or old["title"] == KINDS.get(old["kind"]) else old["title"]
+    merged = {**(old or {}), "title": own_title, **data}
     kind = merged.get("kind")
     if kind not in KINDS:
         raise ValueError("Выберите: аванс, зарплата или премия")
@@ -175,6 +184,9 @@ def credit_due(db, owner, on=None):
                 banks.credit(db, account_id, cents, balance, title or KINDS.get(kind, "Зарплата"), "salary", stamp)
                 done += 1
             db.execute("UPDATE income_items SET credited=? WHERE id=?", (due[-1].isoformat(), item_id))
+    if done:
+        import live
+        live.bump(db, owner, "banks", "income")     # зарплата пришла на карту — видно сразу
     return done
 
 

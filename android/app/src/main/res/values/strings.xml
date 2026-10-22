@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Platformer</string>
+    <string name="login_title">Вход в Platformer</string>
+    <string name="login_hint">Отправьте боту Platformer в Telegram команду /app — он пришлёт код из 8 символов. Код одноразовый и действует 10 минут.</string>
+    <string name="login_code">Код из бота</string>
+    <string name="login_enter">Войти</string>
+    <string name="login_open_bot">Открыть бота в Telegram</string>
+    <string name="login_short">Введите все 8 символов кода</string>
+    <string name="login_failed">Не удалось войти. Проверьте интернет и попробуйте ещё раз</string>
+    <string name="login_not_configured">Сборка без адреса сервера: задайте platformer.url</string>
+    <string name="rationale_title">Зачем Platformer шаги</string>
+    <string name="rationale_text">Platformer читает из Health Connect только количество шагов — суммы по дням за последнюю неделю — и показывает их в разделе «Шаги»: сегодня, цель и динамику. Данные отправляются только на сервер Platformer, к вашему аккаунту, и никому не передаются. Ничего не записывается в Health Connect. Разрешение можно отозвать в любой момент в настройках Health Connect.</string>
+    <string name="rationale_close">Понятно</string>
+</resources>

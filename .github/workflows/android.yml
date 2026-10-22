@@ -1,0 +1,60 @@
+# Приложение для Android (Google Play): сборка на каждом изменении android/ и
+# по кнопке. Отладочный APK — для установки на телефон, AAB — для загрузки в
+# Google Play Console. Подпись ключом загрузки — только если заданы секреты.
+name: Android
+
+on:
+  pull_request:
+    paths: ["android/**", ".github/workflows/android.yml"]
+  push:
+    branches: [main]
+    paths: ["android/**", ".github/workflows/android.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Сборка Android
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: android
+    env:
+      PLATFORMER_URL: ${{ vars.PLATFORMER_URL }}
+      PLATFORMER_BOT: ${{ vars.PLATFORMER_BOT }}
+      PLATFORMER_VERSION_CODE: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Ключ загрузки Google Play (если задан в секретах)
+        env:
+          KEYSTORE_B64: ${{ secrets.PLATFORMER_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/upload.jks"
+            echo "PLATFORMER_KEYSTORE=$RUNNER_TEMP/upload.jks" >> "$GITHUB_ENV"
+          fi
+      - name: Отладочный APK и AAB для Google Play
+        env:
+          PLATFORMER_KEYSTORE_PASSWORD: ${{ secrets.PLATFORMER_KEYSTORE_PASSWORD }}
+          PLATFORMER_KEY_ALIAS: ${{ secrets.PLATFORMER_KEY_ALIAS }}
+          PLATFORMER_KEY_PASSWORD: ${{ secrets.PLATFORMER_KEY_PASSWORD }}
+        run: ./gradlew --no-daemon :app:assembleDebug :app:bundleRelease
+      - uses: actions/upload-artifact@v4
+        with:
+          name: platformer-android-${{ github.run_number }}
+          path: |
+            android/app/build/outputs/apk/debug/app-debug.apk
+            android/app/build/outputs/bundle/release/app-release.aab
+          retention-days: 14

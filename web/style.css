@@ -2220,40 +2220,6 @@ li.done>.wish-check{background:var(--accent);border-color:var(--accent)}
 @media(prefers-reduced-motion:reduce){.inc-card .sp-glow,.inc-fill,.inc-mark,.inc-mark.got i{animation:none}}
 .inc-page .inc-sum .ss-main{display:none}
 .spend-span{margin:-10px 0 22px;max-width:220px}.spend-span button{flex:1}
-/* Сводка месяца */
-.tone-month{--g1:#8fb8ff;--g2:#7fd6a8;--g3:var(--purple)}
-.fin-month,.fin-goals{margin-top:26px}
-.month-card{position:relative;display:grid;gap:16px;padding:18px;border-radius:22px;overflow:hidden;isolation:isolate;color:var(--text);
- background:linear-gradient(150deg,rgb(143 184 255 / .16),rgb(127 214 168 / .07) 60%,transparent),color-mix(in srgb,var(--panel) 70%,transparent)}
-.month-card .sp-glow{background:radial-gradient(circle,rgb(143 184 255 / .3),transparent 65%);animation:aurora-drift 17s ease-in-out infinite alternate}
-.mc-main{display:grid;gap:4px}
-.mc-main small{font-size:12px;color:var(--muted)}
-.mc-main b{font-size:30px;font-weight:550;letter-spacing:-.045em;line-height:1.1}
-.mc-main em{font-style:normal;font-size:11px;color:var(--muted)}
-.mc-flow{display:flex;gap:18px;flex-wrap:wrap}
-.mc-flow>span{display:grid;gap:2px}
-.mc-flow small{font-size:11px;color:var(--muted)}
-.mc-flow b{font-size:14px;font-weight:550}
-.mb-chart{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;height:96px;align-items:end}
-.mb-col{display:grid;grid-template-rows:1fr auto;gap:5px;height:100%;text-align:center}
-.mb-col small{font-size:10px;color:var(--muted)}
-.mb-col.now small{color:var(--text);font-weight:600}
-.mb-bars{display:flex;align-items:flex-end;justify-content:center;gap:3px;height:100%}
-.mb-bars i{width:9px;height:var(--h);min-height:2px;border-radius:5px 5px 2px 2px;transform-origin:bottom;animation:mb-grow .8s calc(var(--n)*80ms) cubic-bezier(.2,.8,.2,1) both}
-@keyframes mb-grow{from{transform:scaleY(0)}}
-.mb-in{background:linear-gradient(180deg,#8fe0b4,#4fae7f)}
-.mb-out{background:linear-gradient(180deg,#f29ac0,#b8577f)}
-.mb-legend i.mb-in,.mb-legend i.mb-out{width:10px;height:10px;border-radius:3px}
-.month-head .spend-total{display:block;font-size:clamp(32px,10vw,48px);line-height:1.04;font-weight:500;letter-spacing:-.055em}
-.month-part{margin-bottom:26px}
-.month-part .sec-row b{font-size:15px;font-weight:600}
-.mr-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 0;border-bottom:1px solid color-mix(in srgb,var(--text) 6%,transparent)}
-.mr-row>span{display:grid;gap:2px;min-width:0}
-.mr-row small{font-size:11px;color:var(--muted)}
-.mr-row.k-in>b{color:#8fe0b4}.mr-row.k-out>b{color:#f29ac0}
-.month-part .text-link{margin-top:6px}
-.month-plan p{font-size:13px;line-height:1.55;color:var(--muted)}
-.month-plan p b{color:var(--text)}
 /* Цели */
 .goal-list{display:grid;gap:10px}
 .goal-card{display:flex;align-items:center;gap:14px;width:100%;padding:14px;border:0;border-radius:20px;text-align:left;color:var(--text);
@@ -2301,17 +2267,6 @@ li.done>.wish-check{background:var(--accent);border-color:var(--accent)}
 .fc-head small{font-size:12px}
 .fc-avatar{width:40px;height:40px;flex-shrink:0;border-radius:50%;display:grid;place-items:center;font-weight:600;color:#fff;
  background:linear-gradient(140deg,hsl(var(--h,200) 62% 55%),hsl(calc(var(--h,200) + 40) 55% 32%))}
-.fw-list{list-style:none;margin:12px 0 0;padding:0;display:grid}
-.fw-item{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid color-mix(in srgb,var(--text) 6%,transparent)}
-.fw-title{flex:1;min-width:0;display:grid;gap:1px}
-.fw-title b{font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.fw-title small{font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.fw-item.taken .fw-title b{opacity:.6}
-.fw-gift{display:inline-flex;align-items:center;gap:6px;flex-shrink:0;min-height:34px;padding:6px 11px;border-radius:12px;border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);background:rgb(var(--accent-rgb) / .1);color:var(--accent);font-size:12px;font-weight:550}
-.fw-gift svg{width:14px;height:14px}
-.fw-gift.mine{background:var(--accent);color:#22301b;border-color:var(--accent)}
-.fw-gift.busy{border-color:transparent;background:color-mix(in srgb,var(--text) 7%,transparent);color:var(--muted)}
-.fc-none{font-size:12px;margin-top:10px}
 .split-row{display:flex;align-items:center;gap:12px;padding:11px 2px;border-bottom:1px solid color-mix(in srgb,var(--text) 6%,transparent)}
 .split-row.settle .sp-amount{color:#8fe0b4}
 .split-row .icon-btn{flex-shrink:0}
@@ -2357,3 +2312,46 @@ li.done>.wish-check{background:var(--accent);border-color:var(--accent)}
 html .panel.hero.tag-hero .result-pair.positive{color:var(--accent)}
 html .panel.hero.tag-hero .result-pair.negative,html .panel.hero.tag-hero .negative{color:var(--negative)}
 html .panel.hero.tag-hero .eyebrow{color:var(--muted)}
+
+/* Друзья: одна кнопка общей траты, долг — касанием */
+.split-cta{position:relative;display:flex;align-items:center;gap:14px;width:100%;margin:0 0 22px;padding:16px 18px;border:0;border-radius:22px;text-align:left;color:#22301b;overflow:hidden;isolation:isolate;
+ background:linear-gradient(120deg,var(--accent),color-mix(in srgb,var(--accent) 55%,#f0d36b));box-shadow:0 12px 32px -14px rgb(var(--accent-rgb) / .6)}
+.split-cta:before{content:"";position:absolute;inset:0;z-index:-1;background:radial-gradient(circle at 85% -20%,rgb(255 255 255 / .45),transparent 55%);animation:aurora-drift 12s ease-in-out infinite alternate}
+.split-cta-icon{display:grid;place-items:center;width:44px;height:44px;border-radius:15px;background:rgb(34 48 27 / .14);flex-shrink:0}
+.split-cta-text{flex:1;min-width:0;display:grid;gap:2px}
+.split-cta-text b{font-size:17px;font-weight:600;letter-spacing:-.03em}
+.split-cta-text small{font-size:12px;opacity:.72}
+.split-cta>svg{width:22px;height:22px;flex-shrink:0}
+.split-cta:active{transform:scale(.98)}
+.friend-card{display:flex;align-items:center;gap:14px}
+.fc-info{flex:1;min-width:0;display:grid;gap:4px;justify-items:start}
+.fc-info>b{font-size:15px;font-weight:550}
+.fc-debt{display:inline-flex;align-items:center;gap:6px;max-width:100%;min-height:30px;padding:4px 10px 4px 12px;border:0;border-radius:999px;font-size:12px;font-weight:550;background:color-mix(in srgb,var(--text) 8%,transparent);color:var(--text)}
+.fc-debt.plus{background:rgb(143 224 180 / .14);color:#8fe0b4}.fc-debt.minus{background:rgb(242 154 192 / .14);color:#f29ac0}
+.fc-debt svg{width:13px;height:13px;flex-shrink:0}
+.fc-debt span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Шаги: крупное кольцо и пустое состояние */
+.steps-hero{position:relative;display:flex;align-items:center;gap:22px;margin-bottom:26px;padding:22px;border-radius:26px;overflow:hidden;isolation:isolate;
+ background:linear-gradient(150deg,color-mix(in srgb,var(--purple) 22%,var(--panel)),color-mix(in srgb,var(--accent) 9%,var(--panel)) 65%,var(--panel))}
+.steps-glow{position:absolute;right:-60px;top:-80px;width:240px;height:240px;border-radius:50%;z-index:-1;background:radial-gradient(circle,rgb(var(--purple-rgb) / .4),transparent 65%);animation:aurora-drift 15s ease-in-out infinite alternate}
+.steps-ring{position:relative;display:grid;place-items:center;flex-shrink:0}
+.steps-ring-in{position:absolute;display:grid;justify-items:center;gap:0;text-align:center}
+.steps-ring-in b{font-size:26px;font-weight:550;letter-spacing:-.05em;line-height:1.05}
+.steps-ring-in small{font-size:11px;color:var(--muted)}
+.steps-meta{display:grid;gap:8px;min-width:0}
+.steps-meta small{font-size:13px;color:var(--muted)}
+.steps-hero.done .steps-meta>small:last-child{color:var(--accent)}
+.steps-empty{display:grid;justify-items:center;gap:10px;text-align:center;padding:34px 18px}
+.steps-empty p{font-size:13px;color:var(--muted);max-width:320px;line-height:1.55}
+.steps-off-line{font-size:12px;color:var(--muted)}
+.act-chart{margin-bottom:26px}
+@media(prefers-reduced-motion:reduce){.split-cta:before,.steps-glow{animation:none}}
+/* Политика конфиденциальности (для Google Play) */
+.privacy-page{background:var(--bg)}
+.privacy{max-width:720px;margin:0 auto;padding:32px 20px 60px;line-height:1.65;font-size:15px}
+.privacy h1{font-size:30px;margin-bottom:6px}
+.privacy h2{font-size:19px;margin:28px 0 8px}
+.privacy p,.privacy li{color:color-mix(in srgb,var(--text) 82%,transparent)}
+.privacy ul{padding-left:20px;margin:8px 0}
+.privacy li{margin:6px 0}
+.privacy a{color:var(--accent);text-decoration:underline}

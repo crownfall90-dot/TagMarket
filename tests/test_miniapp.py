@@ -38,9 +38,10 @@ import insights
 import spend
 import income
 import goals
-import summary
 import friends
 import backup
+import devices
+import live
 import lists
 import projects
 import partner
@@ -1837,16 +1838,19 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_station_preferences_are_per_user_and_validated(self):
         home = await (await self.call("GET", "/api/bootstrap")).json()
-        self.assertEqual(home["station"]["home"], ["circle", "finance", "activity", "tasks", "events", "wish"])
+        self.assertEqual(home["station"]["home"], ["circle", "finance", "activity", "tasks", "events", "notes"])
         saved = await (await self.call("PUT", "/api/preferences/station",
-                                       json={"home": ["events", "finance"], "metrics": ["workout", "weight"]})).json()
+                                       json={"home": ["events", "finance"], "metrics": ["steps"]})).json()
         self.assertEqual(saved["home"], ["events", "finance"])
         self.assertIn("note", saved["quick"])          # неизменённое остаётся как было
-        self.assertEqual((await (await self.call("GET", "/api/bootstrap")).json())["station"]["metrics"], ["workout", "weight"])
+        self.assertEqual((await (await self.call("GET", "/api/bootstrap")).json())["station"]["metrics"], ["steps"])
         self.assertEqual((await (await self.call("GET", "/api/preferences/station", uid=2)).json())["home"],
-                         ["circle", "finance", "activity", "tasks", "events", "wish"])
+                         ["circle", "finance", "activity", "tasks", "events", "notes"])
+        # сохранённая раньше карточка «вишлисты» (wish) теперь — «заметки»
+        partner.kv_set(self.db, "station_prefs:3", json.dumps({"home": ["finance", "wish"]}))
+        self.assertEqual((await (await self.call("GET", "/api/preferences/station", uid=3)).json())["home"], ["finance", "notes"])
         for bad in ({"home": ["casino"]}, {"home": ["finance", "finance"]}, {"theme": []}, {"quick": "steps"},
-                    {"metrics": ["sleep"]}, {"quick": ["sleep"]}):    # сон и пульс убраны; шаги — только с телефона
+                    {"metrics": ["sleep"]}, {"metrics": ["weight"]}, {"quick": ["sleep"]}):    # сон и пульс убраны; шаги — только с телефона
             self.assertEqual((await self.call("PUT", "/api/preferences/station", json=bad)).status, 400, bad)
 
     async def test_notes_import_from_phone_skips_duplicates(self):
@@ -1990,33 +1994,18 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(goals.months_left(date(2026, 12, 25), date(2026, 10, 22)), 3)
         self.assertEqual(goals.months_left(date(2026, 10, 10), date(2026, 10, 22)), 1)
 
-    async def test_month_summary_counts_salary_and_spend_by_date(self):
+    async def test_spend_overview_for_a_year(self):
         db = self.app["db"]
         on = date(2026, 10, 22)
-        income.save(db, 1, {"kind": "salary", "amount": 1000, "day": 20, "currency": "USD"})
-        income.save(db, 1, {"kind": "bonus", "amount": 300, "day": 28, "currency": "USD"})
-        db.execute("UPDATE income_items SET created_at='2026-08-01T00:00:00+00:00'")
         spend.save(db, 1, {"title": "Netflix", "amount": 10, "currency": "EUR", "kind": "recurring", "period": "month",
                            "category": "subs", "day": "2026-01-05"})
         spend.save(db, 1, {"title": "Кроссовки", "amount": 90, "currency": "USD", "kind": "once", "category": "shopping",
                            "day": "2026-10-03"})
-        db.commit()
-        r = summary.report(db, 1, "2026-10", on)
-        self.assertEqual((r["income"], r["income_ahead"]), ({"USD": 1000.0}, {"USD": 300.0}))
-        self.assertEqual(r["spend"], {"EUR": 10.0, "USD": 90.0})
-        self.assertEqual((r["day"], r["days"]), (22, 31))
-        self.assertEqual([h["month"] for h in r["history"]], ["2026-05", "2026-06", "2026-07", "2026-08", "2026-09", "2026-10"])
-        self.assertEqual(r["history"][2]["income"], {})                       # до того, как зарплату добавили, — пусто
-        self.assertEqual(r["history"][3]["income"], {"USD": 1300.0})
-        self.assertEqual(r["history"][-1]["income"], {"USD": 1300.0})          # текущий месяц — с ожидаемым
-        self.assertEqual(r["history"][0]["spend"], {"EUR": 10.0})
-        self.assertEqual((await self.call("GET", "/api/month?month=2026-13")).status, 400)
-        self.assertEqual((await self.call("GET", "/api/month")).status, 200)
         year = spend.overview(db, 1, on, span="year")
         self.assertEqual(year["this_month"], {"EUR": 120.0, "USD": 90.0})       # весь год: 12 списаний Netflix
         self.assertEqual((await self.call("GET", "/api/spend?span=week")).status, 400)
 
-    async def test_friends_share_wishlists_and_split_expenses(self):
+    async def test_friends_split_expenses(self):
         # 1 пригласил 2 и 3; 4 — чужой
         for g in ("2", "3"):
             partner.kv_set(self.db, f"guest:{g}", "1")
@@ -2027,25 +2016,9 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(friends.circle(self.db, "2"), ["1", "3"])
         self.assertEqual(friends.circle(self.db, "1"), ["2", "3"])
         self.assertEqual(friends.circle(self.db, "4"), ["99"])
-        # вишлист Лены: виден друзьям, только когда она его открыла
-        wl = await (await self.call("POST", "/api/wishlists", uid=2, json={"title": "ДР"})).json()
-        wl = await (await self.call("POST", f"/api/wishlists/{wl['id']}/items", uid=2, json={"title": "Кофемашина", "price": 300})).json()
-        item = wl["items"][0]["id"]
         lena = lambda d: next(f for f in d["friends"] if f["id"] == "2")
-        self.assertEqual(lena(await (await self.call("GET", "/api/friends")).json())["wishlists"], [])
-        self.assertEqual((await self.call("POST", f"/api/friends/wish/{item}")).status, 404)
-        shared = await (await self.call("PATCH", f"/api/wishlists/{wl['id']}", uid=2, json={"shared": True})).json()
-        self.assertTrue(shared["shared"])
-        data = await (await self.call("POST", f"/api/friends/wish/{item}")).json()
-        mine = lena(data)["wishlists"][0]["items"][0]
-        self.assertTrue(mine["reserved"] and mine["mine"])
-        other = lena(await (await self.call("GET", "/api/friends", uid=3)).json())["wishlists"][0]["items"][0]
-        self.assertTrue(other["reserved"] and not other["mine"])               # третий видит: занято
-        self.assertEqual((await self.call("POST", f"/api/friends/wish/{item}", uid=3)).status, 400)
-        self.assertEqual((await self.call("DELETE", f"/api/friends/wish/{item}", uid=3)).status, 400)
-        own = (await (await self.call("GET", "/api/lists", uid=2)).json())["wishlists"][0]["items"][0]
-        self.assertNotIn("reserved", own)                                       # сама Лена сюрприз не видит
-        self.assertEqual((await self.call("POST", f"/api/friends/wish/{item}", uid=4)).status, 404)
+        self.assertNotIn("wishlists", lena(await (await self.call("GET", "/api/friends")).json()))
+        self.assertEqual((await self.call("POST", "/api/friends/wish/x")).status, 404)
         # общие траты: я заплатил 90 за троих, Лена вернула 20
         r = await self.call("POST", "/api/friends/split", json={"title": "Пицца", "amount": 90, "currency": "BYN",
                                                                 "members": ["1", "2", "3"]})
@@ -2067,6 +2040,87 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.call("DELETE", f"/api/friends/split/{pizza['id']}", uid=2)).status, 404)
         self.assertEqual((await self.call("DELETE", f"/api/friends/split/{pizza['id']}")).status, 200)
 
+    async def test_android_app_signs_in_with_a_code_from_the_bot(self):
+        """Приложение для Android: код из бота → токен устройства; он открывает те же разделы и принимает шаги."""
+        db = self.app["db"]
+        code = devices.new_code(db, 1)
+        self.assertRegex(code, r"^[A-Z2-9]{4}-[A-Z2-9]{4}$")
+        r = await self.client.post("/api/device/pair", json={"code": code.lower().replace("-", " "), "name": "Realme"})
+        self.assertEqual(r.status, 201, await r.text())
+        token = (await r.json())["token"]
+        self.assertTrue(token.startswith("pld_"))
+        self.assertNotIn(token, str(db.execute("SELECT * FROM app_devices").fetchall()))      # в базе только хэш
+        # код одноразовый
+        self.assertEqual((await self.client.post("/api/device/pair", json={"code": code})).status, 400)
+        auth = {"Authorization": f"Bearer {token}"}
+        boot = await self.client.get("/api/bootstrap", headers=auth)
+        self.assertEqual(boot.status, 200, await boot.text())
+        self.assertEqual((await boot.json())["user"]["id"], 1)
+        # шаги из Health Connect — тем же токеном
+        sync = await self.client.post("/api/activity/sync", headers=auth, json={"steps": 4321})
+        self.assertEqual(sync.status, 200, await sync.text())
+        act = await (await self.call("GET", "/api/activity?days=7")).json()
+        self.assertEqual(act["summary"]["steps"]["today"], 4321)
+        # список устройств и отвязка
+        listed = await (await self.client.get("/api/devices", headers=auth)).json()
+        self.assertEqual([d["name"] for d in listed["devices"]], ["Realme"])
+        self.assertEqual((await self.client.delete(f"/api/devices/{listed['devices'][0]['id']}", headers=auth)).status, 200)
+        self.assertEqual((await self.client.get("/api/bootstrap", headers=auth)).status, 401)
+        # неверный, просроченный код и чужой токен
+        self.assertEqual((await self.client.post("/api/device/pair", json={"code": "ABCD-EFGH"})).status, 400)
+        old = devices.new_code(db, 1)
+        db.execute("UPDATE app_pairing SET expires_at='2000-01-01T00:00:00+00:00'")
+        db.commit()
+        self.assertEqual((await self.client.post("/api/device/pair", json={"code": old})).status, 400)
+        self.assertEqual((await self.client.get("/api/bootstrap", headers={"Authorization": "Bearer pld_nope"})).status, 401)
+        # код для входа можно получить и из Mini App
+        made = await (await self.call("POST", "/api/devices/code")).json()
+        self.assertEqual(made["minutes"], 10)
+        # политика конфиденциальности для Google Play открывается без входа
+        page = await self.client.get("/app/privacy.html")
+        self.assertEqual(page.status, 200)
+        self.assertIn("Health Connect", await page.text())
+
+    async def test_live_sync_answers_as_soon_as_data_changes(self):
+        """/api/live: изменение в любом окне, с телефона или у друга — сразу виден новый номер версии."""
+        start = await (await self.call("GET", "/api/live")).json()          # без rev — текущий номер сразу
+        self.assertEqual(start["changed"], [])
+        rev = start["rev"]
+        # изменение через API — у этого же пользователя в другой копии приложения
+        await self.call("POST", "/api/goals", json={"title": "Отпуск", "target": 100, "currency": "USD"})
+        got = await (await self.call("GET", f"/api/live?rev={rev}")).json()
+        self.assertGreater(got["rev"], rev)
+        self.assertIn("goals", got["changed"])
+        # ничего не поменялось — ждём (здесь 1 секунду вместо 25) и отдаём тот же номер
+        with patch.object(miniapp, "LIVE_WAIT", 1):
+            same = await (await self.call("GET", f"/api/live?rev={got['rev']}")).json()
+        self.assertEqual((same["rev"], same["changed"]), (got["rev"], []))
+        # чтение ничего не отмечает
+        await self.call("GET", "/api/goals")
+        with patch.object(miniapp, "LIVE_WAIT", 1):
+            self.assertEqual((await (await self.call("GET", f"/api/live?rev={got['rev']}")).json())["changed"], [])
+        # общая трата: у друга экран обновится сам
+        partner.kv_set(self.db, "guest:2", "1")
+        partner.kv_set(self.db, "guest_by:2", "1")
+        friend_rev = (await (await self.call("GET", "/api/live", uid=2)).json())["rev"]
+        r = await self.call("POST", "/api/friends/split", json={"title": "Пицца", "amount": 20, "currency": "BYN",
+                                                                "members": ["1", "2"]})
+        self.assertEqual(r.status, 201, await r.text())
+        friend = await (await self.call("GET", f"/api/live?rev={friend_rev}", uid=2)).json()
+        self.assertIn("friends", friend["changed"])
+        # шаги с телефона (без Telegram) — тоже
+        key = (await (await self.call("POST", "/api/activity/sync/key")).json())["key"]
+        before = (await (await self.call("GET", "/api/live")).json())["rev"]
+        await self.client.post("/api/activity/sync", headers={"Authorization": f"Bearer {key}"}, json={"steps": 1200})
+        steps = await (await self.call("GET", f"/api/live?rev={before}")).json()
+        self.assertIn("activity", steps["changed"])
+        # уведомление бота о сделке TagMarket (другой процесс, та же база)
+        before = steps["rev"]
+        partner.record_notification(self.db, "1", "trade:123:9", "trades", "SONIC · Сделка", "+1 $")
+        trade = await (await self.call("GET", f"/api/live?rev={before}")).json()
+        self.assertIn("tagmarket", trade["changed"])
+        self.assertEqual(live.section_for("/api/banks/x"), "banks")
+
     def test_backup_snapshot_is_consistent_and_keeps_last_days(self):
         with tempfile.TemporaryDirectory() as tmp:
             src = Path(tmp) / "state.db"
@@ -2083,6 +2137,19 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(backup.restore_check(path))
             self.assertEqual(oct(path.stat().st_mode & 0o777), "0o600")
             self.assertIsNone(backup.snapshot(str(Path(tmp) / "нет.db"), out))
+
+    async def test_changing_the_kind_changes_the_title_too(self):
+        """Зарплату переделали в премию — название «Зарплата» не прилипает к премии."""
+        item = await (await self.call("POST", "/api/income", json={"kind": "salary", "amount": 100, "day": 5,
+                                                                   "currency": "USD"})).json()
+        self.assertEqual(item["title"], "Зарплата")
+        fixed = await (await self.call("PATCH", f"/api/income/{item['id']}", json={"kind": "bonus", "amount": 100,
+                                                                                   "day": 5})).json()
+        self.assertEqual((fixed["kind"], fixed["title"]), ("bonus", "Премия"))
+        # уже испорченная запись (тип премия, название «Зарплата») чинится при запуске
+        self.app["db"].execute("UPDATE income_items SET title='Зарплата' WHERE id=?", (item["id"],))
+        income.setup(self.app["db"])
+        self.assertEqual((await (await self.call("GET", "/api/income")).json())["items"][0]["title"], "Премия")
 
     def test_salary_pay_days_clamp_to_month_end_and_never_backfill(self):
         d = date
@@ -2111,17 +2178,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(spend.charges(d(2026, 1, 31), "month", d(2026, 2, 1), d(2026, 4, 30)),
                          [d(2026, 2, 28), d(2026, 3, 31), d(2026, 4, 30)])
 
-    async def test_wishlists_notes_and_calendar(self):
-        created = await (await self.call("POST", "/api/wishlists", json={"title": "Фото", "emoji": "📷"})).json()
-        lid = created["id"]
-        listed = await (await self.call("POST", f"/api/wishlists/{lid}/items",
-                                         json={"title": "Объектив 50mm", "price": 299.99, "url": "https://example.com/lens"})).json()
-        item = listed["items"][0]
-        self.assertEqual(listed["totals"], {"USD": 299.99})
-        done = await (await self.call("PATCH", f"/api/wishlists/{lid}/items/{item['id']}", json={"done": True})).json()
-        self.assertEqual((done["open"], done["done"], done["totals"]), (0, 1, {}))
-        self.assertEqual((await self.call("POST", f"/api/wishlists/{lid}/items", json={"title": "x", "url": "javascript:alert(1)"})).status, 400)
-        self.assertEqual((await self.call("PATCH", f"/api/wishlists/{lid}", json={"title": "Чужой"}, uid=2)).status, 404)
+    async def test_notes_and_calendar(self):
         note = await (await self.call("POST", "/api/notes", json={"title": "Идеи", "body": "Поход в горы"})).json()
         pinned = await (await self.call("PATCH", f"/api/notes/{note['id']}", json={"pinned": True})).json()
         self.assertTrue(pinned["pinned"])
@@ -2142,10 +2199,10 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.call("POST", "/api/events", json={"day": "2026-02-30", "title": "x"})).status, 400)
         self.assertEqual((await self.call("POST", "/api/events", json={"day": "2026-02-03", "title": "x", "time": "25:00"})).status, 400)
         overview = await (await self.call("GET", "/api/lists")).json()
-        self.assertEqual(len(overview["wishlists"]), 1)
+        self.assertNotIn("wishlists", overview)
         self.assertEqual(len(overview["notes"]), 1)
-        self.assertEqual((await (await self.call("GET", "/api/lists", uid=2)).json())["wishlists"], [])
-        self.assertEqual((await self.call("DELETE", f"/api/wishlists/{lid}")).status, 200)
+        self.assertEqual((await (await self.call("GET", "/api/lists", uid=2)).json())["notes"], [])
+        self.assertEqual((await self.call("POST", "/api/wishlists", json={"title": "x"})).status, 404)   # вишлистов больше нет
 
     async def test_daily_rate_can_skip_weekends_without_changing_other_periods(self):
         friday, monday = date(2026, 10, 2), date(2026, 10, 5)
@@ -3640,7 +3697,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                     with self.subTest(module=module):
                         self.assertIn(f"{module}.py", shipped)
                         self.assertIn(f"{module}.py", rollbackable)
-        for module in ("activity", "lists", "banks", "insights", "projects", "spend", "income", "goals", "summary", "friends", "backup"):
+        for module in ("activity", "lists", "banks", "insights", "projects", "spend", "income", "goals", "friends", "backup", "devices", "live"):
             self.assertIn(f"{module}.py", shipped)
 
     async def test_guest_cannot_toggle_shared_account_polling(self):

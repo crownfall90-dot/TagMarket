@@ -1,12 +1,8 @@
-"""Друзья: общие вишлисты и общие траты.
+"""Друзья: общие траты.
 
 Круг друзей — те, кого связывает приглашение: кто пригласил меня, кого
 пригласил я и остальные приглашённые тем же человеком. Больше никого
 Platformer не показывает.
-
-Вишлист становится виден кругу, когда владелец включает «показать друзьям».
-Друг может отметить желание «подарю» — остальные друзья видят, что оно
-занято, а сам владелец не видит: сюрприз не портится.
 
 Общие траты — кто за что платил и между кем делим. Из всех записей
 считается, кто кому сколько должен; «вернул долг» — такая же запись.
@@ -15,7 +11,6 @@ from datetime import datetime, timezone
 import json
 import uuid
 
-import lists
 import partner
 from spend import CURRENCIES, _cents, _date, _text, today
 
@@ -24,11 +19,6 @@ MAX_SPLIT = 1000
 
 def setup(db):
     db.executescript("""
-        CREATE TABLE IF NOT EXISTS wish_reservations (
-            item_id TEXT PRIMARY KEY,
-            by_uid TEXT NOT NULL,
-            at TEXT NOT NULL
-        );
         CREATE TABLE IF NOT EXISTS split_items (
             id TEXT PRIMARY KEY,
             created_by TEXT NOT NULL,
@@ -78,56 +68,6 @@ def circle(db, uid) -> list[str]:
 
 def is_friend(db, uid, other) -> bool:
     return str(other) in circle(db, uid)
-
-
-# ── общие вишлисты ───────────────────────────────────────────────────────
-
-def shared_ids(db, owner):
-    return {r[0] for r in db.execute("SELECT id FROM wishlists WHERE owner_id=? AND shared=1", (str(owner),))}
-
-
-def friend_wishlists(db, viewer, friend):
-    """Открытые другом вишлисты — глазами viewer: с отметками «подарю»."""
-    if not is_friend(db, viewer, friend):
-        raise LookupError("Друг не найден")
-    out = []
-    for list_id in sorted(shared_ids(db, friend)):
-        wl = lists.wishlist(db, friend, list_id)
-        items = []
-        for item in wl["items"]:
-            if item["done"]:
-                continue
-            row = db.execute("SELECT by_uid FROM wish_reservations WHERE item_id=?", (item["id"],)).fetchone()
-            items.append({**item, "reserved": bool(row), "mine": bool(row) and row[0] == str(viewer)})
-        out.append({"id": wl["id"], "title": wl["title"], "emoji": wl["emoji"], "items": items})
-    return out
-
-
-def _wish_owner(db, item_id):
-    row = db.execute("SELECT w.owner_id, w.shared, i.done FROM wish_items i JOIN wishlists w ON w.id=i.list_id WHERE i.id=?",
-                     (item_id,)).fetchone()
-    if row is None:
-        raise LookupError("Желание не найдено")
-    return row
-
-
-def reserve(db, viewer, item_id, on=True):
-    owner, shared, done = _wish_owner(db, item_id)
-    if not shared or not is_friend(db, viewer, owner):
-        raise LookupError("Желание не найдено")
-    with db:
-        row = db.execute("SELECT by_uid FROM wish_reservations WHERE item_id=?", (item_id,)).fetchone()
-        if on:
-            if done:
-                raise ValueError("Это желание уже исполнено")
-            if row and row[0] != str(viewer):
-                raise ValueError("Это желание уже кто-то дарит")
-            if not row:
-                db.execute("INSERT INTO wish_reservations (item_id,by_uid,at) VALUES (?,?,?)", (item_id, str(viewer), _now()))
-        elif row:
-            if row[0] != str(viewer):
-                raise ValueError("Снять отметку может только тот, кто её поставил")
-            db.execute("DELETE FROM wish_reservations WHERE item_id=?", (item_id,))
 
 
 # ── общие траты ──────────────────────────────────────────────────────────
@@ -212,6 +152,12 @@ def add_split(db, viewer, data):
     return item_id
 
 
+def participants(db, item_id):
+    """Кто затронут записью: платил и между кем делили."""
+    row = db.execute("SELECT payer, members FROM split_items WHERE id=?", (item_id,)).fetchone()
+    return sorted({row[0], *json.loads(row[1])}) if row else []
+
+
 def delete_split(db, viewer, item_id):
     with db:
         row = db.execute("SELECT created_by FROM split_items WHERE id=?", (item_id,)).fetchone()
@@ -227,11 +173,10 @@ def overview(db, viewer):
     owed = balances(rows, viewer)
     people = []
     for f in friends:
-        people.append({"id": f, "name": name(db, f), "balance": owed.get(f, {}),
-                       "wishlists": friend_wishlists(db, viewer, f)})
+        people.append({"id": f, "name": name(db, f), "balance": owed.get(f, {})})
     # бывшие друзья с незакрытым долгом тоже видны — иначе долг пропадает молча
     for f, bal in owed.items():
         if f not in friends and bal:
-            people.append({"id": f, "name": name(db, f), "balance": bal, "wishlists": [], "former": True})
+            people.append({"id": f, "name": name(db, f), "balance": bal, "former": True})
     return {"me": viewer, "friends": people, "split": [_split_row(db, r, viewer) for r in rows[:100]],
-            "shared_lists": sorted(shared_ids(db, viewer)), "currencies": list(CURRENCIES)}
+            "currencies": list(CURRENCIES)}
