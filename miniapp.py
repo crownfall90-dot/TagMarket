@@ -33,11 +33,14 @@ import activity
 import banks
 import bot as logic
 import coordination
+import friends
 import fx
+import goals
 import income
 import insights
 import lists
 import spend
+import summary
 import partner
 import projects
 import store
@@ -306,6 +309,7 @@ async def bootstrap(request):
     # и валюты трат: подписки часто в EUR
     project_currencies |= {r[0] for r in db.execute("SELECT DISTINCT currency FROM spend_items WHERE owner_id=?", (str(uid),))}
     project_currencies |= {r[0] for r in db.execute("SELECT DISTINCT currency FROM income_items WHERE owner_id=?", (str(uid),))}
+    project_currencies |= {r[0] for r in db.execute("SELECT DISTINCT currency FROM goals WHERE owner_id=?", (str(uid),))}
     display_currency = partner.kv_get(db, f"display_currency:{uid}", "USD")
     unsupported = currencies - {"USD", "RUB", "BYN"}
     byn_per_unit = fx_info = None
@@ -1469,13 +1473,57 @@ async def spend_api(request):
     db = request.app["db"]
     item_id, method = request.match_info.get("item_id"), request.method
     if method == "GET":
-        return web.json_response(spend.overview(db, uid))
+        return web.json_response(_section_call(lambda: spend.overview(db, uid, span=request.query.get("span", "month"))))
     if method == "DELETE":
         _section_call(lambda: spend.delete(db, uid, item_id))
         return web.json_response({"ok": True})
     data = await json_object(request)
     return web.json_response(_section_call(lambda: spend.save(db, uid, data, item_id)),
                              status=201 if method == "POST" else 200)
+
+
+async def goals_api(request):
+    """Цели накоплений: GET — список, POST — новая, PATCH/DELETE /{id}, POST /{id}/add — отложить или забрать."""
+    uid, _ = authorize(request)
+    db = request.app["db"]
+    goal_id, method = request.match_info.get("goal_id"), request.method
+    if method == "GET":
+        return web.json_response(goals.overview(db, uid))
+    if method == "DELETE":
+        _section_call(lambda: goals.delete(db, uid, goal_id))
+        return web.json_response({"ok": True})
+    data = await json_object(request)
+    if request.path.endswith("/add"):
+        return web.json_response(_section_call(lambda: goals.contribute(db, uid, goal_id, data.get("amount"))))
+    return web.json_response(_section_call(lambda: goals.save(db, uid, data, goal_id)),
+                             status=201 if method == "POST" else 200)
+
+
+async def friends_api(request):
+    """Друзья: GET — круг, их открытые вишлисты и общие траты с долгами;
+    POST/DELETE /wish/{item_id} — «подарю»; POST /split — запись, DELETE /split/{id}."""
+    uid, _ = authorize(request)
+    db = request.app["db"]
+    info, method, path = request.match_info, request.method, request.path
+    if path == "/api/friends":
+        return web.json_response(friends.overview(db, uid))
+    if "/wish/" in path:
+        _section_call(lambda: friends.reserve(db, uid, info["item_id"], method == "POST"))
+        return web.json_response(friends.overview(db, uid))
+    if method == "DELETE":
+        _section_call(lambda: friends.delete_split(db, uid, info["split_id"]))
+    else:
+        data = await json_object(request)
+        _section_call(lambda: friends.add_split(db, uid, data))
+    return web.json_response(friends.overview(db, uid), status=201 if method == "POST" else 200)
+
+
+async def month_api(request):
+    """Сводка месяца: зарплата и траты по датам, по валютам; полгода для графика."""
+    uid, _ = authorize(request)
+    db = request.app["db"]
+    income.credit_due(db, uid)
+    return web.json_response(_section_call(lambda: summary.report(db, uid, request.query.get("month"))))
 
 
 async def income_api(request):
@@ -1742,6 +1790,8 @@ def setup(app):
     lists.setup(app["db"])
     spend.setup(app["db"])
     income.setup(app["db"])
+    goals.setup(app["db"])
+    friends.setup(app["db"])
     # Legacy copies lack provenance. Matching only a login is unsafe: an
     # independently added account may use that number with another password.
     with locked(accounts.PATH):
@@ -1783,6 +1833,17 @@ def setup(app):
     app.router.add_get("/api/activity/sync/key", activity_sync_key)
     app.router.add_post("/api/activity/sync/key", activity_sync_key)
     app.router.add_delete("/api/activity/sync/key", activity_sync_key)
+    app.router.add_get("/api/goals", goals_api)
+    app.router.add_post("/api/goals", goals_api)
+    app.router.add_patch("/api/goals/{goal_id}", goals_api)
+    app.router.add_delete("/api/goals/{goal_id}", goals_api)
+    app.router.add_post("/api/goals/{goal_id}/add", goals_api)
+    app.router.add_get("/api/month", month_api)
+    app.router.add_get("/api/friends", friends_api)
+    app.router.add_post("/api/friends/wish/{item_id}", friends_api)
+    app.router.add_delete("/api/friends/wish/{item_id}", friends_api)
+    app.router.add_post("/api/friends/split", friends_api)
+    app.router.add_delete("/api/friends/split/{split_id}", friends_api)
     app.router.add_get("/api/income", income_api)
     app.router.add_post("/api/income", income_api)
     app.router.add_patch("/api/income/{item_id}", income_api)

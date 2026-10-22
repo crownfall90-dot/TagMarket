@@ -2219,3 +2219,107 @@ li.done>.wish-check{background:var(--accent);border-color:var(--accent)}
 .inc-head .spend-total{display:block;font-size:clamp(32px,10vw,48px);line-height:1.04;font-weight:500;letter-spacing:-.055em;color:#8fe0b4}
 @media(prefers-reduced-motion:reduce){.inc-card .sp-glow,.inc-fill,.inc-mark,.inc-mark.got i{animation:none}}
 .inc-page .inc-sum .ss-main{display:none}
+.spend-span{margin:-10px 0 22px;max-width:220px}.spend-span button{flex:1}
+/* Сводка месяца */
+.tone-month{--g1:#8fb8ff;--g2:#7fd6a8;--g3:var(--purple)}
+.fin-month,.fin-goals{margin-top:26px}
+.month-card{position:relative;display:grid;gap:16px;padding:18px;border-radius:22px;overflow:hidden;isolation:isolate;color:var(--text);
+ background:linear-gradient(150deg,rgb(143 184 255 / .16),rgb(127 214 168 / .07) 60%,transparent),color-mix(in srgb,var(--panel) 70%,transparent)}
+.month-card .sp-glow{background:radial-gradient(circle,rgb(143 184 255 / .3),transparent 65%);animation:aurora-drift 17s ease-in-out infinite alternate}
+.mc-main{display:grid;gap:4px}
+.mc-main small{font-size:12px;color:var(--muted)}
+.mc-main b{font-size:30px;font-weight:550;letter-spacing:-.045em;line-height:1.1}
+.mc-main em{font-style:normal;font-size:11px;color:var(--muted)}
+.mc-flow{display:flex;gap:18px;flex-wrap:wrap}
+.mc-flow>span{display:grid;gap:2px}
+.mc-flow small{font-size:11px;color:var(--muted)}
+.mc-flow b{font-size:14px;font-weight:550}
+.mb-chart{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;height:96px;align-items:end}
+.mb-col{display:grid;grid-template-rows:1fr auto;gap:5px;height:100%;text-align:center}
+.mb-col small{font-size:10px;color:var(--muted)}
+.mb-col.now small{color:var(--text);font-weight:600}
+.mb-bars{display:flex;align-items:flex-end;justify-content:center;gap:3px;height:100%}
+.mb-bars i{width:9px;height:var(--h);min-height:2px;border-radius:5px 5px 2px 2px;transform-origin:bottom;animation:mb-grow .8s calc(var(--n)*80ms) cubic-bezier(.2,.8,.2,1) both}
+@keyframes mb-grow{from{transform:scaleY(0)}}
+.mb-in{background:linear-gradient(180deg,#8fe0b4,#4fae7f)}
+.mb-out{background:linear-gradient(180deg,#f29ac0,#b8577f)}
+.mb-legend i.mb-in,.mb-legend i.mb-out{width:10px;height:10px;border-radius:3px}
+.month-head .spend-total{display:block;font-size:clamp(32px,10vw,48px);line-height:1.04;font-weight:500;letter-spacing:-.055em}
+.month-part{margin-bottom:26px}
+.month-part .sec-row b{font-size:15px;font-weight:600}
+.mr-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 0;border-bottom:1px solid color-mix(in srgb,var(--text) 6%,transparent)}
+.mr-row>span{display:grid;gap:2px;min-width:0}
+.mr-row small{font-size:11px;color:var(--muted)}
+.mr-row.k-in>b{color:#8fe0b4}.mr-row.k-out>b{color:#f29ac0}
+.month-part .text-link{margin-top:6px}
+.month-plan p{font-size:13px;line-height:1.55;color:var(--muted)}
+.month-plan p b{color:var(--text)}
+/* Цели */
+.goal-list{display:grid;gap:10px}
+.goal-card{display:flex;align-items:center;gap:14px;width:100%;padding:14px;border:0;border-radius:20px;text-align:left;color:var(--text);
+ background:linear-gradient(120deg,rgb(var(--accent-rgb) / .08),transparent 70%),color-mix(in srgb,var(--panel) 75%,transparent);animation:goal-in .5s calc(var(--i)*70ms) both}
+@keyframes goal-in{from{opacity:0;transform:translateY(8px)}}
+.goal-ring{flex-shrink:0;width:54px;height:54px;border-radius:50%;display:grid;place-items:center;
+ background:conic-gradient(var(--accent) calc(var(--p)*1%),color-mix(in srgb,var(--text) 10%,transparent) 0)}
+.goal-ring span{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;font-size:20px;background:var(--panel)}
+.goal-body{flex:1;min-width:0;display:grid;gap:2px}
+.goal-body b{font-size:15px;font-weight:550;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.goal-body small{font-size:12px;color:var(--muted)}
+.goal-body em{font-style:normal;font-size:11px;color:var(--accent)}
+.goal-pct{font-size:15px;font-weight:600;letter-spacing:-.02em}
+.goal-card.done .goal-pct{color:var(--accent)}
+.goal-empty{width:100%;border:0;text-align:left}
+/* Первый запуск */
+.fin-onboard{position:relative;margin:0 0 22px;padding:18px;border-radius:22px;overflow:hidden;
+ background:linear-gradient(140deg,rgb(var(--accent-rgb) / .14),rgb(var(--purple-rgb) / .08) 60%,transparent),color-mix(in srgb,var(--panel) 70%,transparent)}
+.fo-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.fo-head h2{font-size:18px;margin-top:4px}
+.fo-meter{display:block;height:4px;border-radius:4px;background:color-mix(in srgb,var(--text) 10%,transparent);margin:14px 0 6px;overflow:hidden}
+.fo-meter i{display:block;height:100%;width:var(--w);border-radius:4px;background:var(--accent);transition:width .6s}
+.fo-step{display:flex;align-items:center;gap:12px;width:100%;padding:11px 0;border:0;background:none;color:var(--text);text-align:left}
+.fo-step+.fo-step{border-top:1px solid color-mix(in srgb,var(--text) 6%,transparent)}
+.fo-step>span:nth-child(2){flex:1;display:grid;gap:2px}
+.fo-step small{font-size:11px;color:var(--muted)}
+.fo-step>svg{width:16px;height:16px;color:var(--muted)}
+.fo-n{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-size:13px;font-weight:600;flex-shrink:0;background:color-mix(in srgb,var(--text) 8%,transparent)}
+.fo-step.done{opacity:.6}
+.fo-step.done .fo-n{background:var(--accent);color:#22301b}
+.fo-n svg{width:15px;height:15px}
+/* Друзья */
+.friends-block,.split-block{margin-bottom:26px}
+.debt-sum{display:grid;gap:2px;margin:-2px 0 14px}
+.debt-sum small{font-size:12px;color:var(--muted)}
+.debt-sum b{font-size:28px;font-weight:550;letter-spacing:-.045em}
+.debt-sum.plus b{color:#8fe0b4}.debt-sum.minus b{color:#f29ac0}
+.friend-list{display:grid;gap:12px}
+.friend-card{padding:16px;border-radius:22px;animation:goal-in .5s calc(var(--i)*70ms) both;
+ background:linear-gradient(140deg,hsl(var(--h) 60% 55% / .14),transparent 65%),color-mix(in srgb,var(--panel) 75%,transparent)}
+.friend-card.former{opacity:.7}
+.fc-head{display:flex;align-items:center;gap:12px}
+.fc-head>div{flex:1;min-width:0;display:grid;gap:2px}
+.fc-head b{font-size:15px;font-weight:550}
+.fc-head small{font-size:12px}
+.fc-avatar{width:40px;height:40px;flex-shrink:0;border-radius:50%;display:grid;place-items:center;font-weight:600;color:#fff;
+ background:linear-gradient(140deg,hsl(var(--h,200) 62% 55%),hsl(calc(var(--h,200) + 40) 55% 32%))}
+.fw-list{list-style:none;margin:12px 0 0;padding:0;display:grid}
+.fw-item{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid color-mix(in srgb,var(--text) 6%,transparent)}
+.fw-title{flex:1;min-width:0;display:grid;gap:1px}
+.fw-title b{font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fw-title small{font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fw-item.taken .fw-title b{opacity:.6}
+.fw-gift{display:inline-flex;align-items:center;gap:6px;flex-shrink:0;min-height:34px;padding:6px 11px;border-radius:12px;border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);background:rgb(var(--accent-rgb) / .1);color:var(--accent);font-size:12px;font-weight:550}
+.fw-gift svg{width:14px;height:14px}
+.fw-gift.mine{background:var(--accent);color:#22301b;border-color:var(--accent)}
+.fw-gift.busy{border-color:transparent;background:color-mix(in srgb,var(--text) 7%,transparent);color:var(--muted)}
+.fc-none{font-size:12px;margin-top:10px}
+.split-row{display:flex;align-items:center;gap:12px;padding:11px 2px;border-bottom:1px solid color-mix(in srgb,var(--text) 6%,transparent)}
+.split-row.settle .sp-amount{color:#8fe0b4}
+.split-row .icon-btn{flex-shrink:0}
+.split-members{display:grid;gap:4px;margin:8px 0}
+.split-member{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--text);min-height:44px}
+.split-member input{accent-color:var(--accent);width:18px;height:18px}
+.split-member .fc-avatar{width:30px;height:30px;font-size:12px}
+.friends-empty{display:grid;justify-items:center;text-align:center;gap:8px;padding:26px 16px;margin-bottom:22px}
+.friends-empty p{font-size:12px;color:var(--muted);max-width:320px}
+@media(prefers-reduced-motion:reduce){.month-card .sp-glow,.mb-bars i,.goal-card,.friend-card{animation:none}}
+.month-plan p{margin:-4px 0 14px}

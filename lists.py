@@ -21,6 +21,14 @@ TIME_RE = re.compile(r"(?:[01]\d|2[0-3]):[0-5]\d")
 
 def setup(db):
     db.execute("PRAGMA foreign_keys=ON")
+    _setup_tables(db)
+    # «показать друзьям» — появилось позже самих вишлистов
+    if "shared" not in {r[1] for r in db.execute("PRAGMA table_info(wishlists)")}:
+        db.execute("ALTER TABLE wishlists ADD COLUMN shared INTEGER NOT NULL DEFAULT 0")
+    db.commit()
+
+
+def _setup_tables(db):
     db.executescript("""
         CREATE TABLE IF NOT EXISTS wishlists (
             id TEXT PRIMARY KEY,
@@ -153,7 +161,7 @@ def _items(db, list_id):
 
 
 def wishlist(db, owner, list_id):
-    row = db.execute("SELECT id,title,emoji,created_at FROM wishlists WHERE id=? AND owner_id=?",
+    row = db.execute("SELECT id,title,emoji,created_at,shared FROM wishlists WHERE id=? AND owner_id=?",
                      (list_id, str(owner))).fetchone()
     if row is None:
         raise LookupError("Список не найден")
@@ -162,7 +170,7 @@ def wishlist(db, owner, list_id):
     for item in items:
         if item["price"] is not None and not item["done"]:
             totals[item["currency"]] = round(totals.get(item["currency"], 0) + item["price"], 2)
-    return {"id": row[0], "title": row[1], "emoji": row[2], "created_at": row[3], "items": items,
+    return {"id": row[0], "title": row[1], "emoji": row[2], "created_at": row[3], "shared": bool(row[4]), "items": items,
             "open": sum(not i["done"] for i in items), "done": sum(i["done"] for i in items),
             "totals": totals}
 
@@ -174,17 +182,21 @@ def wishlists(db, owner):
 
 def save_wishlist(db, owner, data, list_id=None):
     with db:
-        old = wishlist(db, owner, list_id) if list_id else {"title": "", "emoji": ""}
-        merged = _patch(old, data, ("title", "emoji"))
+        old = wishlist(db, owner, list_id) if list_id else {"title": "", "emoji": "", "shared": False}
+        merged = _patch(old, data, ("title", "emoji", "shared"))
         title = text(merged.get("title"), 64, "Название", required=True)
         emoji = text(merged.get("emoji"), 8, "Значок")
+        shared = merged.get("shared", False)
+        if type(shared) is not bool:
+            raise ValueError("Некорректная отметка «показать друзьям»")
         if list_id:
-            db.execute("UPDATE wishlists SET title=?, emoji=? WHERE id=? AND owner_id=?", (title, emoji, list_id, str(owner)))
+            db.execute("UPDATE wishlists SET title=?, emoji=?, shared=? WHERE id=? AND owner_id=?",
+                       (title, emoji, int(shared), list_id, str(owner)))
         else:
             list_id = uuid.uuid4().hex
             position = db.execute("SELECT COALESCE(MAX(position)+1,0) FROM wishlists WHERE owner_id=?", (str(owner),)).fetchone()[0]
-            db.execute("INSERT INTO wishlists (id,owner_id,title,emoji,position,created_at) VALUES (?,?,?,?,?,?)",
-                       (list_id, str(owner), title, emoji, position, now()))
+            db.execute("INSERT INTO wishlists (id,owner_id,title,emoji,shared,position,created_at) VALUES (?,?,?,?,?,?,?)",
+                       (list_id, str(owner), title, emoji, int(shared), position, now()))
         return wishlist(db, owner, list_id)
 
 

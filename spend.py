@@ -200,13 +200,21 @@ def delete(db, owner, item_id):
         db.execute("DELETE FROM spend_items WHERE id=? AND owner_id=?", (item_id, str(owner)))
 
 
-def overview(db, owner, on=None):
-    """Траты пользователя и сводка: в месяц по регулярным, этот месяц, ближайшие списания."""
+SPANS = ("month", "year")
+
+
+def overview(db, owner, on=None, span="month"):
+    """Траты пользователя и сводка: в месяц по регулярным, этот месяц (или год — span), ближайшие списания."""
     on = on or today()
+    if span not in SPANS:
+        raise ValueError("Период: month или year")
     rows = db.execute(f"SELECT {COLUMNS} FROM spend_items WHERE owner_id=? ORDER BY kind, day DESC", (str(owner),)).fetchall()
     items = [_row(r, on) for r in rows]
-    month_start = on.replace(day=1)
-    month_end = month_start.replace(day=calendar.monthrange(on.year, on.month)[1])
+    if span == "year":
+        month_start, month_end = date(on.year, 1, 1), date(on.year, 12, 31)
+    else:
+        month_start = on.replace(day=1)
+        month_end = month_start.replace(day=calendar.monthrange(on.year, on.month)[1])
     monthly, this_month, by_category, upcoming = {}, {}, {}, []
 
     def put(bucket, key, cur, cents):
@@ -242,5 +250,6 @@ def overview(db, owner, on=None):
         "categories": CATEGORIES,
         "periods": PERIODS,
         "currencies": list(CURRENCIES),
-        "month": month_start.isoformat()[:7],
+        "month": on.isoformat()[:7],
+        "span": span,
     }

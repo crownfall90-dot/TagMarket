@@ -5,7 +5,7 @@ const preview = new URLSearchParams(location.search).get('preview') === '1';
 const state = {data:null, people:null, admin:null, report:null, reportError:'', priceChart:null, notifications:{items:[],unread:0}, view:'overview', login:null, period:'today', kind:'trades', offset:0, from:'', to:'', filters:{tagmarket:{period:'today',from:'',to:''},account:{period:'today',from:'',to:''}}, busy:false, currency:null};
 try{state.displayCurrency=localStorage.getItem('tag-display-currency')||'USD';}catch{state.displayCurrency='USD';}
 let generation = 0, refreshTimer, toastTimer, notificationsStarted = false, lastNotificationId = 0;
-state.projects=null;state.projectsError='';state.banks=null;state.banksError='';state.spend=null;state.spendError='';state.income=null;state.incomeError='';state.projectId=null;try{state.assetMode=localStorage.getItem('tag-asset-mode')||'tag';}catch{state.assetMode='tag';}state.forecast={horizon:'1m',until:'',bonus:true,selected:null,result:null,tag:null};
+state.projects=null;state.projectsError='';state.banks=null;state.banksError='';state.spend=null;state.spendError='';state.spendSpan='month';state.income=null;state.incomeError='';state.month=null;state.monthError='';state.goals=null;state.friends=null;state.friendsError='';state.projectId=null;try{state.assetMode=localStorage.getItem('tag-asset-mode')||'tag';}catch{state.assetMode='tag';}state.forecast={horizon:'1m',until:'',bonus:true,selected:null,result:null,tag:null};
 const paths = {overview:'M3 10l9-7 9 7v10H3z M9 20v-7h6v7',accounts:'M3 7h18v14H3z M3 7V4h14v3 M16 12h5v5h-5z',deals:'M4 5h16 M4 12h16 M4 19h16 M8 2v6 M16 9v6 M9 16v6',people:'M16 21v-3a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v3 M9 10a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M17 3a4 4 0 0 1 0 8 M22 21v-3a4 4 0 0 0-3-4',settings:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M12 2v3 M12 19v3 M2 12h3 M19 12h3 M5 5l2 2 M17 17l2 2 M5 19l2-2 M17 7l2-2',plus:'M12 5v14 M5 12h14',arrow:'M5 12h14 M14 7l5 5-5 5',up:'M7 17 17 7 M7 7h10v10',down:'M7 7l10 10 M7 17h10V7',refresh:'M20 7A8 8 0 0 0 6 5L3 8 M3 3v5h5 M4 17a8 8 0 0 0 14 2l3-3 M21 21v-5h-5',sun:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M12 1v2 M12 21v2 M1 12h2 M21 12h2 M4 4l2 2 M18 18l2 2 M4 20l2-2 M18 6l2-2',chevron:'M9 5l7 7-7 7',chart:'M3 19h18 M4 15l5-5 5 3 6-9',check:'m5 12 4 4L19 6',clock:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 7v5l3 2',link:'M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-2 2 M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l2-2',back:'M19 12H5 M10 7l-5 5 5 5',shield:'M12 2l9 4v6c0 5-9 10-9 10S3 17 3 12V6z M8 12l3 3 5-6',copy:'M8 8h13v13H8z M16 8V3H3v13h5'};
 paths.bell='M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9 M10 21h4';paths.exit='M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4 M16 17l5-5-5-5 M21 12H9';paths.palette='M12 3a9 9 0 1 0 0 18c1.4 0 2-.9 2-1.8 0-1.4-1.2-1.6-1.2-2.8 0-.9.7-1.4 1.6-1.4H17a4 4 0 0 0 4-4c0-4.4-4-8-9-8z';
 Object.assign(paths,{
@@ -104,7 +104,7 @@ const NAV_ROOTS=['#desktop-nav','#mobile-nav'];
 function reducedMotion(){return !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;}
 function nav(){
  document.body.classList.toggle('onboarding-only',onboardingOnly());
- const active=['account','accounts','project','forecast','tagmarket','onboarding','banks','spend','income'].includes(state.view)?'projects':['faq','circle'].includes(state.view)?'overview':state.view;
+ const active=['account','accounts','project','forecast','tagmarket','onboarding','banks','spend','income','month'].includes(state.view)?'projects':['faq','circle'].includes(state.view)?'overview':state.view;
  for(const selector of NAV_ROOTS){
   const root=$(selector);
   if(!root.dataset.ready){
@@ -153,7 +153,7 @@ function moveGlider(root,instant=false){
 }
 // Порядок разделов для направления перехода: вглубь и вправо по панели —
 // новый экран въезжает справа, назад — слева
-const VIEW_ORDER={banks:1.1,income:1.05,spend:1.08,overview:0,faq:.5,projects:1,tagmarket:1.2,onboarding:1.25,accounts:1.3,account:1.5,project:1.6,activity:3,plans:4,circle:.2,forecast:1.7,people:5,settings:6};
+const VIEW_ORDER={banks:1.1,income:1.05,month:1.02,spend:1.08,overview:0,faq:.5,projects:1,tagmarket:1.2,onboarding:1.25,accounts:1.3,account:1.5,project:1.6,activity:3,plans:4,circle:.2,forecast:1.7,people:5,settings:6};
 // Въезд — CSS-классом, который снимается по окончании: после WAAPI-анимации
 // transform Chromium держал устаревшую карту попаданий, и первое нажатие в
 // новом разделе уходило «мимо» кнопки, пока стиль #main не изменится
@@ -591,7 +591,7 @@ function guestCard(g,p){
  return `<details class="panel people-card guest-card" data-ui-key="guest-${esc(g.id)}" style="--hue:${guestHue(g.name)}"><summary class="person-head"><span class="avatar guest-avatar">${esc(g.name.slice(0,1).toUpperCase())}</span><span class="person-copy"><b>${esc(g.name)}</b><small class="guest-sub">${esc(sub)}</small></span>${icon('chevron')}</summary><div class="faq-body">${g.accounts.map(a=>`<div class="guest-account ${a.shared?'is-shared':''}"><span class="ga-ico">${icon(a.shared?'link':'chart')}</span><div><b>${esc(a.name)}</b><small>${a.shared?'Ваш счёт у гостя':'Личный · только просмотр'}</small></div>${a.shared?button('take','Забрать','secondary small','',`data-guest="${esc(g.id)}" data-login="${esc(a.login)}"`):''}</div>`).join('')||'<p class="guest-empty">Счетов пока нет — откройте гостю один из своих.</p>'}<div class="actions guest-actions">${canShare.length?button('share-accounts','Открыть счета','secondary small','plus',`data-guest="${esc(g.id)}"`):''}${button('guest-detail','Подробнее','secondary small','',`data-guest="${esc(g.id)}"`)}${button('revoke-guest','Убрать доступ','danger small','',`data-guest="${esc(g.id)}"`)}</div></div></details>`;
 }
 
-function peopleView(){const p=state.people;if(!p)return secHero('people','Друзья')+skeleton('list',2);return secHero('people','Друзья',p.guests.length?`${esc(countLabel(p.guests.length,['человек','человека','человек']))} уже с вами`:'Пригласите по ссылке — у каждого свой Platformer')+linkCard(p)+`<div class="section-head"><h2>Приглашены <span class="muted">${p.guests.length}</span></h2></div>${p.guests.length?`<div class="cards-grid">${p.guests.map(g=>guestCard(g,p)).join('')}</div>`:empty('Гостей пока нет','')}`;}
+function peopleView(){const p=state.people;if(!p)return secHero('people','Друзья')+skeleton('list',2);return secHero('people','Друзья',p.guests.length?`${esc(countLabel(p.guests.length,['человек','человека','человек']))} уже с вами`:'Пригласите по ссылке — у каждого свой Platformer')+friendsSection()+linkCard(p)+`<div class="section-head"><h2>Приглашены <span class="muted">${p.guests.length}</span></h2></div>${p.guests.length?`<div class="cards-grid">${p.guests.map(g=>guestCard(g,p)).join('')}</div>`:empty('Гостей пока нет','')}`;}
 function toggle(label,note,action,on,attrs=''){return `<div class="settings-row"><div><p>${esc(label)}</p>${note?`<small>${esc(note)}</small>`:''}</div><button class="switch" role="switch" aria-label="${esc(label)}" aria-checked="${!!on}" data-action="${action}" ${attrs}></button></div>`;}
 const MACHINE_STATE={polling:['Опрашивает','ok'],waiting:['Готова','ok'],legacy:['Старый код','warning'],offline:['Офлайн','muted']};
 function nextCheck(sec){if(sec==null)return '';const at=new Intl.DateTimeFormat('ru-RU',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Moscow'}).format(new Date(Date.now()+sec*1000));const wait=sec<60?'меньше минуты':`${Math.ceil(sec/60)} мин`;return ` Следующая проверка через ${wait}, в ${at} МСК.`;}
@@ -610,7 +610,7 @@ function settingsView(){const personal=state.data.accounts;return secHero('set',
 // отпечаток всего, из чего строится экран; server_time меняется на каждом
 // запросе и на вид не влияет — без него одинаковые данные дают одинаковый ключ
 let paintedKey='';
-function paintKey(){const {server_time,...data}=state.data||{};return JSON.stringify([state.view,state.login,state.projectId,state.projects,state.projectsError,state.tagStats,state.period,state.from,state.to,state.currency,state.displayCurrency,state.assetMode,state.forecast,state.kind,state.offset,data,state.report,state.reportError,state.priceChart,state.people,state.admin,state.banks,state.activity,state.lists,state.events,state.circle,state.listsTab,state.calDay,state.calMonth,state.activityDays]);}
+function paintKey(){const {server_time,...data}=state.data||{};return JSON.stringify([state.view,state.login,state.projectId,state.projects,state.projectsError,state.tagStats,state.period,state.from,state.to,state.currency,state.displayCurrency,state.assetMode,state.forecast,state.kind,state.offset,data,state.report,state.reportError,state.priceChart,state.people,state.admin,state.banks,state.spend,state.spendSpan,state.income,state.month,state.goals,state.friends,state.activity,state.lists,state.events,state.circle,state.listsTab,state.calDay,state.calMonth,state.activityDays]);}
 function captureUiState(){
  const nodes=[...document.querySelectorAll('#main [data-ui-key]')];
  const anchor=nodes.filter(el=>{const r=el.getBoundingClientRect();return r.bottom>90&&r.top<innerHeight;}).sort((a,b)=>Math.abs(a.getBoundingClientRect().top-100)-Math.abs(b.getBoundingClientRect().top-100))[0];
@@ -634,9 +634,11 @@ function heroSwap(from,to){if(from===to||matchMedia('(prefers-reduced-motion:red
 // Плавающая «+» живёт вне #main: у #main при смене экрана transform-анимация, а fixed внутри
 // трансформированного предка уезжал бы вместе с ним. Несколько действий — меню по нажатию.
 const FABS={plans:()=>{const [a,l]=PLAN_ADD[state.listsTab]||PLAN_ADD.tasks;return [[a,l,'plus']];},
- projects:()=>[['bank-add','Счёт или карта','bank'],...(incomeFull()?[]:[['income-add','Зарплата на карту','plus']]),['spend-add','Трата или подписка','minus'],['project-create','Проект','projects']],
+ projects:()=>[['bank-add','Счёт или карта','bank'],['goal-add','Цель накоплений','target'],...(incomeFull()?[]:[['income-add','Зарплата на карту','plus']]),['spend-add','Трата или подписка','minus'],['project-create','Проект','projects']],
  spend:()=>[['spend-add','Новая трата','plus']],
  income:()=>incomeFull()?[]:[['income-add','Зачисление','plus']],
+ month:()=>[['goal-add','Цель накоплений','target'],['spend-add','Трата','minus']],
+ people:()=>state.friends?.friends?.length?[['split-add','Общая трата','split']]:[],
  activity:()=>[['activity-add','Записать','plus']]};
 function paintFab(){
  const root=$('#fab-root');if(!root)return;
@@ -669,7 +671,7 @@ function render(preserve=false){const snapshot=preserve?captureUiState():null;$(
   const fingerprint=[...strip.querySelectorAll('button')].map(b=>b.dataset.value||b.textContent).join('|');
   prevThumbs.set(fingerprint, {left:active.offsetLeft, width:active.offsetWidth});
  });
- const views={overview,tagmarket:tagmarketView,activity:activityView,plans:listsView,circle:circleView,banks:banksView,accounts:accountsView,account:accountView,projects:projectsView,spend:spendView,income:incomeView,project:projectView,forecast:forecastView,people:peopleView,settings:settingsView,faq:faqView,onboarding:welcomeView};$('#main').innerHTML=(preview?'<div class="preview-label">Демо-режим · вымышленные данные. Отправка сообщений и управление счетами работают только при запуске из <a href="https://t.me/tagmarketgold_bot" target="_blank" rel="noopener">бота в Telegram</a>.</div>':'')+(views[state.view]||overview)()+(state.view==='settings'&&state.admin?.network?.length?networkView():'');$('#avatar').textContent=state.data.user.name.slice(0,1).toUpperCase();
+ const views={overview,tagmarket:tagmarketView,activity:activityView,plans:listsView,circle:circleView,banks:banksView,accounts:accountsView,account:accountView,projects:projectsView,spend:spendView,income:incomeView,month:monthView,project:projectView,forecast:forecastView,people:peopleView,settings:settingsView,faq:faqView,onboarding:welcomeView};$('#main').innerHTML=(preview?'<div class="preview-label">Демо-режим · вымышленные данные. Отправка сообщений и управление счетами работают только при запуске из <a href="https://t.me/tagmarketgold_bot" target="_blank" rel="noopener">бота в Telegram</a>.</div>':'')+(views[state.view]||overview)()+(state.view==='settings'&&state.admin?.network?.length?networkView():'');$('#avatar').textContent=state.data.user.name.slice(0,1).toUpperCase();
  // сначала все замеры, потом все записи: чередование чтения и записи в одном
  // цикле заставляет браузер пересчитывать вёрстку на каждой полосе
  const centering=[];
@@ -855,13 +857,15 @@ async function viewParts(){
  if(['tagmarket','account'].includes(state.view))jobs.push((async()=>{try{out.report=await loadReport();out.reportError='';}catch(error){out.report=null;out.reportError=error.message;}})());
  if(state.view==='tagmarket'){const sonic=state.data.accounts.find(a=>/sonic|sonik/i.test(`${a.strategy||''} ${a.name||''}`));jobs.push((async()=>{out.priceChart=sonic?await api(`/accounts/${sonic.login}/candles?period=${state.period==='custom'?'week':state.period}`).catch(()=>null):null;})());}
  if(state.view==='people')jobs.push((async()=>{out.people=await api('/people');})());
- if(['projects','spend','income'].includes(state.view))jobs.push((async()=>{try{out.spend=preview?previewSpend():await api('/spend');out.spendError='';}catch(error){out.spend=state.spend;out.spendError=error.message;}})());
+ if(['projects','spend','income','month'].includes(state.view))jobs.push((async()=>{try{out.spend=preview?{...previewSpend(),span:state.view==='spend'?state.spendSpan:'month'}:await api('/spend'+(state.view==='spend'&&state.spendSpan==='year'?'?span=year':''));out.spendError='';}catch(error){out.spend=state.spend;out.spendError=error.message;}})());
+ if(['projects','month'].includes(state.view))jobs.push((async()=>{try{const [m,g]=await Promise.all([preview?previewMonth():api('/month'),preview?previewGoals():api('/goals')]);out.month=m;out.goals=g;out.monthError='';}catch(error){out.month=state.month;out.goals=state.goals;out.monthError=error.message;}})());
+ if(state.view==='people')jobs.push((async()=>{try{out.friends=preview?previewFriends():await api('/friends');out.friendsError='';}catch(error){out.friends=state.friends;out.friendsError=error.message;}})());
  if(['projects','income'].includes(state.view))jobs.push((async()=>{try{out.income=preview?previewIncome():await api('/income');out.incomeError='';}catch(error){out.income=state.income;out.incomeError=error.message;}})());
  if(['overview','projects','banks','income'].includes(state.view))jobs.push((async()=>{try{out.banks=preview?previewBanks():await api('/banks');out.banksError='';}catch(error){out.banks=state.banks;out.banksError=error.message;}})());
  if(['overview','activity'].includes(state.view))jobs.push((async()=>{try{out.activity=preview?previewActivity(state.activityDays):await api(`/activity?days=${state.view==='overview'?7:state.activityDays}`);out.activityError='';}catch(error){out.activity=state.activity;out.activityError=error.message;}})());
  if(['overview','plans'].includes(state.view))jobs.push((async()=>{try{const [from,to]=monthBounds(state.calMonth);const [lists,events]=await Promise.all([preview?previewLists():api('/lists'),state.view==='plans'?(preview?previewLists():api(`/events?from=${from}&to=${to}`)):Promise.resolve(state.events)]);out.lists=lists;out.events=events;out.listsError='';}catch(error){out.lists=state.lists;out.listsError=error.message;}})());
  if(state.view==='projects')jobs.push((async()=>{const tag=await fetchTagForecast();if(!tag.error)out.tagStats=tag;})());
- if(['projects','project','overview','forecast'].includes(state.view))jobs.push((async()=>{try{out.projects=(await api('/projects')).projects;out.projectsError='';if(state.view==='forecast'){const [result,tag]=await Promise.all([fetchForecast(out.projects),fetchTagForecast()]);out.forecast={...state.forecast,result,tag,...await fetchForecastStart()};}}catch(error){out.projects=state.projects;out.projectsError=error.message;}})());
+ if(['projects','project','overview','forecast','month'].includes(state.view))jobs.push((async()=>{try{out.projects=(await api('/projects')).projects;out.projectsError='';if(state.view==='forecast'){const [result,tag]=await Promise.all([fetchForecast(out.projects),fetchTagForecast()]);out.forecast={...state.forecast,result,tag,...await fetchForecastStart()};}}catch(error){out.projects=state.projects;out.projectsError=error.message;}})());
  if(state.view==='settings'&&state.data.founder)jobs.push((async()=>{out.admin=await api('/admin');})());
  await Promise.all(jobs);
  return out;
@@ -871,10 +875,10 @@ async function viewParts(){
 // данные и перерисовывал экран, и раздел заметно «обновлялся» на глазах.
 // Свежесть держит фоновое обновление; старше его интервала — грузим заново
 const viewCache=new Map();
-function viewKey(){return [state.view,state.login,state.projectId,state.period,state.from,state.to,state.currency,state.kind,state.offset,state.view==='activity'?state.activityDays:'',state.view==='plans'?state.calMonth:''].join('|');}
-function remember(){viewCache.set(viewKey(),{report:state.report,reportError:state.reportError,priceChart:state.priceChart,projects:state.projects,projectsError:state.projectsError,banks:state.banks,spend:state.spend,income:state.income,activity:state.activity,lists:state.lists,events:state.events,at:Date.now()});}
+function viewKey(){return [state.view,state.login,state.projectId,state.period,state.from,state.to,state.currency,state.kind,state.offset,state.view==='activity'?state.activityDays:'',state.view==='plans'?state.calMonth:'',state.view==='spend'?state.spendSpan:''].join('|');}
+function remember(){viewCache.set(viewKey(),{report:state.report,reportError:state.reportError,priceChart:state.priceChart,projects:state.projects,projectsError:state.projectsError,banks:state.banks,spend:state.spend,income:state.income,month:state.month,goals:state.goals,friends:state.friends,activity:state.activity,lists:state.lists,events:state.events,at:Date.now()});}
 function refreshEvery(){return Math.max(30,Number(state.data?.refresh_seconds)||60)*1000;}
-const VIEW_NEEDS_DATA=view=>['overview','tagmarket','activity','plans','circle','banks','spend','income','account','people','projects','project','forecast'].includes(view)||(view==='settings'&&!!state.data?.founder);
+const VIEW_NEEDS_DATA=view=>['overview','tagmarket','activity','plans','circle','banks','spend','income','month','account','people','projects','project','forecast'].includes(view)||(view==='settings'&&!!state.data?.founder);
 // Смена периода, вкладки истории, страницы, валюты: то же, что переход —
 // из памяти, если свежее, иначе догружаем только отчёт раздела. Раньше каждое
 // такое нажатие перегружало всё (4 запроса), и частые переключения упирались
@@ -952,7 +956,7 @@ async function navigate(){
  let [view,login]=location.hash.slice(1).split('/');
  if(view==='lists'){view='plans';login='wish';}   // прежняя ссылка на вишлисты
  if(view==='plans'){if(['tasks','calendar','notes','wish'].includes(login))state.listsTab=login;login=undefined;}
- const next=['overview','tagmarket','activity','plans','circle','banks','spend','income','accounts','account','projects','project','forecast','people','settings','faq'].includes(view)?view:'overview';
+ const next=['overview','tagmarket','activity','plans','circle','banks','spend','income','month','accounts','account','projects','project','forecast','people','settings','faq'].includes(view)?view:'overview';
  const direction=Math.sign((VIEW_ORDER[next]??0)-(VIEW_ORDER[state.view]??0));
  const moved=next!==state.view||(!!login&&(next==='project'?login!==state.projectId:Number(login)!==state.login));
  // тот же раздел (повторное событие hashchange) — экран уже верный
@@ -969,6 +973,8 @@ async function navigate(){
  if(cached&&next==='tagmarket')state.priceChart=cached.priceChart;
  if(cached&&['projects','project','forecast','overview'].includes(next)){state.projects=cached.projects;state.projectsError=cached.projectsError||'';}
  if(cached&&['projects','income'].includes(next))state.income=cached.income??state.income;
+ if(cached&&['projects','month'].includes(next)){state.month=cached.month??state.month;state.goals=cached.goals??state.goals;}
+ if(cached&&next==='people')state.friends=cached.friends??state.friends;
  if(cached&&['overview','projects','banks','income'].includes(next))state.banks=cached.banks??state.banks;
  if(cached&&['projects','spend'].includes(next))state.spend=cached.spend??state.spend;
  if(cached&&['overview','activity','plans'].includes(next)){state.activity=cached.activity??state.activity;state.lists=cached.lists??state.lists;state.events=cached.events??state.events;}
@@ -1083,19 +1089,20 @@ function spendSection(){
 }
 function spendView(){
  const back='<a href="#projects" class="button secondary small back">← Финансы</a>',d=state.spend,cur=state.displayCurrency;
- const m=d?sumIn(d.monthly):null,t=d?sumIn(d.this_month):null;
- const hero=`<div class="project-space">${back}</div><div class="page-head sec-hero tone-spend spend-head"><div class="sec-glow" aria-hidden="true"><i></i><i></i><i></i></div><div><span class="sec-eyebrow">Регулярно в месяц</span><b class="spend-total">${!d?'…':countUp(m.sum,`money:${cur}`)}</b><p>${d?`В этом месяце всего ${esc(money(t.sum,cur))}${m.partial||t.partial?' · часть без курса валют':''}`:'Подписки, платежи и покупки'}</p></div><div class="head-actions">${button('spend-add','Трата','primary head-primary','plus')}</div></div>`;
+ const m=d?sumIn(d.monthly):null,t=d?sumIn(d.this_month):null,year=state.spendSpan==='year';
+ const spans=`<div class="segmented spend-span" role="tablist" aria-label="Период">${[['month','Месяц'],['year','Год']].map(([id,l])=>`<button type="button" role="tab" class="${state.spendSpan===id?'active':''}" aria-selected="${state.spendSpan===id}" data-action="spend-span" data-span="${id}">${l}</button>`).join('')}</div>`;
+ const hero=`<div class="project-space">${back}</div><div class="page-head sec-hero tone-spend spend-head"><div class="sec-glow" aria-hidden="true"><i></i><i></i><i></i></div><div><span class="sec-eyebrow">Регулярно в месяц</span><b class="spend-total">${!d?'…':countUp(m.sum,`money:${cur}`)}</b><p>${d?`${year?'В этом году':'В этом месяце'} всего ${esc(money(t.sum,cur))}${m.partial||t.partial?' · часть без курса валют':''}`:'Подписки, платежи и покупки'}</p></div><div class="head-actions">${button('spend-add','Трата','primary head-primary','plus')}</div></div>${!d||d.items.length?spans:''}`;
  if(!d)return hero+(state.spendError?sectionError(state.spendError,'spend-reload'):skeleton('list'));
  if(!d.items.length)return hero+`<section class="lists-empty spend-empty"><span class="empty-orb">${icon('repeat')}</span><b>Запишите первую трату</b><p>Подписки и регулярные платежи — Platformer сам посчитает, когда и сколько спишется. Разовые покупки — чтобы видеть, куда уходят деньги.</p>${button('spend-add','Добавить трату','primary','plus')}</section>`;
  const cats=d.by_category.map(c=>({...c,v:sumIn(c.totals).sum})).filter(c=>c.v>0),whole=cats.reduce((n,c)=>n+c.v,0),[yy,mm]=d.month.split('-').map(Number);
- const catBlock=whole?`<section class="spend-cats" data-ui-key="spend-cats"><div class="sec-row"><h2>Куда уходит</h2><small class="muted">${MONTH_NAMES[mm-1]}</small></div><div class="fin-alloc">${cats.map((c,i)=>`<i class="cat-${esc(c.category)}" style="--w:${(c.v/whole*100).toFixed(1)}%;--d:${i*110}ms"></i>`).join('')}</div><div class="fin-legend">${cats.map(c=>`<span><i class="cat-${esc(c.category)}"></i>${esc(c.label)} <em>${money(c.v,cur)}</em></span>`).join('')}</div></section>`:'';
+ const catBlock=whole?`<section class="spend-cats" data-ui-key="spend-cats"><div class="sec-row"><h2>Куда уходит</h2><small class="muted">${year?`${yy} год`:MONTH_NAMES[mm-1]}</small></div><div class="fin-alloc">${cats.map((c,i)=>`<i class="cat-${esc(c.category)}" style="--w:${(c.v/whole*100).toFixed(1)}%;--d:${i*110}ms"></i>`).join('')}</div><div class="fin-legend">${cats.map(c=>`<span><i class="cat-${esc(c.category)}"></i>${esc(c.label)} <em>${money(c.v,cur)}</em></span>`).join('')}</div></section>`:'';
  const up=d.upcoming.length?`<section class="spend-upcoming" data-ui-key="spend-upcoming"><div class="sec-row"><h2>Скоро спишется</h2></div><div class="sp-timeline">${d.upcoming.map((u,i)=>{const [,um,ud]=u.date.split('-').map(Number);return `<button type="button" class="sp-up${u.in_days<=1?' soon':''}" style="--i:${i}" data-action="spend-edit" data-id="${esc(u.id)}"><span class="sp-when"><b>${ud}</b><small>${MONTH_NAMES[um-1].slice(0,3).toLowerCase()}</small></span>${spendLogo(u.title)}<span class="sp-body"><b>${esc(u.title)}</b><small>${esc(spendWhen(u))}</small></span><b class="sp-amount">${esc(bankMoney(u.amount,u.currency))}</b></button>`;}).join('')}</div></section>`:'';
  const rec=d.items.filter(i=>i.kind==='recurring').sort((a,b)=>(b.active-a.active)||String(a.next||'').localeCompare(String(b.next||'')));
  const row=r=>`<button type="button" class="sp-row${r.active?'':' off'}" data-action="spend-edit" data-id="${esc(r.id)}">${spendLogo(r.title)}<span class="sp-body"><b>${esc(r.title)}</b><small>${r.active?`${esc(r.period_label)} · ${esc(dueLabel(r.next).toLowerCase())}`:'на паузе'} · ${esc(r.category_label)}</small></span><span class="sp-right"><b>${esc(bankMoney(r.amount,r.currency))}</b>${r.active&&r.period!=='month'?`<small>≈ ${esc(bankMoney(r.monthly,r.currency))} в мес</small>`:''}</span></button>`;
  const recList=rec.length?`<section class="spend-list" data-ui-key="spend-recurring"><div class="sec-row"><h2>Подписки и регулярные</h2><span class="badge">${rec.filter(r=>r.active).length}</span></div>${rec.map(row).join('')}</section>`:'';
- const once=d.items.filter(i=>i.kind==='once'),now=once.filter(i=>i.day.slice(0,7)===d.month),older=once.filter(i=>i.day.slice(0,7)!==d.month);
+ const once=d.items.filter(i=>i.kind==='once'),inSpan=i=>year?i.day.slice(0,4)===d.month.slice(0,4):i.day.slice(0,7)===d.month,now=once.filter(inSpan),older=once.filter(i=>!inSpan(i));
  const buy=i=>`<button type="button" class="sp-row" data-action="spend-edit" data-id="${esc(i.id)}">${spendLogo(i.title)}<span class="sp-body"><b>${esc(i.title)}</b><small>${esc(shortDay(i.day))} · ${esc(i.category_label)}</small></span><span class="sp-right"><b>${esc(bankMoney(i.amount,i.currency))}</b></span></button>`;
- const buys=now.length||older.length?`<section class="spend-list" data-ui-key="spend-once"><div class="sec-row"><h2>Покупки</h2><small class="muted">${MONTH_NAMES[mm-1].toLowerCase()} ${yy}</small></div>${now.map(buy).join('')||'<p class="muted sp-none">В этом месяце покупок нет.</p>'}${older.length?`<details class="sp-older"><summary>Ранее · ${older.length}</summary>${older.slice(0,60).map(buy).join('')}</details>`:''}</section>`:'';
+ const buys=now.length||older.length?`<section class="spend-list" data-ui-key="spend-once"><div class="sec-row"><h2>Покупки</h2><small class="muted">${year?`${yy} год`:`${MONTH_NAMES[mm-1].toLowerCase()} ${yy}`}</small></div>${now.map(buy).join('')||`<p class="muted sp-none">${year?'В этом году':'В этом месяце'} покупок нет.</p>`}${older.length?`<details class="sp-older"><summary>Ранее · ${older.length}</summary>${older.slice(0,60).map(buy).join('')}</details>`:''}</section>`:'';
  return hero+up+catBlock+recList+buys;
 }
 async function spendEditor(item=null){
@@ -1117,6 +1124,7 @@ document.addEventListener('change',event=>{const r=event.target.closest?.('[data
 async function spendAction(action,el){
  if(action==='spend-add')return spendEditor();
  if(action==='spend-reload')return sectionReload();
+ if(action==='spend-span'){if(state.spendSpan===el.dataset.span)return;state.spendSpan=el.dataset.span;state.spend=null;render();return sectionReload();}
  if(action==='spend-edit')return spendEditor(state.spend?.items.find(i=>i.id===el.dataset.id));
  if(action==='spend-delete'){if(!await closeDialogFirst())return;if(await confirm('Удалить трату?','Она исчезнет из сумм и ближайших списаний.','Удалить')){if(!preview)await api('/spend/'+el.dataset.id,{method:'DELETE'});await sectionReload();}return;}
 }
@@ -1188,6 +1196,161 @@ function previewIncome(){
  const got={},wait={};for(const i of items)(Math.min(i.day,31)<=dd?got:wait).BYN=((Math.min(i.day,31)<=dd?got:wait).BYN||0)+i.amount;
  return {items,monthly:{BYN:2650},received:got,expected:wait,upcoming:[],kinds:INCOME_KINDS,currencies:['USD','EUR','RUB','BYN'],limit:3};
 }
+// ── Сводка месяца, цели накоплений, первый запуск ──
+paths.target='M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8z M12 12h.01';
+paths.gift='M4 11h16v10H4z M3 7h18v4H3z M12 7v14 M12 7c-1.5-3-5-3-5-1s3 1 5 1z M12 7c1.5-3 5-3 5-1s-3 1-5 1z';
+paths.split='M12 3v18 M5 8h5 M14 16h5 M6 21l-3-3 3-3 M18 3l3 3-3 3';
+// доход месяца в валюте отображения: зарплата по датам + проекты (в день × прошедшие дни) + TagMarket за месяц
+function monthIncome(){
+ const d=state.month,day=d?.day||Number(projectToday().slice(8)),sal=sumIn(d?.income),ahead=sumIn(d?.income_ahead);
+ let proj=0,partial=sal.partial;for(const p of activeProjects()){const inc=projectDailyIncome(p),v=inc==null||p.calculation_limited?null:displayAmount(inc,p.currency);if(v==null)continue;proj+=v*day;}
+ const tagRaw=state.data?.totals?.USD?.month,tag=tagRaw==null?null:displayAmount(tagRaw,'USD');
+ return {salary:sal.sum,ahead:ahead.sum,projects:proj,tag:tag||0,total:sal.sum+proj+(tag||0),partial};
+}
+function monthNumbers(){const inc=monthIncome(),sp=sumIn(state.month?.spend),spA=sumIn(state.month?.spend_ahead),g=sumIn(state.goals?.per_month);return {inc,spend:sp.sum,spendAhead:spA.sum,left:inc.total-sp.sum,goals:g.sum,partial:inc.partial||sp.partial};}
+function monthBars(hist){
+ if(!hist?.length)return '';
+ const rows=hist.map(h=>({m:h.month,cur:h.current,i:sumIn(h.income).sum,s:sumIn(h.spend).sum})),top=Math.max(1,...rows.map(r=>Math.max(r.i,r.s)));
+ return `<div class="mb-chart" role="img" aria-label="Зарплата и траты за полгода">${rows.map((r,n)=>`<span class="mb-col${r.cur?' now':''}" style="--n:${n}"><span class="mb-bars"><i class="mb-in" style="--h:${(r.i/top*100).toFixed(1)}%"></i><i class="mb-out" style="--h:${(r.s/top*100).toFixed(1)}%"></i></span><small>${MONTH_NAMES[Number(r.m.slice(5))-1].slice(0,3).toLowerCase()}</small></span>`).join('')}</div><div class="fin-legend mb-legend"><span><i class="mb-in"></i>Зарплата</span><span><i class="mb-out"></i>Траты</span></div>`;
+}
+function monthSection(){
+ const d=state.month;if(!d)return '';
+ const n=monthNumbers(),cur=state.displayCurrency,[,mm]=d.month.split('-').map(Number);
+ if(!n.inc.total&&!n.spend&&!n.inc.ahead&&!n.spendAhead)return '';
+ return `<section class="fin-month" data-ui-key="fin-month"><div class="sec-row"><h2>${MONTH_NAMES[mm-1]}</h2><a class="text-link" href="#month">Сводка ${icon('chevron')}</a></div><a href="#month" class="month-card"><span class="sp-glow" aria-hidden="true"></span><span class="mc-main"><small>Осталось</small><b class="${n.left<0?'negative':''}">${countUp(n.left,`money:${cur}`)}</b><em>день ${d.day} из ${d.days}</em></span><span class="mc-flow"><span><small>Пришло</small><b class="positive">+${money(n.inc.total,cur)}</b></span><span><small>Ушло</small><b>−${money(n.spend,cur)}</b></span>${n.goals?`<span><small>На цели</small><b>${money(n.goals,cur)}</b></span>`:''}</span>${monthBars(d.history)}</a></section>`;
+}
+function monthView(){
+ const back='<a href="#projects" class="button secondary small back">← Финансы</a>',d=state.month,cur=state.displayCurrency;
+ if(!d)return `<div class="project-space">${back}</div>`+secHero('month','Месяц')+(state.monthError?sectionError(state.monthError,'month-reload'):skeleton('list'));
+ const n=monthNumbers(),[yy,mm]=d.month.split('-').map(Number),free=n.left+n.inc.ahead-n.spendAhead;
+ const hero=`<div class="project-space">${back}</div><div class="page-head sec-hero tone-month month-head"><div class="sec-glow" aria-hidden="true"><i></i><i></i><i></i></div><div><span class="sec-eyebrow">${MONTH_NAMES[mm-1]} ${yy} · осталось</span><b class="spend-total${n.left<0?' negative':''}">${countUp(n.left,`money:${cur}`)}</b><p>Пришло ${esc(money(n.inc.total,cur))} · ушло ${esc(money(n.spend,cur))}${n.partial?' · часть без курса валют':''}</p></div></div>`;
+ const row=(label,value,sub='',cls='')=>`<div class="mr-row ${cls}"><span><b>${label}</b>${sub?`<small>${sub}</small>`:''}</span><b>${value}</b></div>`;
+ const inc=`<section class="month-part" data-ui-key="month-in"><div class="sec-row"><h2>Пришло</h2><b class="positive">+${money(n.inc.total,cur)}</b></div>${row('Зарплата',`+${money(n.inc.salary,cur)}`,n.inc.ahead?`ещё придёт ${money(n.inc.ahead,cur)}`:'','k-in')}${n.inc.projects?row('Проекты',`≈ +${money(n.inc.projects,cur)}`,'начисления за прошедшие дни','k-in'):''}${n.inc.tag?row('TagMarket',`${n.inc.tag>0?'+':''}${money(n.inc.tag,cur)}`,'результат стратегий за месяц',n.inc.tag<0?'k-out':'k-in'):''}</section>`;
+ const cats=(d.by_category||[]).map(c=>({...c,v:sumIn(c.totals).sum})).filter(c=>c.v>0),whole=cats.reduce((a,c)=>a+c.v,0);
+ const out=`<section class="month-part" data-ui-key="month-out"><div class="sec-row"><h2>Ушло</h2><b>−${money(n.spend,cur)}</b></div>${whole?`<div class="fin-alloc">${cats.map((c,i)=>`<i class="cat-${esc(c.category)}" style="--w:${(c.v/whole*100).toFixed(1)}%;--d:${i*110}ms"></i>`).join('')}</div><div class="fin-legend">${cats.map(c=>`<span><i class="cat-${esc(c.category)}"></i>${esc(c.label)} <em>${money(c.v,cur)}</em></span>`).join('')}</div>`:'<p class="muted">Трат пока нет.</p>'}${n.spendAhead?row('Ещё спишется',`−${money(n.spendAhead,cur)}`,'подписки и платежи до конца месяца','k-out'):''}<a class="text-link" href="#spend">Все траты ${icon('chevron')}</a></section>`;
+ const plan=n.goals?`<div class="month-plan"><p>Чтобы успеть к срокам, откладывайте <b>${money(n.goals,cur)}</b> в месяц. ${free>=n.goals?`К концу месяца останется ≈ ${money(free,cur)} — <b class="positive">хватает</b>.`:`К концу месяца останется ≈ ${money(free,cur)} — <b class="negative">не хватает ${money(n.goals-free,cur)}</b>.`}</p></div>`:'';
+ const hist=`<section class="month-part" data-ui-key="month-history"><div class="sec-row"><h2>Полгода</h2><small class="muted">зарплата и траты</small></div>${monthBars(d.history)}</section>`;
+ return hero+inc+out+goalsSection(true,plan)+hist;
+}
+function goalCard(g,i){
+ const cur=state.displayCurrency,pct=Math.round(g.progress*100);
+ return `<button type="button" class="goal-card${g.done?' done':''}" style="--i:${i};--p:${pct}" data-action="goal-edit" data-id="${esc(g.id)}"><span class="goal-ring" aria-hidden="true"><span>${esc(g.emoji||'🎯')}</span></span><span class="goal-body"><b>${esc(g.title)}</b><small>${esc(bankMoney(g.saved,g.currency))} из ${esc(bankMoney(g.target,g.currency))}</small><em>${g.done?'Накоплено 🎉':g.per_month?`${g.late?'срок прошёл · ':''}${esc(bankMoney(g.per_month,g.currency))} в мес${g.deadline?` до ${esc(shortDay(g.deadline).toLowerCase())}`:''}`:'без срока'}</em></span><span class="goal-pct">${pct}%</span></button>`;
+}
+function goalsSection(page=false,extra=''){
+ const d=state.goals;if(!d)return '';
+ const head=`<div class="sec-row"><h2>Цели</h2>${d.items.length?`<button type="button" class="text-link head-primary-link" data-action="goal-add">${icon('plus')} Цель</button>`:''}</div>`;
+ if(!d.items.length)return `<section class="fin-goals" data-ui-key="fin-goals">${head}<button type="button" class="spend-sum empty goal-empty" data-action="goal-add"><span class="sp-orb">${icon('target')}</span><span><b>Цель накоплений</b><small>Машина, отпуск, подушка — Platformer посчитает, сколько откладывать в месяц</small></span>${icon('chevron')}</button></section>`;
+ return `<section class="fin-goals${page?' month-part':''}" data-ui-key="fin-goals">${head}${extra}<div class="goal-list">${d.items.map(goalCard).join('')}</div></section>`;
+}
+const GOAL_EMOJI=['🎯','🚗','✈️','🏠','🛡️','💻','📱','🎓','💍','🏖️','🎁','💰'];
+async function goalEditor(goal=null){
+ const currencies=state.goals?.currencies||['USD','EUR','RUB','BYN'];
+ let error='',draft=goal?{...goal}:{title:'',emoji:'🎯',target:'',saved:'',currency:currencies.includes(state.displayCurrency)?state.displayCurrency:'USD',deadline:''};
+ while(true){
+  const body=`${error?notice(error,true):''}${field('На что копим','title','text',draft.title,'required maxlength="64" placeholder="Машина, отпуск, подушка…" autocomplete="off"')}<div class="emoji-pick" role="radiogroup" aria-label="Значок">${GOAL_EMOJI.map(e=>`<label><input type="radio" name="emoji" value="${e}" ${e===draft.emoji?'checked':''}><span>${e}</span></label>`).join('')}</div><div class="field-row">${field('Нужно','target','text',draft.target===''?'':String(draft.target).replace('.',','),'required inputmode="decimal" placeholder="0,00" autocomplete="off"')}<label class="field">Валюта<select name="currency">${currencies.map(c=>`<option ${c===draft.currency?'selected':''}>${c}</option>`).join('')}</select></label></div><div class="field-row">${field('Уже отложено','saved','text',draft.saved===''||draft.saved==null?'':String(draft.saved).replace('.',','),'inputmode="decimal" placeholder="0" autocomplete="off"')}${field('К какому сроку','deadline','date',draft.deadline||'')}</div>${goal?`<div class="inline-actions">${button('goal-add-money','Отложить','primary small','plus',`data-id="${esc(goal.id)}"`)}${button('goal-take-money','Забрать','secondary small','minus',`data-id="${esc(goal.id)}"`)}</div><div class="guest-danger">${button('goal-delete','Удалить цель','danger small','',`data-id="${esc(goal.id)}"`)}</div>`:''}`;
+  const values=await dialog(goal?goal.title:'Новая цель',body);if(!values)return;
+  draft={...draft,title:values.title,emoji:values.emoji||'',target:values.target,saved:values.saved,currency:values.currency,deadline:values.deadline||''};
+  const num=v=>String(v||'').replace(/\s/g,'').replace(',','.');
+  const payload={title:draft.title,emoji:draft.emoji,target:num(draft.target),saved:num(draft.saved)||0,currency:draft.currency,deadline:draft.deadline||null};
+  if(preview){toast('В демо-режиме цели не сохраняются');return;}
+  try{await api('/goals'+(goal?'/'+goal.id:''),{method:goal?'PATCH':'POST',body:JSON.stringify(payload)});tg?.HapticFeedback?.notificationOccurred('success');toast('Сохранено');await sectionReload();return;}catch(exc){error=exc.message;}
+ }
+}
+async function goalMoney(goal,sign){
+ if(!goal||!await closeDialogFirst())return;
+ let error='';
+ while(true){
+  const values=await dialog(sign>0?`Отложить на «${goal.title}»`:`Забрать из «${goal.title}»`,`${error?notice(error,true):''}${field('Сумма, '+goal.currency,'amount','text','','required inputmode="decimal" placeholder="0,00" autocomplete="off"')}<p class="muted">Отложено ${esc(bankMoney(goal.saved,goal.currency))} из ${esc(bankMoney(goal.target,goal.currency))}</p>`,sign>0?'Отложить':'Забрать');
+  if(!values)return;
+  if(preview){toast('В демо-режиме цели не сохраняются');return;}
+  try{const g=await api(`/goals/${goal.id}/add`,{method:'POST',body:JSON.stringify({amount:(sign<0?'-':'')+String(values.amount).replace(/\s/g,'').replace(',','.')})});tg?.HapticFeedback?.notificationOccurred('success');toast(g.done?'Цель достигнута 🎉':'Сохранено');await sectionReload();return;}catch(exc){error=exc.message;}
+ }
+}
+async function goalAction(action,el){
+ const goal=state.goals?.items.find(g=>g.id===el.dataset.id);
+ if(action==='goal-add')return goalEditor();
+ if(action==='goal-edit')return goalEditor(goal);
+ if(action==='goal-add-money')return goalMoney(goal,1);
+ if(action==='goal-take-money')return goalMoney(goal,-1);
+ if(action==='goal-delete'){if(!await closeDialogFirst())return;if(await confirm('Удалить цель?','Отложенные деньги никуда не денутся — исчезнет только сама цель.','Удалить')){if(!preview)await api('/goals/'+el.dataset.id,{method:'DELETE'});await sectionReload();}return;}
+}
+// Первый запуск Финансов: три шага, пока не сделаны (или пока не скрыли)
+function finOnboarding(){
+ if(!state.banks||!state.income||!state.spend)return '';
+ let hidden=false;try{hidden=localStorage.getItem('fin-onboard-hidden')==='1';}catch{}
+ if(hidden)return '';
+ const steps=[['bank-add','Карта или счёт','Баланс всех карт в одном месте',!!state.banks.accounts?.length],['income-add','Зарплата','Даты зачислений — сама придёт на карту',!!state.income.items?.length],['spend-add','Подписки и траты','Сколько уходит в месяц',!!state.spend.items?.length]];
+ const done=steps.filter(s=>s[3]).length;if(done===steps.length)return '';
+ return `<section class="fin-onboard" data-ui-key="fin-onboard"><div class="fo-head"><div><span class="sec-eyebrow">Начало · ${done} из ${steps.length}</span><h2>Настройте финансы за минуту</h2></div><button type="button" class="icon-btn small" data-action="onboard-hide" aria-label="Скрыть">×</button></div><span class="fo-meter" aria-hidden="true"><i style="--w:${done/steps.length*100}%"></i></span>${steps.map(([a,t,s,ok],i)=>ok?`<div class="fo-step done"><span class="fo-n">${icon('check')}</span><span><b>${t}</b><small>${s}</small></span></div>`:`<button type="button" class="fo-step" data-action="${a}"><span class="fo-n">${i+1}</span><span><b>${t}</b><small>${s}</small></span>${icon('chevron')}</button>`).join('')}</section>`;
+}
+function previewGoals(){const t=projectToday(),y=Number(t.slice(0,4));return {items:[{id:'g1',title:'Машина',emoji:'🚗',target:6000,saved:2150,left:3850,currency:'USD',deadline:`${y+1}-06-01`,progress:.358,done:false,per_month:481.25,months_left:8,late:false},{id:'g2',title:'Отпуск на море',emoji:'🏖️',target:1500,saved:1120,left:380,currency:'USD',deadline:`${y+1}-03-01`,progress:.747,done:false,per_month:95,months_left:4,late:false},{id:'g3',title:'Наушники',emoji:'🎧',target:300,saved:300,left:0,currency:'USD',deadline:null,progress:1,done:true,per_month:null,months_left:null,late:false}],per_month:{USD:576.25},saved:{USD:3570},currencies:['USD','EUR','RUB','BYN']};}
+function previewMonth(){
+ const t=projectToday(),[y,m,dd]=t.split('-').map(Number),days=new Date(Date.UTC(y,m,0)).getUTCDate();
+ const hist=[];for(let i=5;i>=0;i--){const d=new Date(Date.UTC(y,m-1-i,1)),key=d.toISOString().slice(0,7);hist.push({month:key,income:{BYN:i===0?2650:2300+i*80},spend:{USD:520+i*40,EUR:12.99},current:i===0});}
+ return {month:t.slice(0,7),days,day:dd,income:{BYN:dd>=20?2300:900},income_ahead:{BYN:dd>=20?350:1750},spend:{USD:312.5,EUR:12.99,BYN:89},spend_ahead:{USD:41.99},by_category:[{category:'shopping',label:'Покупки',totals:{USD:209.5}},{category:'subs',label:'Подписки',totals:{EUR:12.99,USD:5.99}},{category:'health',label:'Здоровье',totals:{USD:97}},{category:'food',label:'Еда',totals:{BYN:64}},{category:'connect',label:'Связь и интернет',totals:{BYN:25}}],history:hist};
+}
+// ── Друзья: открытые вишлисты с «подарю» и общие траты ──
+function debtText(bal){const e=Object.entries(bal||{});if(!e.length)return '';return e.map(([c,v])=>`${v>0?'должен вам':'вы должны'} ${bankMoney(Math.abs(v),c)}`).join(' · ');}
+function friendInitial(n){return esc(String(n||'?').trim().slice(0,1).toUpperCase());}
+function friendCard(f,i){
+ const bal=Object.entries(f.balance||{}),owes=bal.some(([,v])=>v>0),owe=bal.some(([,v])=>v<0);
+ const wishes=f.wishlists.flatMap(l=>l.items.map(it=>({...it,list:l.title,emoji:l.emoji})));
+ const wish=it=>`<li class="fw-item${it.reserved?' taken':''}"><span class="fw-title"><b>${esc(it.title)}</b><small>${esc(it.emoji||'✦')} ${esc(it.list)}${it.price!=null?` · ${esc(money(it.price,it.currency||'USD'))}`:''}</small></span>${it.mine?`<button type="button" class="fw-gift mine" data-action="friend-unreserve" data-id="${esc(it.id)}">${icon('check')}Вы дарите</button>`:it.reserved?'<span class="fw-gift busy">Уже дарят</span>':`<button type="button" class="fw-gift" data-action="friend-reserve" data-id="${esc(it.id)}">${icon('gift')}Подарю</button>`}</li>`;
+ return `<section class="friend-card${f.former?' former':''}" style="--i:${i};--h:${hashHue(f.name)}" data-ui-key="friend-${esc(f.id)}"><div class="fc-head"><span class="fc-avatar">${friendInitial(f.name)}</span><div><b>${esc(f.name)}</b><small class="${owes?'positive':owe?'negative':'muted'}">${bal.length?esc(debtText(f.balance)):'долгов нет'}${f.former?' · больше не в кругу':''}</small></div>${bal.length?button('friend-settle','Рассчитаться','secondary small','',`data-id="${esc(f.id)}"`):''}</div>${wishes.length?`<ul class="fw-list">${wishes.slice(0,8).map(wish).join('')}</ul>${wishes.length>8?`<small class="muted">и ещё ${wishes.length-8}</small>`:''}`:f.former?'':'<p class="muted fc-none">Открытых желаний нет</p>'}</section>`;
+}
+function splitRow(x){
+ const cur=x.currency;
+ return `<div class="split-row${x.kind==='settle'?' settle':''}"><span class="sp-when"><b>${Number(x.day.slice(8))}</b><small>${MONTH_NAMES[Number(x.day.slice(5,7))-1].slice(0,3).toLowerCase()}</small></span><span class="sp-body"><b>${esc(x.kind==='settle'?`${x.payer_name} → ${x.members[0]?.name}`:x.title)}</b><small>${x.kind==='settle'?'возврат долга':`платил${x.payer_name==='Вы'?'и вы':` ${esc(x.payer_name)}`} · ${esc(x.members.map(m=>m.name).join(', '))} · по ${esc(bankMoney(x.share,cur))}`}</small></span><b class="sp-amount">${esc(bankMoney(x.amount,cur))}</b>${x.mine?`<button type="button" class="icon-btn small" data-action="split-delete" data-id="${esc(x.id)}" aria-label="Удалить запись">×</button>`:''}</div>`;
+}
+function friendsSection(){
+ const d=state.friends;
+ if(!d)return state.friendsError?notice(state.friendsError,true):'';
+ if(!d.friends.length)return `<section class="friends-empty" data-ui-key="friends-empty"><span class="empty-orb">${icon('people')}</span><b>Здесь появятся друзья</b><p>Кого вы пригласили и кто пригласил вас. Открытые ими списки желаний — с отметкой «подарю», и общие траты: кто кому сколько должен.</p></section>`;
+ const totals={};for(const f of d.friends)for(const [c,v] of Object.entries(f.balance||{}))totals[c]=(totals[c]||0)+v;
+ const t=sumIn(totals),cur=state.displayCurrency;
+ const sum=Object.keys(totals).length?`<div class="debt-sum ${t.sum>=0?'plus':'minus'}"><small>${t.sum>=0?'Вам должны':'Вы должны'}</small><b>${money(Math.abs(t.sum),cur)}</b></div>`:'';
+ return `<section class="friends-block" data-ui-key="friends"><div class="sec-row"><h2>Ваш круг</h2>${button('split-add','Общая трата','primary small','split')}</div>${sum}<div class="friend-list">${d.friends.map(friendCard).join('')}</div></section><section class="split-block spend-list" data-ui-key="split"><div class="sec-row"><h2>Общие траты</h2>${d.split.length?`<span class="badge">${d.split.length}</span>`:''}</div>${d.split.length?d.split.map(splitRow).join(''):'<p class="muted">Записали, кто за что платил, — Platformer посчитает, кто кому должен.</p>'}</section>`;
+}
+async function splitEditor(){
+ const d=state.friends;if(!d?.friends.length){toast('Сначала пригласите друзей');return;}
+ const people=[{id:d.me,name:'Вы'},...d.friends.filter(f=>!f.former).map(f=>({id:f.id,name:f.name}))],currencies=d.currencies||['USD','EUR','RUB','BYN'];
+ let error='',draft={title:'',amount:'',currency:currencies.includes(state.displayCurrency)?state.displayCurrency:'USD',payer:d.me,members:people.map(p=>p.id),day:projectToday()};
+ while(true){
+  const body=`${error?notice(error,true):''}${field('За что','title','text',draft.title,'required maxlength="80" placeholder="Пицца, такси, дача…" autocomplete="off"')}<div class="field-row">${field('Сумма','amount','text',draft.amount,'required inputmode="decimal" placeholder="0,00" autocomplete="off"')}<label class="field">Валюта<select name="currency">${currencies.map(c=>`<option ${c===draft.currency?'selected':''}>${c}</option>`).join('')}</select></label></div><div class="field-row"><label class="field">Кто платил<select name="payer">${people.map(p=>`<option value="${esc(p.id)}" ${p.id===draft.payer?'selected':''}>${esc(p.name)}</option>`).join('')}</select></label>${field('Когда','day','date',draft.day)}</div><span class="eyebrow">Делим поровну между</span><div class="split-members">${people.map(p=>`<label class="split-member"><input type="checkbox" name="m_${esc(p.id)}" ${draft.members.includes(p.id)?'checked':''}><span class="fc-avatar" style="--h:${hashHue(p.name)}">${friendInitial(p.name)}</span>${esc(p.name)}</label>`).join('')}</div>`;
+  const values=await dialog('Общая трата',body,'Записать');if(!values)return;
+  draft={...draft,title:values.title,amount:values.amount,currency:values.currency,payer:values.payer,day:values.day,members:people.filter(p=>values['m_'+p.id]==='on').map(p=>p.id)};
+  if(preview){toast('В демо-режиме траты не сохраняются');return;}
+  try{state.friends=await api('/friends/split',{method:'POST',body:JSON.stringify({title:draft.title,amount:String(draft.amount).replace(/\s/g,'').replace(',','.'),currency:draft.currency,payer:draft.payer,members:draft.members,day:draft.day})});tg?.HapticFeedback?.notificationOccurred('success');toast('Записано');render(true);return;}catch(exc){error=exc.message;}
+ }
+}
+async function settleEditor(friend){
+ if(!friend)return;
+ const entries=Object.entries(friend.balance||{});if(!entries.length)return;
+ let error='',[cur,val]=entries[0];
+ while(true){
+  const theyOwe=val>0;
+  const body=`${error?notice(error,true):''}<p>${theyOwe?`${esc(friend.name)} возвращает вам`:`Вы возвращаете ${esc(friend.name)}`}</p>${entries.length>1?`<label class="field">Валюта<select name="currency">${entries.map(([c])=>`<option ${c===cur?'selected':''}>${c}</option>`).join('')}</select></label>`:`<input type="hidden" name="currency" value="${esc(cur)}">`}${field('Сумма','amount','text',String(Math.abs(val)).replace('.',','),'required inputmode="decimal" autocomplete="off"')}`;
+  const values=await dialog('Рассчитаться',body,'Записать возврат');if(!values)return;
+  cur=values.currency||cur;val=friend.balance[cur]??val;
+  if(preview){toast('В демо-режиме траты не сохраняются');return;}
+  const me=state.friends.me,payload={kind:'settle',from:val>0?friend.id:me,to:val>0?me:friend.id,amount:String(values.amount).replace(/\s/g,'').replace(',','.'),currency:cur};
+  try{state.friends=await api('/friends/split',{method:'POST',body:JSON.stringify(payload)});toast('Записано');render(true);return;}catch(exc){error=exc.message;}
+ }
+}
+async function friendAction(action,el){
+ if(action==='split-add')return splitEditor();
+ if(action==='friend-settle')return settleEditor(state.friends?.friends.find(f=>f.id===el.dataset.id));
+ if(action==='split-delete'){if(await confirm('Удалить запись?','Долги пересчитаются без неё.','Удалить')){if(preview)return;state.friends=await api('/friends/split/'+el.dataset.id,{method:'DELETE'});render(true);}return;}
+ if(action==='friend-reserve'||action==='friend-unreserve'){if(preview){toast('В демо-режиме отметки не сохраняются');return;}try{state.friends=await api('/friends/wish/'+el.dataset.id,{method:action==='friend-reserve'?'POST':'DELETE'});tg?.HapticFeedback?.notificationOccurred('success');toast(action==='friend-reserve'?'Отмечено: вы дарите. Владелец не узнает':'Отметка снята');render(true);}catch(exc){toast(exc.message);}return;}
+}
+function previewFriends(){
+ const t=projectToday();
+ return {me:'1',currencies:['USD','EUR','RUB','BYN'],shared_lists:[],friends:[
+  {id:'2',name:'Лена',balance:{BYN:24.5},wishlists:[{id:'w1',title:'День рождения',emoji:'🎁',items:[{id:'fi1',title:'Кофемашина',price:300,currency:'USD',reserved:true,mine:true},{id:'fi2',title:'Абонемент на йогу',price:90,currency:'BYN',reserved:false,mine:false},{id:'fi3',title:'Книга «Дюна»',price:null,reserved:true,mine:false}]}]},
+  {id:'3',name:'Максим',balance:{BYN:-12},wishlists:[{id:'w2',title:'Техника',emoji:'🎧',items:[{id:'fi4',title:'Наушники Sony',price:280,currency:'USD',reserved:false,mine:false}]}]},
+  {id:'4',name:'Ира',balance:{},wishlists:[]}],
+  split:[{id:'s1',kind:'expense',title:'Пицца',amount:73.5,currency:'BYN',payer:'1',payer_name:'Вы',members:[{id:'1',name:'Вы'},{id:'2',name:'Лена'},{id:'3',name:'Максим'}],share:24.5,day:t,mine:true},{id:'s2',kind:'expense',title:'Такси',amount:24,currency:'BYN',payer:'3',payer_name:'Максим',members:[{id:'1',name:'Вы'},{id:'3',name:'Максим'}],share:12,day:addDaysIso(t,-2),mine:false}]};
+}
 // Цвета карт: у известных банков — фирменные, у остальных — свой оттенок по названию
 const BANK_BRANDS=[[/альфа|alfa/i,'#ef3124','#8f1015'],[/приор/i,'#f6c500','#a77c00'],[/бнб|bnb/i,'#1fae6c','#0b5c3a'],[/беларусбанк|belarusbank/i,'#1c9a52','#0b4f2a'],[/белагро/i,'#0b8f4a','#044a26'],[/белинвест/i,'#00a3e0','#00557a'],[/белвэб|belveb/i,'#0a6fc2','#063b69'],[/мтб|mtb/i,'#e30613','#6d0309'],[/сбер|sber/i,'#21a038','#0c5a1e'],[/т-банк|т банк|тинькофф|tinkoff|t-bank/i,'#ffdd2d','#2f2f2f'],[/втб|vtb/i,'#1b4fd8','#0a2468'],[/revolut/i,'#2f3542','#0d0f14'],[/wise/i,'#9fe870','#1f4d12'],[/наличн|cash/i,'#6f7f69','#2b3329']];
 function hashHue(text){let h=0;for(const ch of String(text||''))h=(h*31+ch.codePointAt(0))%360;return h;}
@@ -1227,7 +1390,7 @@ function projectsView(){
  const alloc=whole>0?`<div class="fin-alloc" role="img" aria-label="Из чего состоят активы">${parts.map(([l,v,k],i)=>`<i class="fa-${k}" style="--w:${(v/whole*100).toFixed(1)}%;--d:${i*120}ms"></i>`).join('')}</div><div class="fin-legend">${parts.map(([l,v,k])=>`<span><i class="fa-${k}"></i>${l} <em>${Math.round(v/whole*100)}%</em></span>`).join('')}</div>`:'';
  const hero=`<div class="page-head sec-hero tone-fin fin-hero" data-ui-key="fin-hero"><div class="sec-glow" aria-hidden="true"><i></i><i></i><i></i></div><div class="fin-main"><span class="sec-eyebrow">Все активы</span><b class="fin-total">${portfolio.own==null?'—':countUp(portfolio.own,`money:${cur}`)}</b><p class="fin-sub"><b class="${daily<0?'negative':'positive'}">${known?`≈ ${money(daily,cur,true)}`:'—'}</b> в день · рабочий капитал <b>${portfolio.working==null?'—':money(portfolio.working,cur)}</b></p></div><a class="button secondary forecast-link" href="#forecast">${icon('chart')}<span>Прогноз</span></a></div>${alloc}`;
  const projects=state.projects.length?`<div class="project-grid">${projectCard({id:'tagmarket-system',name:'TagMarket',total:portfolio.tag,currency:cur,rate_percent:0,period:'month',multi:true,accounts:state.data.accounts,system:true})}${state.projects.map(projectCard).join('')}</div>`:`<div class="project-grid">${projectCard({id:'tagmarket-system',name:'TagMarket',total:portfolio.tag,currency:cur,rate_percent:0,period:'month',multi:true,accounts:state.data.accounts,system:true})}</div><section class="lists-empty fin-empty"><span class="empty-orb">${icon('projects')}</span><b>Добавьте первый проект</b><p>Вклад, инвестиции или любой доход с процентом — Platformer сам посчитает начисления каждый день.</p>${button('project-create','Добавить проект','primary','plus')}</section>`;
- return `<div class="project-space fin">${hero}${state.projectsError?notice('Не удалось обновить проекты. Показаны последние данные.',true):''}${walletSection()}${incomeSection()}<section class="fin-projects" data-ui-key="fin-projects"><div class="sec-row"><h2>Проекты</h2>${state.projects.length?`<button type="button" class="text-link head-primary-link" data-action="project-create">${icon('plus')} Проект</button>`:''}</div>${projects}</section>${spendSection()}${projectsDynamics(portfolio)}</div>`;
+ return `<div class="project-space fin">${hero}${state.projectsError?notice('Не удалось обновить проекты. Показаны последние данные.',true):''}${finOnboarding()}${monthSection()}${walletSection()}${incomeSection()}${goalsSection()}<section class="fin-projects" data-ui-key="fin-projects"><div class="sec-row"><h2>Проекты</h2>${state.projects.length?`<button type="button" class="text-link head-primary-link" data-action="project-create">${icon('plus')} Проект</button>`:''}</div>${projects}</section>${spendSection()}${projectsDynamics(portfolio)}</div>`;
 }
 function projectView(){
  const p=state.projects?.find(p=>p.id===state.projectId),back='<a href="#projects" class="button secondary small back">← Проекты</a>';
@@ -1475,7 +1638,7 @@ document.addEventListener('submit',async event=>{const form=event.target.closest
 function wishTab(){
  const lists=state.lists.wishlists;
  if(!lists.length)return `<section class="lists-empty"><span class="empty-orb">${icon('lists')}</span><b>Соберите первый вишлист</b><p>Списки по увлечениям: фото, путешествия, спорт, дом. Цена и ссылка — по желанию.</p>${button('wish-list-add','Создать список','primary','plus')}</section>`;
- return `<div class="wish-grid">${lists.map(l=>{const total=Object.entries(l.totals).map(([c,v])=>money(v,c)).join(' + '),done=l.items.length?Math.round(l.done/l.items.length*100):0;return `<section class="wish-list" data-ui-key="wish-${esc(l.id)}"><div class="wish-head"><span class="wish-emoji">${esc(l.emoji||'✦')}</span><div><h2>${esc(l.title)}</h2><small>${countLabel(l.open,['желание','желания','желаний'])}${l.done?` · исполнено ${l.done}`:''}${total?` · ${total}`:''}</small></div><button type="button" class="icon-btn small" data-action="wish-list-edit" data-id="${esc(l.id)}" aria-label="Изменить список">${icon('settings')}</button></div>${l.items.length?`<span class="wish-meter" aria-hidden="true"><i style="--w:${done}%"></i></span>`:''}<ul class="wish-items">${l.items.map(i=>`<li class="${i.done?'done':''}"><button type="button" class="wish-check" data-action="wish-toggle" data-id="${esc(l.id)}" data-item="${esc(i.id)}" aria-label="${i.done?'Вернуть в список':'Отметить исполненным'}" aria-pressed="${i.done}">${icon('check')}</button><button type="button" class="wish-title" data-action="wish-item-edit" data-id="${esc(l.id)}" data-item="${esc(i.id)}"><b>${esc(i.title)}</b>${i.note?`<small>${esc(i.note)}</small>`:''}</button>${i.price!=null?`<span class="wish-price">${money(i.price,i.currency||'USD')}</span>`:''}${i.url?`<a class="icon-btn small" href="${esc(i.url)}" target="_blank" rel="noopener" aria-label="Открыть ссылку">${icon('link')}</a>`:''}</li>`).join('')}</ul><button type="button" class="wish-add" data-action="wish-item-add" data-id="${esc(l.id)}">${icon('plus')}<span>Добавить желание</span></button></section>`;}).join('')}</div>`;
+ return `<div class="wish-grid">${lists.map(l=>{const total=Object.entries(l.totals).map(([c,v])=>money(v,c)).join(' + '),done=l.items.length?Math.round(l.done/l.items.length*100):0;return `<section class="wish-list" data-ui-key="wish-${esc(l.id)}"><div class="wish-head"><span class="wish-emoji">${esc(l.emoji||'✦')}</span><div><h2>${esc(l.title)}</h2><small>${countLabel(l.open,['желание','желания','желаний'])}${l.done?` · исполнено ${l.done}`:''}${total?` · ${total}`:''}${l.shared?' · видят друзья':''}</small></div><button type="button" class="icon-btn small" data-action="wish-list-edit" data-id="${esc(l.id)}" aria-label="Изменить список">${icon('settings')}</button></div>${l.items.length?`<span class="wish-meter" aria-hidden="true"><i style="--w:${done}%"></i></span>`:''}<ul class="wish-items">${l.items.map(i=>`<li class="${i.done?'done':''}"><button type="button" class="wish-check" data-action="wish-toggle" data-id="${esc(l.id)}" data-item="${esc(i.id)}" aria-label="${i.done?'Вернуть в список':'Отметить исполненным'}" aria-pressed="${i.done}">${icon('check')}</button><button type="button" class="wish-title" data-action="wish-item-edit" data-id="${esc(l.id)}" data-item="${esc(i.id)}"><b>${esc(i.title)}</b>${i.note?`<small>${esc(i.note)}</small>`:''}</button>${i.price!=null?`<span class="wish-price">${money(i.price,i.currency||'USD')}</span>`:''}${i.url?`<a class="icon-btn small" href="${esc(i.url)}" target="_blank" rel="noopener" aria-label="Открыть ссылку">${icon('link')}</a>`:''}</li>`).join('')}</ul><button type="button" class="wish-add" data-action="wish-item-add" data-id="${esc(l.id)}">${icon('plus')}<span>Добавить желание</span></button></section>`;}).join('')}</div>`;
 }
 // ── Импорт заметок с телефона: файлы (.txt, .md, Google Keep .json/.html) или вставленный текст ──
 const NOTE_FILES='.txt,.md,.markdown,.json,.html,.htm,text/plain,text/markdown,application/json,text/html';
@@ -1545,11 +1708,11 @@ function calendarTab(){
 function colorPicker(current){return `<div class="note-colors" role="radiogroup" aria-label="Цвет">${NOTE_COLORS.map(([id,label])=>`<label class="note-color c-${id}" title="${label}"><input type="radio" name="color" value="${id}" ${id===current?'checked':''} aria-label="${label}"><i></i></label>`).join('')}</div>`;}
 const WISH_EMOJI=['📷','✈️','🏠','🎧','👟','📚','🎮','🎨','🚗','🌿','🍳','🎁'];
 async function wishListEditor(list=null){
- let error='',draft={title:list?.title||'',emoji:list?.emoji||''};
+ let error='',draft={title:list?.title||'',emoji:list?.emoji||'',shared:!!list?.shared};
  while(true){
-  const body=`${error?notice(error,true):''}${field('Название','title','text',draft.title,'required maxlength="64" placeholder="Фото, путешествия, дом…"')}<span class="eyebrow">Значок</span><div class="emoji-pick" role="radiogroup" aria-label="Значок">${WISH_EMOJI.map(e=>`<label><input type="radio" name="emoji" value="${e}" ${e===draft.emoji?'checked':''}><span>${e}</span></label>`).join('')}</div>${list?`<div class="guest-danger">${button('wish-list-delete','Удалить список','danger small','',`data-id="${esc(list.id)}"`)}</div>`:''}`;
+  const body=`${error?notice(error,true):''}${field('Название','title','text',draft.title,'required maxlength="64" placeholder="Фото, путешествия, дом…"')}<span class="eyebrow">Значок</span><div class="emoji-pick" role="radiogroup" aria-label="Значок">${WISH_EMOJI.map(e=>`<label><input type="radio" name="emoji" value="${e}" ${e===draft.emoji?'checked':''}><span>${e}</span></label>`).join('')}</div><label class="check"><input type="checkbox" name="shared" ${draft.shared?'checked':''}>Показать друзьям — они смогут отметить «подарю», а вы не увидите кто и что</label>${list?`<div class="guest-danger">${button('wish-list-delete','Удалить список','danger small','',`data-id="${esc(list.id)}"`)}</div>`:''}`;
   const values=await dialog(list?'Список желаний':'Новый список',body);if(!values)return;
-  draft={title:values.title,emoji:values.emoji||''};
+  draft={title:values.title,emoji:values.emoji||'',shared:values.shared==='on'};
   try{await api('/wishlists'+(list?'/'+list.id:''),{method:list?'PATCH':'POST',body:JSON.stringify(draft)});toast('Сохранено');await sectionReload();return;}catch(exc){error=exc.message;}
  }
 }
@@ -1880,6 +2043,10 @@ document.addEventListener('click',async event=>{const el=event.target.closest('[
  else if(action.startsWith('bank-'))await bankAction(action,el);
  else if(action.startsWith('spend-'))await spendAction(action,el);
  else if(action.startsWith('income-'))await incomeAction(action,el);
+ else if(action.startsWith('goal-'))await goalAction(action,el);
+ else if(/^(friend|split)-/.test(action))await friendAction(action,el);
+ else if(action==='month-reload')await sectionReload();
+ else if(action==='onboard-hide'){try{localStorage.setItem('fin-onboard-hidden','1');}catch{}render(true);}
  else if(action==='fab-toggle')fabToggle();
  else if(action==='refresh')await refresh();
  else if(action==='notifications')await openNotifications();

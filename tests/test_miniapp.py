@@ -37,6 +37,10 @@ import banks
 import insights
 import spend
 import income
+import goals
+import summary
+import friends
+import backup
 import lists
 import projects
 import partner
@@ -1961,6 +1965,125 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.call("DELETE", f"/api/income/{salary['id']}")).status, 200)
         self.assertAlmostEqual((await (await self.call("GET", "/api/banks")).json())["accounts"][0]["balance"], 1500.5, places=2)
 
+    async def test_savings_goals_plan_per_month_and_contributions(self):
+        on = goals.today()
+        deadline = date(on.year + 1, on.month, min(on.day, 28)).isoformat()
+        car = await (await self.call("POST", "/api/goals", json={"title": "Машина", "emoji": "🚗", "target": "6000",
+                                                                 "saved": 600, "currency": "USD", "deadline": deadline})).json()
+        self.assertEqual((car["left"], car["months_left"]), (5400, 13 if on.day <= 28 else 12))
+        self.assertAlmostEqual(car["per_month"], round(5400 / car["months_left"], 2))
+        added = await (await self.call("POST", f"/api/goals/{car['id']}/add", json={"amount": "400,50"})).json()
+        self.assertEqual(added["saved"], 1000.5)
+        taken = await (await self.call("POST", f"/api/goals/{car['id']}/add", json={"amount": "-0.5"})).json()
+        self.assertEqual(taken["saved"], 1000)
+        self.assertEqual((await self.call("POST", f"/api/goals/{car['id']}/add", json={"amount": -5000})).status, 400)
+        await self.call("POST", "/api/goals", json={"title": "Наушники", "target": 100, "saved": 100, "currency": "USD"})
+        data = await (await self.call("GET", "/api/goals")).json()
+        self.assertEqual([g["title"] for g in data["items"]], ["Машина", "Наушники"])     # выполненные — в конце
+        self.assertTrue(data["items"][1]["done"])
+        self.assertEqual(data["per_month"], {"USD": data["items"][0]["per_month"]})
+        for bad in ({"title": "", "target": 1, "currency": "USD"}, {"title": "x", "target": 0, "currency": "USD"},
+                    {"title": "x", "target": 1, "currency": "XYZ"}, {"title": "x", "target": 1, "currency": "USD", "deadline": "завтра"}):
+            self.assertEqual((await self.call("POST", "/api/goals", json=bad)).status, 400, bad)
+        self.assertEqual((await self.call("POST", f"/api/goals/{car['id']}/add", uid=2, json={"amount": 1})).status, 404)
+        self.assertEqual((await self.call("DELETE", f"/api/goals/{car['id']}")).status, 200)
+        self.assertEqual(goals.months_left(date(2026, 12, 25), date(2026, 10, 22)), 3)
+        self.assertEqual(goals.months_left(date(2026, 10, 10), date(2026, 10, 22)), 1)
+
+    async def test_month_summary_counts_salary_and_spend_by_date(self):
+        db = self.app["db"]
+        on = date(2026, 10, 22)
+        income.save(db, 1, {"kind": "salary", "amount": 1000, "day": 20, "currency": "USD"})
+        income.save(db, 1, {"kind": "bonus", "amount": 300, "day": 28, "currency": "USD"})
+        db.execute("UPDATE income_items SET created_at='2026-08-01T00:00:00+00:00'")
+        spend.save(db, 1, {"title": "Netflix", "amount": 10, "currency": "EUR", "kind": "recurring", "period": "month",
+                           "category": "subs", "day": "2026-01-05"})
+        spend.save(db, 1, {"title": "Кроссовки", "amount": 90, "currency": "USD", "kind": "once", "category": "shopping",
+                           "day": "2026-10-03"})
+        db.commit()
+        r = summary.report(db, 1, "2026-10", on)
+        self.assertEqual((r["income"], r["income_ahead"]), ({"USD": 1000.0}, {"USD": 300.0}))
+        self.assertEqual(r["spend"], {"EUR": 10.0, "USD": 90.0})
+        self.assertEqual((r["day"], r["days"]), (22, 31))
+        self.assertEqual([h["month"] for h in r["history"]], ["2026-05", "2026-06", "2026-07", "2026-08", "2026-09", "2026-10"])
+        self.assertEqual(r["history"][2]["income"], {})                       # до того, как зарплату добавили, — пусто
+        self.assertEqual(r["history"][3]["income"], {"USD": 1300.0})
+        self.assertEqual(r["history"][-1]["income"], {"USD": 1300.0})          # текущий месяц — с ожидаемым
+        self.assertEqual(r["history"][0]["spend"], {"EUR": 10.0})
+        self.assertEqual((await self.call("GET", "/api/month?month=2026-13")).status, 400)
+        self.assertEqual((await self.call("GET", "/api/month")).status, 200)
+        year = spend.overview(db, 1, on, span="year")
+        self.assertEqual(year["this_month"], {"EUR": 120.0, "USD": 90.0})       # весь год: 12 списаний Netflix
+        self.assertEqual((await self.call("GET", "/api/spend?span=week")).status, 400)
+
+    async def test_friends_share_wishlists_and_split_expenses(self):
+        # 1 пригласил 2 и 3; 4 — чужой
+        for g in ("2", "3"):
+            partner.kv_set(self.db, f"guest:{g}", "1")
+            partner.kv_set(self.db, f"guest_by:{g}", "1")
+        partner.kv_set(self.db, "user_name:2", "Лена")
+        partner.kv_set(self.db, "guest:4", "1")
+        partner.kv_set(self.db, "guest_by:4", "99")
+        self.assertEqual(friends.circle(self.db, "2"), ["1", "3"])
+        self.assertEqual(friends.circle(self.db, "1"), ["2", "3"])
+        self.assertEqual(friends.circle(self.db, "4"), ["99"])
+        # вишлист Лены: виден друзьям, только когда она его открыла
+        wl = await (await self.call("POST", "/api/wishlists", uid=2, json={"title": "ДР"})).json()
+        wl = await (await self.call("POST", f"/api/wishlists/{wl['id']}/items", uid=2, json={"title": "Кофемашина", "price": 300})).json()
+        item = wl["items"][0]["id"]
+        lena = lambda d: next(f for f in d["friends"] if f["id"] == "2")
+        self.assertEqual(lena(await (await self.call("GET", "/api/friends")).json())["wishlists"], [])
+        self.assertEqual((await self.call("POST", f"/api/friends/wish/{item}")).status, 404)
+        shared = await (await self.call("PATCH", f"/api/wishlists/{wl['id']}", uid=2, json={"shared": True})).json()
+        self.assertTrue(shared["shared"])
+        data = await (await self.call("POST", f"/api/friends/wish/{item}")).json()
+        mine = lena(data)["wishlists"][0]["items"][0]
+        self.assertTrue(mine["reserved"] and mine["mine"])
+        other = lena(await (await self.call("GET", "/api/friends", uid=3)).json())["wishlists"][0]["items"][0]
+        self.assertTrue(other["reserved"] and not other["mine"])               # третий видит: занято
+        self.assertEqual((await self.call("POST", f"/api/friends/wish/{item}", uid=3)).status, 400)
+        self.assertEqual((await self.call("DELETE", f"/api/friends/wish/{item}", uid=3)).status, 400)
+        own = (await (await self.call("GET", "/api/lists", uid=2)).json())["wishlists"][0]["items"][0]
+        self.assertNotIn("reserved", own)                                       # сама Лена сюрприз не видит
+        self.assertEqual((await self.call("POST", f"/api/friends/wish/{item}", uid=4)).status, 404)
+        # общие траты: я заплатил 90 за троих, Лена вернула 20
+        r = await self.call("POST", "/api/friends/split", json={"title": "Пицца", "amount": 90, "currency": "BYN",
+                                                                "members": ["1", "2", "3"]})
+        self.assertEqual(r.status, 201, await r.text())
+        await self.call("POST", "/api/friends/split", json={"kind": "settle", "from": "2", "to": "1", "amount": 20, "currency": "BYN"})
+        data = await (await self.call("GET", "/api/friends")).json()
+        self.assertEqual(lena(data)["balance"], {"BYN": 10.0})                   # Лена ещё должна 10
+        self.assertEqual(next(f for f in data["friends"] if f["id"] == "3")["balance"], {"BYN": 30.0})
+        self.assertEqual(lena(await (await self.call("GET", "/api/friends", uid=3)).json())["balance"], {})
+        me3 = await (await self.call("GET", "/api/friends", uid=3)).json()
+        self.assertEqual(next(f for f in me3["friends"] if f["id"] == "1")["balance"], {"BYN": -30.0})
+        self.assertEqual(len(me3["split"]), 1)                                  # возврат Лены третьему не виден
+        for bad in ({"title": "x", "amount": 5, "currency": "BYN", "members": ["1", "4"]},
+                    {"title": "x", "amount": 5, "currency": "BYN", "members": ["1"]},
+                    {"title": "x", "amount": 5, "currency": "BYN", "payer": "2", "members": ["2", "3"]},
+                    {"kind": "settle", "from": "2", "to": "3", "amount": 5, "currency": "BYN"}):
+            self.assertEqual((await self.call("POST", "/api/friends/split", json=bad)).status, 400, bad)
+        pizza = next(x for x in data["split"] if x["title"] == "Пицца")
+        self.assertEqual((await self.call("DELETE", f"/api/friends/split/{pizza['id']}", uid=2)).status, 404)
+        self.assertEqual((await self.call("DELETE", f"/api/friends/split/{pizza['id']}")).status, 200)
+
+    def test_backup_snapshot_is_consistent_and_keeps_last_days(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "state.db"
+            db = sqlite3.connect(src)
+            db.execute("CREATE TABLE t (v TEXT)")
+            db.execute("INSERT INTO t VALUES ('карта')")
+            db.commit()
+            out = Path(tmp) / "backups"
+            for d in range(1, 10):
+                path = backup.snapshot(str(src), out, date(2026, 10, d))
+            db.close()
+            self.assertEqual(sorted(p.name for p in out.glob("*.gz"))[0], "state-2026-10-03.db.gz")
+            self.assertEqual(len(list(out.glob("*.gz"))), backup.KEEP)
+            self.assertTrue(backup.restore_check(path))
+            self.assertEqual(oct(path.stat().st_mode & 0o777), "0o600")
+            self.assertIsNone(backup.snapshot(str(Path(tmp) / "нет.db"), out))
+
     def test_salary_pay_days_clamp_to_month_end_and_never_backfill(self):
         d = date
         self.assertEqual(income.pay_dates(31, d(2026, 1, 10), d(2026, 3, 5)), [d(2026, 1, 31), d(2026, 2, 28)])
@@ -3517,7 +3640,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                     with self.subTest(module=module):
                         self.assertIn(f"{module}.py", shipped)
                         self.assertIn(f"{module}.py", rollbackable)
-        for module in ("activity", "lists", "banks", "insights", "projects", "spend", "income"):
+        for module in ("activity", "lists", "banks", "insights", "projects", "spend", "income", "goals", "summary", "friends", "backup"):
             self.assertIn(f"{module}.py", shipped)
 
     async def test_guest_cannot_toggle_shared_account_polling(self):

@@ -367,6 +367,54 @@ def income_ui(page, nav):
     close_dialog(page)
 
 
+def month_goals_ui(page, nav):
+    """Сводка месяца и цели в Финансах, экран #month; первый запуск — пока не всё настроено; траты за год."""
+    page.locator(f'{nav} a[href="#projects"]').click()
+    page.locator('.fin-month .month-card').wait_for()
+    assert page.locator('.fin-month .mb-col').count() == 6
+    assert page.locator('.fin-goals .goal-card').count() == 3
+    assert page.locator('.fin-onboard').count() == 0                               # всё настроено — шагов нет
+    page.evaluate("state.banks={...state.banks,accounts:[]};state.income={...state.income,items:[]};render()")
+    page.locator('.fin-onboard').wait_for()
+    assert page.locator('.fin-onboard button.fo-step').count() == 2 and page.locator('.fin-onboard .fo-step.done').count() == 1
+    fits(page)
+    page.locator('.fin-onboard [data-action="onboard-hide"]').click()
+    page.wait_for_function("!document.querySelector('.fin-onboard')")
+    page.evaluate("localStorage.removeItem('fin-onboard-hidden')")
+    page.locator('.fin-month a.month-card').click()
+    page.locator('.month-head').wait_for()
+    assert page.locator(f'{nav} a[href="#projects"].active').count() == 1
+    assert page.locator('.month-part .mr-row').count() >= 3
+    assert page.locator('.month-plan').count() == 1 and page.locator('.fin-goals h2').count() == 1
+    fits(page)
+    page.locator('.goal-card').first.click()
+    page.locator('#dialog input[name="target"]').wait_for()
+    assert page.locator('#dialog [data-action="goal-add-money"]').count() == 1
+    fits(page)
+    close_dialog(page)
+    page.goto(page.url.split('#')[0] + '#spend')
+    page.locator('.spend-span').wait_for()
+    page.locator('.spend-span [data-span="year"]').click()
+    page.wait_for_function("document.querySelector('.spend-head p')?.textContent.includes('В этом году')")
+    page.locator('.spend-span [data-span="month"]').click()
+    page.wait_for_function("document.querySelector('.spend-head p')?.textContent.includes('В этом месяце')")
+
+
+def friends_ui(page, nav):
+    """Друзья: круг с долгами и открытыми желаниями («подарю»), общие траты и окно новой траты."""
+    page.locator(f'{nav} a[href="#people"]').click()
+    page.locator('.friends-block .friend-card').first.wait_for()
+    assert page.locator('.friend-card').count() == 3
+    assert page.locator('.fw-gift.mine').count() == 1 and page.locator('.fw-gift.busy').count() == 1
+    assert page.locator('.split-block .split-row').count() == 2
+    fits(page)
+    page.locator('.friends-block [data-action="split-add"]').click()
+    page.locator('#dialog select[name="payer"]').wait_for()
+    assert page.locator('#dialog .split-member').count() == 4                       # вы и трое друзей в кругу
+    fits(page)
+    close_dialog(page)
+
+
 def station_sections(page, nav):
     """Главная Platformer, круг жизни, активности, планы (задачи, календарь, заметки, желания) и настройки."""
     page.locator(f'{nav} a[href="#overview"]').click()
@@ -494,7 +542,7 @@ def projects_ui(page, nav):
     if page.viewport_size['width'] <= 740:        # «+» на телефоне: меню «Счёт или карта» и «Проект»
         page.locator('#fab-root .fab').click()
         page.locator('#fab-root .fab-item').first.wait_for()
-        assert page.locator('#fab-root .fab-item').count() == 3      # счёт, трата, проект
+        assert page.locator('#fab-root .fab-item').count() == 4      # счёт, цель, трата, проект
         assert page.locator('#fab-root .fab-item[data-action="bank-add"]').count() == 1
         page.locator('#fab-root .fab').click()
         page.wait_for_function("!document.querySelector('#fab-root').classList.contains('open')")
@@ -1300,6 +1348,8 @@ def main():
                     banks_ui(page, nav)
                     spend_ui(page, nav)
                     income_ui(page, nav)
+                    month_goals_ui(page, nav)
+                    friends_ui(page, nav)
                     projects_ui(page, nav)
                     compact_ui_and_quiet_refresh(page, url)
                     modal_scroll_and_deferred_refresh(page, url)

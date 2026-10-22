@@ -27,7 +27,7 @@ from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (CallbackQuery, CopyTextButton, InlineKeyboardButton,
-                           InlineKeyboardMarkup, Message, WebAppInfo, MenuButtonWebApp)
+                           InlineKeyboardMarkup, Message, WebAppInfo, MenuButtonWebApp, FSInputFile)
 from dotenv import load_dotenv
 
 import accounts
@@ -120,6 +120,7 @@ LOOKBACK_DAYS = int(os.getenv("LOOKBACK_DAYS", 3))
 # сколько минут молчания Telegram терпим, прежде чем перезапуститься
 TELEGRAM_DEAD_MIN = int(os.getenv("TELEGRAM_DEAD_MIN", 5))
 DIGEST_HOUR = int(os.getenv("DIGEST_HOUR", 10))     # час ежедневной сводки
+BACKUP_HOUR = int(os.getenv("BACKUP_HOUR", 4))      # час ежедневной резервной копии баз
 # Основатель: его бот отключить не даст никому, включая его самого. Без явной
 # настройки берём первый id из ALLOWED_USERS — он и заводил бота
 FOUNDER = (os.getenv("FOUNDER_ID")
@@ -3181,6 +3182,31 @@ async def main():
                 except Exception:
                     log.exception("не собрал ежедневную сводку")
 
+        async def daily_backup():
+            """Раз в сутки — снимок баз в data/backups (7 последних дней) и
+            свежий state.db основателю в Telegram: копия, живущая не только
+            на том же сервере, что и сама база."""
+            import backup
+            import store as _st
+            while True:
+                await asyncio.sleep(1800)
+                now = trades.clock()
+                if now.hour != BACKUP_HOUR or kv_get(db, "backup_day") == str(now.date()):
+                    continue
+                kv_set(db, "backup_day", str(now.date()))
+                try:
+                    state = await asyncio.to_thread(backup.snapshot, DB, None, now.date())
+                    await asyncio.to_thread(backup.snapshot, _st.DB, None, now.date())
+                    to = FOUNDER or chat_id
+                    if state and to and state.stat().st_size <= backup.SEND_LIMIT:
+                        await bot.send_document(
+                            int(to), FSInputFile(state),
+                            caption=f"🗄 <b>Резервная копия</b> · {now:%d.%m.%Y}\n<i>Счета, траты, зарплата, "
+                                    f"планы и заметки. Храните в Telegram — пригодится, если с сервером что-то случится.</i>")
+                except Exception:
+                    log.exception("не сделал резервную копию")
+
+        _background(daily_backup())
         _background(daily_digest())
         _background(heartbeat())
         _background(monthly_rollup())
