@@ -2085,3 +2085,19 @@ li.done>.wish-check{background:var(--accent);border-color:var(--accent)}
 .settings-row.station-row b,.settings-row.station-row p{display:block;font-size:14px;font-weight:550;color:var(--text);margin:0}
 .settings-row.station-row small{display:block;margin-top:3px;font-size:12px;color:var(--muted)}
 .settings-row.station-row>svg{width:16px;height:16px;color:var(--muted)}
+
+/* ═══ Шаги с телефона: живая карточка или одна строка, что на устройстве не обновляются ═══ */
+.live-tag{display:inline-flex;align-items:center;gap:5px;margin-left:auto;font-style:normal;font-size:10px;color:var(--muted)}
+.live-tag i{width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px rgb(var(--accent-rgb) / .7);animation:late-ping 2.4s ease-out infinite}
+.home-steps .live-tag{margin-left:0}
+.steps-card .act-card-head{display:flex;align-items:center;gap:8px}
+.steps-card{background:linear-gradient(160deg,rgb(var(--accent-rgb) / .14),color-mix(in srgb,var(--panel) 92%,transparent) 65%)}
+.home-steps{display:flex;align-items:center;gap:14px}
+.home-steps>div{display:grid;gap:2px}
+.steps-off{display:flex;align-items:center;gap:10px;margin:2px 4px 18px;font-size:13px;color:var(--muted)}
+.steps-off svg{width:16px;height:16px;flex-shrink:0;opacity:.7}
+@media(prefers-reduced-motion:reduce){.live-tag i{animation:none}}
+.steps-card .act-ring{position:absolute;right:16px;top:50%;transform:translateY(-35%)}
+.steps-card{position:relative}
+.home-steps .ring{flex:none}
+.home-activity-body>.home-steps{display:flex;align-items:center;gap:14px}

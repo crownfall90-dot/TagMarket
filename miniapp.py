@@ -1567,7 +1567,7 @@ async def lists_api(request):
 STATION_CHOICES = {
     "home": ("circle", "finance", "activity", "tasks", "events", "wish"),
     "quick": ("task", "weight", "workout", "event", "note", "wish"),
-    "metrics": ("weight", "workout"),
+    "metrics": ("steps", "weight", "workout"),      # шаги — только присланные телефоном
 }
 STATION_DEFAULTS = {"home": list(STATION_CHOICES["home"]),
                     "quick": list(STATION_CHOICES["quick"]),

@@ -1568,6 +1568,61 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         data = await (await self.call("GET", "/api/activity?days=7")).json()
         self.assertEqual([e["value"] for e in data["entries"] if e["kind"] == "steps"], [7000])
 
+    async def test_health_connect_webhook_steps_add_up_per_day(self):
+        """HC Webhook шлёт не итог дня, а новые отрезки шагов с прошлой отправки: их надо
+        хранить и складывать. Повтор отрезка (правка) заменяет его, удалённый — вычитается,
+        два источника за один день не задваивают шаги."""
+        created = await (await self.call("POST", "/api/activity/sync/key")).json()
+        url = f"/api/activity/sync?key={created['key']}"
+        today = activity.today()
+        at = lambda h, m=0, d=today: f"{d.isoformat()}T{h:02d}:{m:02d}:00+03:00"
+
+        def payload(*steps, deleted=None):
+            body = {"timestamp": at(12), "app_version": "2.4.0", "timezone": "Europe/Minsk"}
+            if steps:
+                body["steps"] = list(steps)
+            if deleted:
+                body["deleted"] = deleted
+            return body
+
+        def rec(rid, start, end, count, origin="com.google.android.apps.healthdata"):
+            return {"count": count, "start_time": start, "end_time": end,
+                    "metadata": {"id": rid, "data_origin": origin, "recording_method": "automatically_recorded"}}
+
+        async def steps_today():
+            data = await (await self.call("GET", "/api/activity?days=7")).json()
+            return data["summary"]["steps"]["today"]
+
+        first = await self.client.post(url, json=payload(rec("a", at(8), at(9), 1200), rec("b", at(9), at(10), 800)))
+        self.assertEqual(first.status, 200, await first.text())
+        self.assertEqual((await first.json())["saved"][today.isoformat()]["steps"], 2000)
+        self.assertEqual(await steps_today(), 2000)
+        # следующая отправка — только новые отрезки: итог дня растёт, а не заменяется ими
+        await self.client.post(url, json=payload(rec("c", at(10), at(11), 500)))
+        self.assertEqual(await steps_today(), 2500)
+        # тот же отрезок пришёл повторно с правкой — заменяет, а не прибавляется
+        await self.client.post(url, json=payload(rec("b", at(9), at(10), 900)))
+        self.assertEqual(await steps_today(), 2600)
+        # удалённая в Health Connect запись вычитается
+        await self.client.post(url, json=payload(deleted=[{"type": "steps", "id": "a"}]))
+        self.assertEqual(await steps_today(), 1400)
+        # второй источник (например, Google Fit) пишет те же шаги — берём больший итог, не сумму
+        await self.client.post(url, json=payload(rec("g1", at(8), at(11), 1500, origin="com.google.android.apps.fitness")))
+        self.assertEqual(await steps_today(), 1500)
+        # время в UTC («Z») раскладывается по дню пользователя, вчерашние шаги — во вчера
+        yesterday = today - timedelta(days=1)
+        await self.client.post(url, json=payload(rec("y", f"{yesterday.isoformat()}T10:00:00Z", f"{yesterday.isoformat()}T11:00:00Z", 4321)))
+        data = await (await self.call("GET", "/api/activity?days=7")).json()
+        self.assertIn({"day": yesterday.isoformat(), "value": 4321}, data["summary"]["steps"]["series"])
+        self.assertEqual([e["source"] for e in data["entries"] if e["kind"] == "steps"], ["auto", "auto"])
+        # чужой ключ не пишет в мои шаги, мусор не роняет приём
+        self.assertEqual((await self.client.post("/api/activity/sync?key=" + "x" * 32, json=payload(rec("z", at(8), at(9), 1)))).status, 401)
+        bad = await self.client.post(url, json=payload({"count": "много", "start_time": "вчера"}, rec("ok", at(11), at(12), 100)))
+        self.assertEqual(bad.status, 200, await bad.text())
+        self.assertEqual(await steps_today(), 1500)       # «ok» — от первого источника, его итог 1500 → max не меняется
+        status = await (await self.call("GET", "/api/activity/sync/key")).json()
+        self.assertIsNotNone(status["last_sync"])
+
     async def test_phone_sync_saves_health_data_without_telegram(self):
         # без ключа — отказ; ключ выдаётся только своему владельцу через Mini App
         self.assertEqual((await self.client.post("/api/activity/sync", json={"steps": 1})).status, 401)
@@ -1730,7 +1785,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await (await self.call("GET", "/api/preferences/station", uid=2)).json())["home"],
                          ["circle", "finance", "activity", "tasks", "events", "wish"])
         for bad in ({"home": ["casino"]}, {"home": ["finance", "finance"]}, {"theme": []}, {"quick": "steps"},
-                    {"metrics": ["steps"]}, {"quick": ["sleep"]}):    # шаги и сон с главной убраны
+                    {"metrics": ["sleep"]}, {"quick": ["sleep"]}):    # сон и пульс убраны; шаги — только с телефона
             self.assertEqual((await self.call("PUT", "/api/preferences/station", json=bad)).status, 400, bad)
 
     async def test_notes_import_from_phone_skips_duplicates(self):
