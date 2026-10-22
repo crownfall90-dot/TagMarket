@@ -2346,3 +2346,12 @@ html .panel.hero.tag-hero .eyebrow{color:var(--muted)}
 .steps-off-line{font-size:12px;color:var(--muted)}
 .act-chart{margin-bottom:26px}
 @media(prefers-reduced-motion:reduce){.split-cta:before,.steps-glow{animation:none}}
+/* Политика конфиденциальности (для Google Play) */
+.privacy-page{background:var(--bg)}
+.privacy{max-width:720px;margin:0 auto;padding:32px 20px 60px;line-height:1.65;font-size:15px}
+.privacy h1{font-size:30px;margin-bottom:6px}
+.privacy h2{font-size:19px;margin:28px 0 8px}
+.privacy p,.privacy li{color:color-mix(in srgb,var(--text) 82%,transparent)}
+.privacy ul{padding-left:20px;margin:8px 0}
+.privacy li{margin:6px 0}
+.privacy a{color:var(--accent);text-decoration:underline}

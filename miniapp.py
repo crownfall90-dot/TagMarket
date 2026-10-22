@@ -1291,7 +1291,7 @@ FAQ_IMAGES = ("faq-neo-card.jpg", "faq-neo-stats.jpg", "faq-sonic-card.jpg", "fa
 
 async def static(request):
     name = request.match_info.get("file", "index.html") or "index.html"
-    if name not in ("index.html", "app.js", "style.css", "preview.json", *FAQ_IMAGES):
+    if name not in ("index.html", "app.js", "style.css", "preview.json", "privacy.html", *FAQ_IMAGES):
         raise web.HTTPNotFound()
     response = web.FileResponse(STATIC / name)
     response.headers["Cache-Control"] = "no-cache"

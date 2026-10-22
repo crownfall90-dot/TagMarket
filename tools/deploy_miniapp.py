@@ -21,7 +21,7 @@ ROOT = Path("/opt/tagmarkets")
 FILES = {"accounts.py", "account_lock.py", "agent.py", "bot.py", "coordination.py", "fx.py",
          "ibportal.py", "miniapp.py", "partner.py", "projects.py", "activity.py", "lists.py", "banks.py", "insights.py", "spend.py", "income.py", "backup.py", "devices.py", "goals.py", "friends.py", "store.py", "trades.py", "webhook_server.py",
          "requirements.txt", "README.md", "docs/MINIAPP.md", "docs/todo.md", "web/index.html",
-         "web/app.js", "web/style.css", "web/preview.json", "tests/selfcheck.py",
+         "web/app.js", "web/style.css", "web/preview.json", "web/privacy.html", "tests/selfcheck.py",
          "tests/test_miniapp.py", "tools/deploy_miniapp.py", "tools/rollback_miniapp.py",
          "tools/audit.py", "docs/AUDIT_HOWTO.md",
          # картинки раздела «Частые вопросы» (в откате — необязательные)

@@ -2075,6 +2075,10 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         # код для входа можно получить и из Mini App
         made = await (await self.call("POST", "/api/devices/code")).json()
         self.assertEqual(made["minutes"], 10)
+        # политика конфиденциальности для Google Play открывается без входа
+        page = await self.client.get("/app/privacy.html")
+        self.assertEqual(page.status, 200)
+        self.assertIn("Health Connect", await page.text())
 
     def test_backup_snapshot_is_consistent_and_keeps_last_days(self):
         with tempfile.TemporaryDirectory() as tmp:
