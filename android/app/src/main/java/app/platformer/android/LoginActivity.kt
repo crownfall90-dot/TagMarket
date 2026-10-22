@@ -42,10 +42,19 @@ class LoginActivity : ComponentActivity() {
     private lateinit var enter: Button
     private lateinit var error: TextView
     private var lastAutoCode: String? = null
+    // код подставляем из буфера только после «Запросить код» и только новый:
+    // то, что лежало в буфере в момент запроса (старый код), не трогаем
+    private var requested = false
+    private var staleClip: String? = null
     private var busy = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        savedInstanceState?.let {
+            requested = it.getBoolean(KEY_REQUESTED)
+            staleClip = it.getString(KEY_STALE)
+            lastAutoCode = it.getString(KEY_LAST)
+        }
         enableEdgeToEdge()
         setContentView(R.layout.activity_login)
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.login_scroll)) { view, insets ->
@@ -80,6 +89,8 @@ class LoginActivity : ComponentActivity() {
         }
 
         requestCode.setOnClickListener {
+            staleClip = clipCode()
+            requested = true
             val bot = BuildConfig.BOT_USERNAME
             // сначала приложение Telegram напрямую, если его нет — ссылка t.me в браузере
             val opened = runCatching {
@@ -203,14 +214,27 @@ class LoginActivity : ComponentActivity() {
 
     private fun dp(v: Float) = v * resources.displayMetrics.density
 
-    /** Вернулись из Telegram с кодом в буфере — подставляем и входим сами. */
+    /** Код входа из буфера обмена или null. */
+    private fun clipCode(): String? {
+        val clip = (getSystemService(CLIPBOARD_SERVICE) as? ClipboardManager)?.primaryClip ?: return null
+        if (clip.itemCount == 0) return null
+        val text = clip.getItemAt(0).coerceToText(this)?.toString()?.trim()?.uppercase() ?: return null
+        return text.takeIf { CODE.matches(it) }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(KEY_REQUESTED, requested)
+        outState.putString(KEY_STALE, staleClip)
+        outState.putString(KEY_LAST, lastAutoCode)
+    }
+
+    /** Запросили код и вернулись из Telegram с новым кодом в буфере — подставляем и входим сами. */
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (!hasFocus || !::code.isInitialized || busy) return
-        val clip = (getSystemService(CLIPBOARD_SERVICE) as? ClipboardManager)?.primaryClip ?: return
-        if (clip.itemCount == 0) return
-        val text = clip.getItemAt(0).coerceToText(this)?.toString()?.trim()?.uppercase() ?: return
-        if (!CODE.matches(text) || text == lastAutoCode) return
+        if (!hasFocus || !requested || !::code.isInitialized || busy) return
+        val text = clipCode() ?: return
+        if (text == staleClip || text == lastAutoCode) return
         lastAutoCode = text
         code.setText(text)              // восемь символов → вход запускается сам
         code.setSelection(code.text.length)
@@ -218,5 +242,8 @@ class LoginActivity : ComponentActivity() {
 
     private companion object {
         val CODE = Regex("^[A-Z2-9]{4}-?[A-Z2-9]{4}$")
+        const val KEY_REQUESTED = "requested"
+        const val KEY_STALE = "stale_clip"
+        const val KEY_LAST = "last_code"
     }
 }
