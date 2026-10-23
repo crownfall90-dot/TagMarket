@@ -119,6 +119,8 @@ object Alerts {
 
 class AlertsWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
+        // вышла новая версия — «Мы обновились», даже если вход не выполнен
+        runCatching { UpdateNotice.check(applicationContext) }
         val token = TokenStore(applicationContext).token ?: return Result.success()
         return try {
             Alerts.check(applicationContext, token)
