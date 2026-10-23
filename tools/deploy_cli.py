@@ -20,6 +20,8 @@ tools/deploy_miniapp.py той же ревизии; на сервере архи
 import argparse
 import ast
 import io
+import json
+import os
 import subprocess
 import sys
 import tarfile
@@ -90,6 +92,22 @@ def server_unchanged(options, host, sha: str) -> bool:
         return False        # выложенного коммита нет в истории — выкладываем
 
 
+def fcm_account():
+    """Ключ сервера Firebase из переменной FCM_SERVICE_ACCOUNT (секрет GitHub) или None."""
+    raw = os.environ.get("FCM_SERVICE_ACCOUNT", "").strip()
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        print("FCM_SERVICE_ACCOUNT: это не JSON — ключ Firebase не передаю")
+        return None
+    if data.get("type") != "service_account" or not data.get("private_key"):
+        print("FCM_SERVICE_ACCOUNT: это не ключ сервисного аккаунта — ключ Firebase не передаю")
+        return None
+    return raw
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Выкладка сервера из main")
     parser.add_argument("--yes", action="store_true", help="не спрашивать подтверждение")
@@ -128,6 +146,8 @@ def main() -> int:
     stamp = time.strftime("%Y%m%d-%H%M%S")
     archive_remote = f"/tmp/tagmarkets-miniapp-{stamp}.tgz"
     script_remote = f"/tmp/tagmarkets-deploy-{stamp}.py"
+    fcm_remote = f"/tmp/tagmarkets-fcm-{stamp}.json"
+    fcm = fcm_account()
     with tempfile.TemporaryDirectory() as tmp:
         archive = Path(tmp) / "tagmarkets-miniapp.tgz"
         script = Path(tmp) / "deploy_miniapp.py"
@@ -139,15 +159,23 @@ def main() -> int:
                            check=True)
             subprocess.run(["scp", "-q", *options, str(script), f"{host}:{script_remote}"],
                            check=True)
+            extra = []
+            if fcm:
+                # ключ Firebase из секрета GitHub: файл только для владельца, на сервере сразу удаляется
+                key_file = Path(tmp) / "fcm.json"
+                key_file.write_text(fcm, encoding="utf-8")
+                key_file.chmod(0o600)
+                subprocess.run(["scp", "-q", "-p", *options, str(key_file), f"{host}:{fcm_remote}"], check=True)
+                extra = [fcm_remote]
             print("Сервер проверяет и ставит (тесты, снимок для отката)…\n", flush=True)
             result = subprocess.run(["ssh", *options, host, PYTHON, script_remote,
-                                     archive_remote])
+                                     archive_remote, *extra])
         except (OSError, subprocess.CalledProcessError) as exc:
             print("\nНе удалось связаться с сервером:", exc)
             print("Проверь ключ", KEY, "и что пульт TagMarkets.bat видит сервер.")
             return 1
         finally:
-            subprocess.run(["ssh", *options, host, "rm", "-f", archive_remote, script_remote],
+            subprocess.run(["ssh", *options, host, "rm", "-f", archive_remote, script_remote, fcm_remote],
                            capture_output=True)
     if result.returncode:
         print("\nDEPLOY FAILED — выкладка не прошла. Если сбой был после остановки служб,"

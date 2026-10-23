@@ -65,6 +65,7 @@ object Alerts {
     }
 
     /** Новые события с сервера → уведомления. Первый запуск только запоминает, что уже было. */
+    @Synchronized
     fun check(context: Context, token: String) {
         val items = Api.notifications(token)
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -74,6 +75,21 @@ object Alerts {
         if (last < 0 || foreground || !allowed(context)) return
         val fresh = items.filter { it.id > last && !it.read }.sortedBy { it.id }.takeLast(MAX_AT_ONCE)
         fresh.forEach { show(context, it) }
+    }
+
+    /**
+     * Мгновенное событие от сервера (Firebase). Номер запоминаем, чтобы проверка раз
+     * в 15 минут не показала его второй раз.
+     */
+    @Synchronized
+    fun deliver(context: Context, item: Api.Event) {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val last = prefs.getLong("last_id", -1L)
+        if (item.id <= last) return
+        prefs.edit().putLong("last_id", item.id).apply()
+        if (foreground || !allowed(context)) return
+        channel(context)
+        show(context, item)
     }
 
     private fun show(context: Context, item: Api.Event) {

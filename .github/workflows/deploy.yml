@@ -74,6 +74,8 @@ jobs:
         env:
           SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
           FORCE: ${{ github.event_name == 'workflow_dispatch' && '--force' || '' }}
+          # ключ сервера Firebase для мгновенных уведомлений (если задан) — кладётся на сервер
+          FCM_SERVICE_ACCOUNT: ${{ secrets.FCM_SERVICE_ACCOUNT }}
         run: python3 tools/deploy_cli.py --yes --ref "$SHA" --only-latest $FORCE
       - name: Убрать ключ
         if: always()

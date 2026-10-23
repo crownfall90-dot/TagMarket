@@ -19,7 +19,7 @@ from dotenv import dotenv_values, set_key
 
 ROOT = Path("/opt/tagmarkets")
 FILES = {"accounts.py", "account_lock.py", "agent.py", "bot.py", "coordination.py", "fx.py",
-         "ibportal.py", "miniapp.py", "partner.py", "projects.py", "activity.py", "lists.py", "banks.py", "insights.py", "spend.py", "income.py", "backup.py", "devices.py", "live.py", "goals.py", "friends.py", "store.py", "trades.py", "webhook_server.py",
+         "ibportal.py", "miniapp.py", "partner.py", "projects.py", "activity.py", "lists.py", "banks.py", "insights.py", "spend.py", "income.py", "backup.py", "devices.py", "push.py", "live.py", "goals.py", "friends.py", "store.py", "trades.py", "webhook_server.py",
          "requirements.txt", "README.md", "docs/MINIAPP.md", "docs/todo.md", "web/index.html",
          "web/app.js", "web/style.css", "web/preview.json", "web/privacy.html", "tests/selfcheck.py",
          "tests/test_miniapp.py", "tools/deploy_miniapp.py", "tools/rollback_miniapp.py",
@@ -59,6 +59,27 @@ def prune() -> None:
                        if p.is_dir() and not p.is_symlink() and re.fullmatch(pattern, p.name))
         for old in found[:-keep]:
             shutil.rmtree(old, ignore_errors=True)
+
+
+def install_fcm_key(source) -> None:
+    """Ключ сервера Firebase (передаёт deploy_cli из секрета GitHub) → data/fcm-service-account.json."""
+    if not source:
+        return
+    src = Path(source)
+    try:
+        import json
+        data = json.loads(src.read_text(encoding="utf-8"))
+        if data.get("type") == "service_account" and data.get("private_key"):
+            target = ROOT / "data" / "fcm-service-account.json"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            tmp = target.with_suffix(".part")
+            tmp.write_text(json.dumps(data), encoding="utf-8")
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, target)
+            set_key(str(ROOT / ".env"), "FCM_SERVICE_ACCOUNT", str(target))
+            print("Firebase key installed", flush=True)
+    finally:
+        src.unlink(missing_ok=True)
 
 
 def main():
@@ -124,6 +145,7 @@ def main():
         migrated_accounts = True
         run(python, "-c", "from dotenv import load_dotenv; load_dotenv('.env'); import accounts; accounts.migrate_passwords()", cwd=ROOT)
         set_key(str(ROOT / ".env"), "MINI_APP_URL", "https://crownfail.shop/tagmarkets/app/")
+        install_fcm_key(sys.argv[2] if len(sys.argv) > 2 else None)
         old_bot_service()
         run("systemctl", "start", *SERVICES)
         port = int(settings.get("WEBHOOK_PORT") or 8443)

@@ -33,6 +33,7 @@ import accounts
 import activity
 import banks
 import devices
+import push
 import bot as logic
 import coordination
 import friends
@@ -1563,6 +1564,18 @@ async def device_logout(request):
     return web.json_response({"ok": True})
 
 
+async def device_push(request):
+    """Приложение для Android присылает FCM-токен — сюда сервер шлёт мгновенные уведомления."""
+    token = device_token(request)
+    if not token:
+        raise web.HTTPBadRequest(text="Только из приложения для Android")
+    authorize(request)                      # устройство должно быть привязано
+    data = await json_object(request)
+    if not _section_call(lambda: push.set_token(request.app["db"], token, data.get("token"))):
+        raise web.HTTPUnauthorized(text="Устройство отвязано")
+    return web.json_response({"ok": True, "enabled": push.account() is not None})
+
+
 async def devices_api(request):
     """Привязанные устройства: GET — список, POST /code — код для входа, DELETE /{id} — отвязать."""
     uid, _ = authorize(request)
@@ -1869,6 +1882,7 @@ def setup(app):
     income.setup(app["db"])
     goals.setup(app["db"])
     devices.setup(app["db"])
+    push.setup(app["db"])
     friends.setup(app["db"])
     # Legacy copies lack provenance. Matching only a login is unsafe: an
     # independently added account may use that number with another password.
@@ -1889,6 +1903,8 @@ def setup(app):
             accounts.save(accs)
     app.middlewares.append(api_errors)
     app.middlewares.append(live_marks)
+    app.on_startup.append(push.start)
+    app.on_cleanup.append(push.stop)
     app.router.add_get("/app", app_redirect)
     app.router.add_get("/app/", static)
     app.router.add_get("/app/{file}", static)
@@ -1915,6 +1931,7 @@ def setup(app):
     app.router.add_get("/api/live", live_api)
     app.router.add_post("/api/device/pair", device_pair)
     app.router.add_post("/api/device/logout", device_logout)
+    app.router.add_post("/api/device/push", device_push)
     app.router.add_get("/api/devices", devices_api)
     app.router.add_post("/api/devices/code", devices_api)
     app.router.add_delete("/api/devices/{device_id}", devices_api)
