@@ -15,7 +15,8 @@ import java.net.URL
  * Уведомление «Мы обновились»: фоновая проверка (раз в 15 минут, вместе с событиями)
  * читает latest.json из релиза. Вышла новая версия, а приложение закрыто — приходит
  * уведомление с кратким «что нового»; по нажатию открывается Platformer с окном
- * обновления. О каждой версии — один раз.
+ * обновления. С Firebase сервер присылает то же сразу после выхода версии (announce).
+ * О каждой версии — один раз.
  */
 object UpdateNotice {
     private const val CHANNEL = "updates"
@@ -25,16 +26,20 @@ object UpdateNotice {
     fun check(context: Context) {
         if (BuildConfig.UPDATE_URL.isBlank()) return
         val json = fetch() ?: return
-        val code = json.optLong("versionCode")
+        val notes = json.optJSONArray("notes")?.let { arr ->
+            (0 until arr.length()).map { arr.optString(it).trim() }.filter { it.isNotEmpty() }
+        }.orEmpty()
+        announce(context, json.optLong("versionCode"), json.optString("versionName"), notes)
+    }
+
+    @Synchronized
+    fun announce(context: Context, code: Long, version: String, notes: List<String>) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         if (code <= BuildConfig.VERSION_CODE || code <= prefs.getLong("notified", 0L)) return
         prefs.edit().putLong("notified", code).apply()
         // открыто — новая версия всплывёт в самом приложении
         if (Alerts.foreground || !Alerts.allowed(context)) return
-        val notes = json.optJSONArray("notes")?.let { arr ->
-            (0 until arr.length()).map { arr.optString(it).trim() }.filter { it.isNotEmpty() }.take(3)
-        }.orEmpty()
-        show(context, json.optString("versionName"), notes)
+        show(context, version, notes.take(3))
     }
 
     private fun fetch(): JSONObject? = runCatching {

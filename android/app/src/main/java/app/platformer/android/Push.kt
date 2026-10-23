@@ -62,6 +62,13 @@ class PushService : FirebaseMessagingService() {
 
     override fun onMessageReceived(message: RemoteMessage) {
         val data = message.data
+        if (data["kind"] == "app_update") {
+            // «Мы обновились» — сервер сообщает о новой версии сразу после выхода
+            val code = data["code"]?.toLongOrNull() ?: return
+            val notes = data["notes"].orEmpty().lines().map { it.trim() }.filter { it.isNotEmpty() }
+            UpdateNotice.announce(applicationContext, code, data["version"].orEmpty(), notes)
+            return
+        }
         val id = data["id"]?.toLongOrNull() ?: return
         if (TokenStore(applicationContext).token == null) return
         Alerts.deliver(applicationContext, Api.Event(id, data["title"].orEmpty().ifBlank { "Platformer" }, data["body"].orEmpty(), false))
