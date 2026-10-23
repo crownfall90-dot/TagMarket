@@ -14,6 +14,8 @@ class WebBridge(
     private val onTheme: (Int) -> Unit,
     private val onPermissions: () -> String = { "{}" },
     private val onFix: (String) -> Unit = {},
+    private val onShare: (String) -> Unit = {},
+    private val onCopy: (String) -> Unit = {},
 ) {
     @JavascriptInterface
     fun token(): String = store.token.orEmpty()
@@ -32,6 +34,20 @@ class WebBridge(
     @JavascriptInterface
     fun fix(kind: String?) {
         if (kind == "steps" || kind == "notifications") onFix(kind)
+    }
+
+    /** Меню «Поделиться» Android: приглашение уходит в любой мессенджер. */
+    @JavascriptInterface
+    fun share(text: String?) {
+        val value = text?.trim().orEmpty()
+        if (value.isNotEmpty() && value.length <= 4000) onShare(value)
+    }
+
+    /** Скопировать в буфер телефона — надёжнее, чем буфер из страницы. */
+    @JavascriptInterface
+    fun copy(text: String?) {
+        val value = text.orEmpty()
+        if (value.isNotEmpty() && value.length <= 4000) onCopy(value)
     }
 
     /** select · impact · success · warning · error */

@@ -53,6 +53,17 @@ class MainActivity : ComponentActivity() {
         refreshPermissions()
     }
 
+    private val askActivity = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        lifecycleScope.launch {
+            if (granted && StepRecorder.subscribe(this@MainActivity)) {
+                Steps.schedule(this@MainActivity)
+                Steps.syncNow(this@MainActivity)
+            }
+            refreshPermissions()
+            offerHealth()
+        }
+    }
+
     private val askHealth = registerForActivityResult(PermissionController.createRequestPermissionResultContract()) { granted ->
         if (Steps.readSteps in granted) Steps.schedule(this)
         refreshPermissions()
@@ -105,6 +116,8 @@ class MainActivity : ComponentActivity() {
                     onTheme = { color -> runOnUiThread { root.setBackgroundColor(color); setBackgroundColor(color); barIcons(color) } },
                     onPermissions = { permissionsJson() },
                     onFix = { kind -> runOnUiThread { fixPermission(kind) } },
+                    onShare = { text -> runOnUiThread { shareText(text) } },
+                    onCopy = { text -> runOnUiThread { copyText(text) } },
                 ),
                 "PlatformerAndroid",
             )
@@ -161,7 +174,10 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         updater?.onResume()                 // новая версия приложения — проверяем при каждом входе
         refreshPermissions()                // вернулись из настроек — строка «Шаги» в настройках обновится
-        if (::web.isInitialized) lifecycleScope.launch { if (Steps.granted(this@MainActivity)) Steps.schedule(this@MainActivity) }
+        if (::web.isInitialized) lifecycleScope.launch {
+            if (StepRecorder.ready(this@MainActivity)) StepRecorder.subscribe(this@MainActivity)
+            if (Steps.anySource(this@MainActivity)) Steps.schedule(this@MainActivity)
+        }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -183,8 +199,8 @@ class MainActivity : ComponentActivity() {
         if (!::web.isInitialized) return
         lifecycleScope.launch {
             stepsAccess = when {
-                !Steps.available(this@MainActivity) -> "unavailable"
-                Steps.granted(this@MainActivity) -> "granted"
+                Steps.anySource(this@MainActivity) -> "granted"
+                !Steps.available(this@MainActivity) && !StepRecorder.available(this@MainActivity) -> "unavailable"
                 else -> "denied"
             }
             web.evaluateJavascript("window.onPlatformerPermissions && window.onPlatformerPermissions()", null)
@@ -194,6 +210,19 @@ class MainActivity : ComponentActivity() {
     /** «Включить» в настройках: сначала системный вопрос, если Android больше не спрашивает — экран настроек. */
     private fun fixPermission(kind: String) {
         if (kind == "steps") {
+            // сначала счётчик телефона — он ближе всего к встроенному трекеру
+            if (StepRecorder.available(this) && !StepRecorder.permitted(this)) {
+                val asked = getSharedPreferences("perm_fix", MODE_PRIVATE).getBoolean("activity_asked", false)
+                if (!asked || shouldShowRequestPermissionRationale(StepRecorder.PERMISSION)) {
+                    getSharedPreferences("perm_fix", MODE_PRIVATE).edit().putBoolean("activity_asked", true).apply()
+                    askActivity.launch(StepRecorder.PERMISSION)
+                } else {
+                    runCatching {
+                        startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+                    }
+                }
+                return
+            }
             if (!Steps.available(this)) {
                 runCatching {
                     startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=com.google.android.apps.healthdata")))
@@ -223,6 +252,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun shareText(text: String) {
+        val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
+        runCatching { startActivity(Intent.createChooser(send, getString(R.string.share_title))) }
+    }
+
+    private fun copyText(text: String) {
+        val clipboard = getSystemService(CLIPBOARD_SERVICE) as? android.content.ClipboardManager ?: return
+        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Platformer", text))
+    }
+
     /** Уведомления о событиях: на Android 13+ спросим разрешение один раз, дальше — как решил человек. */
     private fun offerAlerts() {
         Alerts.schedule(this)
@@ -247,7 +286,29 @@ class MainActivity : ComponentActivity() {
     }
 
     /** Шаги из Health Connect — спросим один раз; отказ уважаем, повторно не навязываем. */
+    /**
+     * Шаги: сначала счётчик телефона (разрешение «Физическая активность»), затем Health Connect.
+     * Каждое разрешение спрашиваем один раз; отказ уважаем — включить можно в «Доступах телефона».
+     */
     private fun offerSteps() {
+        lifecycleScope.launch {
+            if (StepRecorder.ready(this@MainActivity)) {
+                StepRecorder.subscribe(this@MainActivity)
+                Steps.schedule(this@MainActivity)
+            }
+            val prefs = getSharedPreferences("perm_fix", MODE_PRIVATE)
+            if (StepRecorder.available(this@MainActivity) && !StepRecorder.permitted(this@MainActivity) &&
+                !prefs.getBoolean("activity_asked", false)
+            ) {
+                prefs.edit().putBoolean("activity_asked", true).apply()
+                askActivity.launch(StepRecorder.PERMISSION)     // Health Connect спросим после ответа
+                return@launch
+            }
+            offerHealth()
+        }
+    }
+
+    private fun offerHealth() {
         if (!Steps.available(this)) return
         lifecycleScope.launch {
             if (Steps.granted(this@MainActivity)) {

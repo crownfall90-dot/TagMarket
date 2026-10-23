@@ -60,11 +60,29 @@ object Steps {
         )
     }
 
+    /** Есть ли хоть один источник шагов: Health Connect или счётчик телефона. */
+    suspend fun anySource(context: Context): Boolean = granted(context) || StepRecorder.ready(context)
+
+    /**
+     * Шаги по дням из обоих источников: за каждый день — большее значение. Health Connect
+     * отстаёт, если трекер телефона туда не пишет; счётчик телефона начинается с подписки.
+     */
+    suspend fun merged(context: Context, days: Int): List<Pair<String, Long>> {
+        val fromHealth = if (granted(context)) lastDays(context, days).toMap() else emptyMap()
+        val fromPhone = StepRecorder.lastDays(context, days)
+        val today = LocalDate.now().toString()
+        return (fromHealth.keys + fromPhone.keys + if (fromHealth.isNotEmpty() || fromPhone.isNotEmpty()) setOf(today) else emptySet())
+            .sorted()
+            .map { day -> day to maxOf(fromHealth[day] ?: 0L, fromPhone[day] ?: 0L) }
+            .filter { it.second > 0 || it.first == today }
+    }
+
     /** Отправить шаги сейчас (сегодня и вчера — то, что меняется); false — нечего или не вышло. */
     suspend fun syncNow(context: Context): Boolean {
         val token = TokenStore(context).token ?: return false
-        if (!granted(context)) return false
-        val days = lastDays(context, 2)
+        if (!anySource(context)) return false
+        val days = merged(context, 2)
+        if (days.isEmpty()) return false
         return runCatching {
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { Api.sendSteps(token, days) }
         }.isSuccess
@@ -95,9 +113,12 @@ object Steps {
 class StepsWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         val token = TokenStore(applicationContext).token ?: return Result.success()
-        if (!Steps.granted(applicationContext)) return Result.success()
+        if (!Steps.anySource(applicationContext)) return Result.success()
         return try {
-            Api.sendSteps(token, Steps.lastDays(applicationContext))
+            StepRecorder.subscribe(applicationContext)
+            val days = Steps.merged(applicationContext, 7)
+            if (days.isEmpty()) return Result.success()
+            Api.sendSteps(token, days)
             Result.success()
         } catch (e: Api.HttpError) {
             if (e.status == 401) {          // устройство отвязали — больше не стучимся
