@@ -10,6 +10,9 @@ import java.net.URL
 object Api {
     class HttpError(val status: Int, message: String) : IOException(message)
 
+    /** Событие из колокольчика приложения. */
+    class Event(val id: Long, val title: String, val body: String, val read: Boolean)
+
     val configured: Boolean get() = BuildConfig.BASE_URL.startsWith("https://")
 
     private fun endpoint(path: String): URL = URL(URL(BuildConfig.BASE_URL), "../api$path")
@@ -27,16 +30,32 @@ object Api {
         post("/activity/sync", JSONObject().put("days", list), token)
     }
 
-    private fun post(path: String, body: JSONObject, token: String?): JSONObject {
+    /** Последние события пользователя (как колокольчик в приложении). */
+    fun notifications(token: String): List<Event> {
+        val items = request("GET", "/notifications", null, token).optJSONArray("items") ?: return emptyList()
+        return (0 until items.length()).mapNotNull { i ->
+            val item = items.optJSONObject(i) ?: return@mapNotNull null
+            Event(
+                item.optLong("id"), item.optString("title").ifBlank { "Platformer" },
+                item.optString("body"), !item.isNull("read_at"),
+            )
+        }.filter { it.id > 0 }
+    }
+
+    private fun post(path: String, body: JSONObject, token: String?): JSONObject = request("POST", path, body, token)
+
+    private fun request(method: String, path: String, body: JSONObject?, token: String?): JSONObject {
         val connection = endpoint(path).openConnection() as HttpURLConnection
         try {
-            connection.requestMethod = "POST"
+            connection.requestMethod = method
             connection.connectTimeout = 15_000
             connection.readTimeout = 20_000
-            connection.doOutput = true
-            connection.setRequestProperty("Content-Type", "application/json")
             if (token != null) connection.setRequestProperty("Authorization", "Bearer $token")
-            connection.outputStream.use { it.write(body.toString().toByteArray()) }
+            if (body != null) {
+                connection.doOutput = true
+                connection.setRequestProperty("Content-Type", "application/json")
+                connection.outputStream.use { it.write(body.toString().toByteArray()) }
+            }
             val status = connection.responseCode
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
             val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
