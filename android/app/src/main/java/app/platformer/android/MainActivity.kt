@@ -47,6 +47,10 @@ class MainActivity : ComponentActivity() {
         fileCallback = null
     }
 
+    private val askNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) Alerts.schedule(this)
+    }
+
     private val askHealth = registerForActivityResult(PermissionController.createRequestPermissionResultContract()) { granted ->
         if (Steps.readSteps in granted) Steps.schedule(this)
     }
@@ -135,6 +139,7 @@ class MainActivity : ComponentActivity() {
 
         if (savedInstanceState != null) web.restoreState(savedInstanceState) else web.loadUrl(startUrl())
         offerSteps()
+        offerAlerts()
         // пока приложение на экране — шаги уходят каждую минуту, и кольцо «Шаги» живое;
         // в фоне их раз в 15 минут отправляет WorkManager
         lifecycleScope.launch {
@@ -160,6 +165,28 @@ class MainActivity : ComponentActivity() {
 
     private fun startUrl(): String = Uri.parse(BuildConfig.BASE_URL).buildUpon()
         .appendQueryParameter("app", "android").build().toString()
+
+    /** Уведомления о событиях: на Android 13+ спросим разрешение один раз, дальше — как решил человек. */
+    private fun offerAlerts() {
+        Alerts.schedule(this)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !Alerts.allowed(this)) {
+            val prefs = getSharedPreferences("alerts_ask", MODE_PRIVATE)
+            if (!prefs.getBoolean("asked", false)) {
+                prefs.edit().putBoolean("asked", true).apply()
+                askNotifications.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        Alerts.foreground = true
+    }
+
+    override fun onStop() {
+        Alerts.foreground = false
+        super.onStop()
+    }
 
     /** Шаги из Health Connect — спросим один раз; отказ уважаем, повторно не навязываем. */
     private fun offerSteps() {
@@ -204,6 +231,7 @@ class MainActivity : ComponentActivity() {
     private fun signOut() {
         store.token = null
         Steps.cancel(this)
+        Alerts.cancel(this)
         openLogin()
     }
 

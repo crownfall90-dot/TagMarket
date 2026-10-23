@@ -16,6 +16,8 @@
     <string name="login_short">Введите все 8 символов кода</string>
     <string name="login_failed">Не удалось войти. Проверьте интернет и попробуйте ещё раз</string>
     <string name="login_not_configured">Сборка без адреса сервера: задайте platformer.url</string>
+    <string name="alerts_channel">События</string>
+    <string name="alerts_channel_text">Пополнения, выводы, профит и напоминания — то же, что в колокольчике Platformer</string>
     <string name="rationale_title">Зачем Platformer шаги</string>
     <string name="rationale_text">Platformer читает из Health Connect только количество шагов — суммы по дням за последнюю неделю — и показывает их в разделе «Шаги»: сегодня, цель и динамику. Данные отправляются только на сервер Platformer, к вашему аккаунту, и никому не передаются. Ничего не записывается в Health Connect. Разрешение можно отозвать в любой момент в настройках Health Connect.</string>
     <string name="rationale_close">Понятно</string>
