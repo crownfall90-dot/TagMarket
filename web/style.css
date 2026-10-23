@@ -2253,6 +2253,9 @@ html.native .footer{display:none}
 .home-grid .panel.home-card.home-activity{background:none;border-color:transparent;box-shadow:none;padding:6px 0 4px}
 .home-grid .panel.home-card.home-activity:before{content:none}
 .home-grid .panel.home-card.home-activity>.home-card-head{padding:0 4px}
+.hl-hint{display:grid;gap:10px;align-content:start}
+.hl-hint p{margin:0;font-size:13px;line-height:1.5;color:var(--muted)}
+.hl-hint .pill{justify-self:start}
 /* ═══════════ Дизайн 2027 · Aura ═══════════
    Последний слой: определяет вид всех компонентов в тёмной и светлой теме.
    Цвета — только из токенов в начале файла. */
