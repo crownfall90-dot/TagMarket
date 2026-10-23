@@ -507,9 +507,11 @@ def station_sections(page, nav):
     page.locator('.cal-cell.today').click()
     assert page.locator('.cal-day-panel h2').inner_text() == 'Сегодня'
     fits(page)
-    # «Настройки»: гамма, ярлык и счета; блока «Platformer» с настройками разделов больше нет
+    # «Настройки»: тема, ярлык и счета; блока «Platformer» с настройками разделов больше нет
     page.locator('#settings-link').click()
-    page.locator('.scheme-picker').wait_for()
+    page.locator('.theme-picker').wait_for()
+    assert page.locator('.theme-opt').count() == 2, "тем ровно две: тёмная и светлая"
+    assert page.locator('.scheme-picker, .scheme').count() == 0, "цветовых гамм больше нет"
     assert page.locator('.station-settings, .station-row').count() == 0
     assert 'platformer' not in page.locator('.two-column').inner_text().lower().replace('открывать platformer в один тап', '')
     fits(page)
@@ -523,7 +525,8 @@ def projects_ui(page, nav):
     # банки и счета — главное в Финансах: кошелёк с картами идёт раньше проектов
     assert page.evaluate("!!(document.querySelector('.wallet').compareDocumentPosition(document.querySelector('.fin-projects')) & Node.DOCUMENT_POSITION_FOLLOWING)")
     assert page.locator('.wallet .pcard:not(.add)').count() == 5 and page.locator('.wallet .pcard.add').count() == 1
-    assert page.locator('.project-card.proj .proj-art').count() == 2      # у каждого проекта своя обложка
+    # монохромный дизайн: цветных обложек-пятен у проектов больше нет
+    assert page.locator('.project-card.proj').count() == 2 and page.locator('.proj-art').count() == 0
     if page.viewport_size['width'] <= 740:        # «+» на телефоне: меню «Счёт или карта» и «Проект»
         page.locator('#fab-root .fab').click()
         page.locator('#fab-root .fab-item').first.wait_for()
@@ -1354,13 +1357,18 @@ def main():
                     page.locator('.invite-card .invite-url').wait_for()
                     assert page.locator('.invite-card .invite-url').inner_text().startswith('https://t.me/')
                     assert page.locator('.people-card').count() == 0 and page.locator('.partner-card').count() == 0
-                    # тем без гаммы (light) больше нет — приложение всегда тёмное;
-                    # переключатель живёт в Настройках как выбор из трёх схем
+                    # тема: тёмная по умолчанию, светлая — в Настройках; выбор переживает перезапуск
+                    # (theme.js ставит его до первой отрисовки), фон страницы меняется сразу
+                    assert page.locator('html').get_attribute('data-theme') == 'dark'
                     page.locator('#settings-link').click()
-                    page.locator('.scheme-picker').wait_for()
-                    page.locator('.scheme[data-value="velvet"]').click()
-                    assert page.locator('html').get_attribute('data-scheme') == 'velvet'
+                    page.locator('.theme-picker').wait_for()
+                    page.locator('.theme-opt[data-value="light"]').click()
+                    page.wait_for_function("document.documentElement.dataset.theme === 'light'")
+                    assert page.evaluate("localStorage.getItem('tag-theme')") == 'light'
+                    page.wait_for_function("getComputedStyle(document.body).backgroundColor === 'rgb(243, 243, 245)'")
+                    assert page.locator('.theme-opt[data-value="light"][aria-checked="true"]').count() == 1
                     page.goto(url + "#tagmarket", wait_until="domcontentloaded")
+                    assert page.locator('html').get_attribute('data-theme') == 'light'
                     page.locator('.hero').wait_for()
                     assert page.locator('.chart-panel [data-value="today"].active').count() == 1
                     glider_on_active(page, nav)

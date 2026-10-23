@@ -3760,6 +3760,24 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("web/" + name, deploy.FILES)
         self.assertEqual((await self.client.get("/app/secret.jpg")).status, 404)
 
+    async def test_theme_script_and_font_are_served_and_shipped(self):
+        # тема до первой отрисовки (theme.js) и шрифт Inter: отдаются сервером и есть в поставке,
+        # иначе после выкладки светлая тема мигала бы тёмной, а текст был бы системным шрифтом
+        import tools.deploy_miniapp as deploy
+        r = await self.client.get("/app/theme.js")
+        self.assertEqual(r.status, 200)
+        self.assertIn("tag-theme", await r.text())
+        self.assertIn("web/theme.js", deploy.FILES)
+        for name in miniapp.FONTS:
+            with self.subTest(name=name):
+                r = await self.client.get("/app/" + name)
+                self.assertEqual(r.status, 200)
+                self.assertEqual(r.headers["Content-Type"], "font/woff2")
+                self.assertIn("immutable", r.headers["Cache-Control"])
+                self.assertIn("web/" + name, deploy.FILES)
+        page = await (await self.client.get("/app/")).text()
+        self.assertIn("theme.js", page)
+
     async def test_every_server_module_ships_with_the_deploy_and_rollback_lists(self):
         # выкладка принимает архив строго из FILES: модуль, который импортируется, но не перечислен,
         # ронял бы сервер на импорте после «успешной» выкладки
