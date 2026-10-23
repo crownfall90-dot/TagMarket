@@ -25,4 +25,6 @@
     <string name="update_push_title">Мы обновились · Platformer %1$s</string>
     <string name="update_push_text">Зайдите, чтобы посмотреть, что изменилось</string>
     <string name="update_failed">Не получилось обновить: %1$s</string>
+    <string name="update_manual">Скачать вручную</string>
+    <string name="update_manual_hint">Если установка не началась, скачайте новую версию вручную и откройте файл — Platformer обновится, данные сохранятся.</string>
 </resources>

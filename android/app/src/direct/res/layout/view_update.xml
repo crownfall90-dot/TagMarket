@@ -94,6 +94,19 @@
             android:visibility="gone" />
 
         <Button
+            android:id="@+id/update_manual"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="8dp"
+            android:background="@android:color/transparent"
+            android:stateListAnimator="@null"
+            android:text="@string/update_manual"
+            android:textAllCaps="false"
+            android:textColor="@color/accent"
+            android:textSize="15sp"
+            android:visibility="gone" />
+
+        <Button
             android:id="@+id/update_later"
             android:layout_width="match_parent"
             android:layout_height="48dp"

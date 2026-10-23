@@ -57,6 +57,8 @@ import java.security.MessageDigest
  * По кнопке качает APK, сверяет SHA-256, имя пакета, номер версии и подпись с
  * установленным приложением и ставит его через PackageInstaller. На Android 12+
  * обновление самого себя проходит без вопросов; на старых — одно «Установить».
+ * Не встало (оболочки производителей иногда молча глушат установщик) — в окне есть
+ * «Скачать вручную»: тот же APK из релиза открывается в браузере.
  */
 class Updater(private val activity: ComponentActivity, private val host: FrameLayout) {
     private class Release(
@@ -73,6 +75,7 @@ class Updater(private val activity: ComponentActivity, private val host: FrameLa
     private var mandatory = true                            // окно без «Позже»
     private var deferred = 0L                               // версия, отложенная «Позже» до выхода
     private var stoppedAt = 0L                              // когда приложение ушло в фон
+    private var stuck: Job? = null                          // установщик молчит — покажем «Скачать вручную»
 
     init {
         UpdateReceiver.listener = { status, message -> activity.runOnUiThread { onStatus(status, message) } }
@@ -422,6 +425,13 @@ class Updater(private val activity: ComponentActivity, private val host: FrameLa
 
     private suspend fun install(release: Release, file: File) {
         state(release, activity.getString(R.string.update_installing), busy = true)
+        stuck?.cancel()
+        stuck = activity.lifecycleScope.launch {
+            delay(STUCK_AFTER)
+            if (overlay != null && offered == release) {
+                state(release, activity.getString(R.string.update_manual_hint), busy = true, manual = release)
+            }
+        }
         withContext(Dispatchers.IO) {
             val installer = activity.packageManager.packageInstaller
             val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
@@ -449,6 +459,7 @@ class Updater(private val activity: ComponentActivity, private val host: FrameLa
     }
 
     private fun onStatus(status: Int, message: String?) {
+        if (status != PackageInstaller.STATUS_PENDING_USER_ACTION) stuck?.cancel()
         when (status) {
             PackageInstaller.STATUS_PENDING_USER_ACTION, PackageInstaller.STATUS_SUCCESS -> Unit
             // нажали «Отмена» в окне Android — обновление обязательное, предлагаем снова
@@ -483,7 +494,9 @@ class Updater(private val activity: ComponentActivity, private val host: FrameLa
             activity.getString(R.string.update_title, release.name.ifBlank { release.code.toString() })
     }
 
-    private fun state(release: Release?, text: String, busy: Boolean, action: String? = null, onAction: (() -> Unit)? = null) {
+    private fun state(
+        release: Release?, text: String, busy: Boolean, action: String? = null, manual: Release? = null, onAction: (() -> Unit)? = null,
+    ) {
         val view = overlay ?: return
         release?.let {
             view.findViewById<TextView>(R.id.update_title).text =
@@ -499,6 +512,14 @@ class Updater(private val activity: ComponentActivity, private val host: FrameLa
         val later = view.findViewById<Button>(R.id.update_later)
         later.visibility = if (!mandatory && !busy) View.VISIBLE else View.GONE
         later.setOnClickListener { later() }
+        // запасной путь: APK из релиза в браузере — ставится системным установщиком по нажатию на файл
+        val direct = view.findViewById<Button>(R.id.update_manual)
+        direct.visibility = if (manual != null) View.VISIBLE else View.GONE
+        direct.setOnClickListener { manual?.let { openManual(it) } }
+    }
+
+    private fun openManual(release: Release) {
+        runCatching { activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(release.apk))) }
     }
 
     private fun progress(pct: Int, total: Long) {
@@ -521,16 +542,18 @@ class Updater(private val activity: ComponentActivity, private val host: FrameLa
     }
 
     private fun fail(release: Release?, message: String) {
+        stuck?.cancel()
         prefs.edit().putLong("checked", 0L).apply()            // в следующий раз проверим сразу
         if (overlay == null && release != null) show(release)
         notesVisible(false)
         state(null, activity.getString(R.string.update_failed, message), busy = false,
-            action = activity.getString(R.string.update_retry)) {
+            action = activity.getString(R.string.update_retry), manual = release) {
             if (release != null) start(release) else hide()
         }
     }
 
     private fun hide() {
+        stuck?.cancel()
         stopWatchingNetwork()
         val view = overlay ?: return
         overlay = null
@@ -545,5 +568,6 @@ class Updater(private val activity: ComponentActivity, private val host: FrameLa
         const val POLL_EVERY = 60 * 1000L                   // пока приложение открыто
         const val GRACE = 60 * 1000L                        // короче — не «вход», а быстрый возврат
         const val MAX_SIZE = 80L * 1024 * 1024
+        const val STUCK_AFTER = 20 * 1000L                  // столько ждём ответа установщика
     }
 }
