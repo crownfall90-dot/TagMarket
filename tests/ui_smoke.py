@@ -452,10 +452,12 @@ def station_sections(page, nav):
     text = page.locator('#main').inner_text().lower()
     assert 'трениров' not in text and 'вес' not in text and 'инструкц' not in text
     page.locator('.act-days [data-value="7"]').click()
-    page.wait_for_function("document.querySelectorAll('.act-bars .bar').length === 7")
+    page.wait_for_function("document.querySelectorAll('[data-ui-key=\"act-chart-steps\"] .act-bars .bar').length === 7")
+    # «Здоровье»: под шагами — сон за ночь и пульс
+    assert page.locator('.hl-sleep').count() == 1 and page.locator('.hl-pulse').count() == 1
     fits(page)
-    # нет шагов с телефона — одно сообщение, что на устройстве не обновляются
-    page.evaluate("state.activity.summary.steps={today:null,series:[]};state.activity.sync={connected:false};render()")
+    # нет данных с телефона — одно сообщение, что на устройстве не обновляются
+    page.evaluate("state.activity.summary.steps={today:null,series:[]};state.activity.summary.sleep=null;state.activity.summary.pulse=null;state.activity.summary.hr_avg=null;state.activity.sync={connected:false};render()")
     page.locator('.steps-empty').wait_for()
     assert 'не обновляются' in page.locator('.steps-empty').inner_text()
     page.evaluate("state.activity=null;render()")
@@ -835,7 +837,8 @@ def compact_ui_and_quiet_refresh(page, url):
     assert page.locator('#dialog-title').inner_text() == 'Настройки счёта'
     assert page.locator('#dialog input[name="name"]').input_value().startswith('Long strategy')
     close_dialog(page)
-    page.goto(url+'#people', wait_until='domcontentloaded')
+    # гости и выданные счета — в разделе TagMarket (партнёрская программа)
+    page.goto(url+'#tagmarket', wait_until='domcontentloaded')
     page.locator('.people-card').first.wait_for()
     # загрузка раздела ещё может идти: её ответ затёр бы подменённых гостей
     page.wait_for_function("!state.busy && !document.body.classList.contains('is-loading')")
@@ -1327,15 +1330,15 @@ def main():
                     assert page.locator('#dialog .dialog-actions button[value="cancel"]').inner_text() == 'Отмена'
                     page.evaluate("document.querySelector('#dialog').dataset.dirty = ''")
                     close_dialog(page)
-                    page.locator(f'{nav} a[href="#people"]').click()
+                    page.goto(url + "#tagmarket", wait_until="domcontentloaded")
                     page.locator('.people-card').first.wait_for()
                     glider_on_active(page, nav)
                     page.locator('.people-card summary').first.click()
                     page.locator('[data-action="guest-detail"]').first.click()
                     page.get_by_text('Карточка гостя').wait_for()
                     close_dialog(page)
-                    # ссылка-приглашение и партнёрская ссылка — в карточке раздела «Гости»
-                    assert page.locator('.link-card .invite-url').inner_text().startswith('https://t.me/')
+                    # партнёрская ссылка и ссылка для гостей — в TagMarket; в «Друзьях» — приглашение друга
+                    assert page.locator('.partner-card .invite-url').inner_text().startswith('https://t.me/')
                     page.locator('[data-action="partner-link"]').first.click()
                     assert page.locator('#dialog input[name="url"]').count() == 1
                     assert page.locator('#dialog .pl-portal').get_attribute('target') == '_blank'
@@ -1345,6 +1348,10 @@ def main():
                         page.wait_for_timeout(500)
                         page.screenshot(path=str(screenshots / "tagmarkets-mobile-people-smoke.png"), full_page=True)
                     fits(page)
+                    page.locator(f'{nav} a[href="#people"]').click()
+                    page.locator('.invite-card .invite-url').wait_for()
+                    assert page.locator('.invite-card .invite-url').inner_text().startswith('https://t.me/')
+                    assert page.locator('.people-card').count() == 0 and page.locator('.partner-card').count() == 0
                     # тем без гаммы (light) больше нет — приложение всегда тёмное;
                     # переключатель живёт в Настройках как выбор из трёх схем
                     page.locator('#settings-link').click()
@@ -1358,7 +1365,7 @@ def main():
                     # «уменьшить движение» в системе: подсветка и экран меняются без анимаций
                     page.emulate_media(reduced_motion="reduce")
                     page.locator(f'{nav} a[href="#people"]').click()
-                    page.locator('.people-card').first.wait_for()
+                    page.locator('.invite-card').first.wait_for()
                     assert page.evaluate(
                         "nav => document.querySelector(nav + ' .nav-glider').getAnimations().length"
                         " + document.querySelector('#main').getAnimations().length", nav) == 0

@@ -16,6 +16,8 @@ state.projects=null;state.projectsError='';state.banks=null;state.banksError='';
 const paths = {overview:'M3 10l9-7 9 7v10H3z M9 20v-7h6v7',accounts:'M3 7h18v14H3z M3 7V4h14v3 M16 12h5v5h-5z',deals:'M4 5h16 M4 12h16 M4 19h16 M8 2v6 M16 9v6 M9 16v6',people:'M16 21v-3a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v3 M9 10a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M17 3a4 4 0 0 1 0 8 M22 21v-3a4 4 0 0 0-3-4',settings:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M12 2v3 M12 19v3 M2 12h3 M19 12h3 M5 5l2 2 M17 17l2 2 M5 19l2-2 M17 7l2-2',plus:'M12 5v14 M5 12h14',arrow:'M5 12h14 M14 7l5 5-5 5',up:'M7 17 17 7 M7 7h10v10',down:'M7 7l10 10 M7 17h10V7',refresh:'M20 7A8 8 0 0 0 6 5L3 8 M3 3v5h5 M4 17a8 8 0 0 0 14 2l3-3 M21 21v-5h-5',sun:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M12 1v2 M12 21v2 M1 12h2 M21 12h2 M4 4l2 2 M18 18l2 2 M4 20l2-2 M18 6l2-2',chevron:'M9 5l7 7-7 7',chart:'M3 19h18 M4 15l5-5 5 3 6-9',check:'m5 12 4 4L19 6',clock:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 7v5l3 2',link:'M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-2 2 M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l2-2',back:'M19 12H5 M10 7l-5 5 5 5',shield:'M12 2l9 4v6c0 5-9 10-9 10S3 17 3 12V6z M8 12l3 3 5-6',copy:'M8 8h13v13H8z M16 8V3H3v13h5'};
 paths.bell='M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9 M10 21h4';paths.exit='M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4 M16 17l5-5-5-5 M21 12H9';paths.palette='M12 3a9 9 0 1 0 0 18c1.4 0 2-.9 2-1.8 0-1.4-1.2-1.6-1.2-2.8 0-.9.7-1.4 1.6-1.4H17a4 4 0 0 0 4-4c0-4.4-4-8-9-8z';
 Object.assign(paths,{
+ moon:'M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z',
+ heart:'M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z M3 12h4l2-3 3 6 2-3h7',
  overview:'M4 10.5 12 4l8 6.5V19a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z M9 21v-7h6v7',
  accounts:'M4 6h15a2 2 0 0 1 2 2v12H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h13 M16 12h5v5h-5a2 2 0 0 1 0-5z',
  deals:'M4 19h16 M7 16V9 M12 16V5 M17 16v-5 M5 9h4 M10 5h4 M15 11h4',
@@ -104,7 +106,7 @@ paths.projects='M3 7h7l2 2h9v11H3z M3 7V4h7l2 3 M7 13h10 M7 16h6';
 paths.activity='M3 12h4l3-8 4 16 3-8h4';paths.lists='M12 21s-7-4.4-9.3-9A5.2 5.2 0 0 1 12 6.6 5.2 5.2 0 0 1 21.3 12C19 16.6 12 21 12 21z';paths.calendar='M4 6h16v14H4z M4 10h16 M8 3v5 M16 3v5';paths.note='M5 3h10l4 4v14H5z M15 3v4h4 M8 12h8 M8 16h6';paths.bank='M3 10l9-6 9 6 M5 10v8 M9.5 10v8 M14.5 10v8 M19 10v8 M3 20h18';paths.plans='M4 6h16v14H4z M4 10h16 M8 3v5 M16 3v5 M9 15l2 2 4-4';paths.circle='M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z M12 7.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9z M12 11a1 1 0 1 0 0 2 1 1 0 0 0 0-2z';
 // Platformer: разделы жизни — главная, финансы (проекты и TagMarket), активности, вишлисты, друзья.
 // Настройки открываются по аватару в шапке
-const tabs=[['overview','Главная'],['projects','Финансы'],['activity','Активности'],['plans','Планы'],['people','Друзья']];
+const tabs=[['overview','Главная'],['projects','Финансы'],['activity','Здоровье'],['plans','Планы'],['people','Друзья']];
 const periods=[['today','Сегодня'],['yesterday','Вчера'],['week','Эта неделя'],['lastweek','Прошлая неделя'],['month','Этот месяц'],['lastmonth','Прошлый месяц'],['all','Всё время'],['custom','Свои даты']];
 // Панель навигации строится один раз и дальше только переключает активную
 // вкладку: если пересобирать разметку на каждый render(), подсветке не из
@@ -411,7 +413,7 @@ function tagmarketView(){const d=state.data, curr='USD', t=d.totals[curr]||{capi
   ${tagAccountGroups()}${addRow}
   <section class="panel chart-panel dynamics"><div class="panel-head"><h2>Динамика доходности</h2>${periodTabs(['today','yesterday','week','month','all'])}</div>${dynamics}</section>
   ${priceChart(state.priceChart)}</div>
- <aside class="side-stack">${sonicStrategyCard()}</aside></div>`;
+ <aside class="side-stack">${sonicStrategyCard()}</aside></div>${partnerBlock()}`;
 }
 function balanceCard(personal){const totals=state.data.totals||{},list=Object.keys(totals);if(!list.length)return '';return `<section class="panel balance-card">${list.map(c=>{const x=totals[c];return `<div class="balance-row"><div><span class="eyebrow">ОБЩИЙ БАЛАНС · ${esc(c)}</span><strong>${money(x.balance??x.capital,c)}</strong><small>${countLabel(personal.length,['счёт','счёта','счетов'])}</small></div><div class="balance-side"><div><small>Сегодня</small>${resultPair(x.today,c,x.capital>0?x.today/x.capital*100:null)}</div><div><small>За месяц</small>${resultPair(x.month,c,x.capital>0?x.month/x.capital*100:null)}</div></div></div>`;}).join('')}</section>`;}
 function accountsView(){const items=state.data.accounts,personal=items,groups=[...new Set(personal.map(a=>a.cabinet||'Без кабинета'))];
@@ -599,14 +601,18 @@ function accountView(){
 // Приглашение из приложения для Android: готовый текст в три шага — уходит в любой мессенджер
 const APP_APK='https://github.com/crownfall90-dot/TagMarket/releases/download/android-latest/Platformer.apk';
 function inviteText(link){return `Привет! Приглашаю тебя в Platformer — личные финансы, шаги и планы в одном месте.\n\n1. Открой приглашение — бот в Telegram создаст тебе аккаунт:\n${link}\n\n2. Установи приложение для Android:\n${APP_APK}\n\n3. В приложении нажми «Запросить код» — и ты внутри.`;}
-function linkCard(p){const partner=p.partner_url,share=p.link?`https://t.me/share/url?url=${encodeURIComponent(p.link)}&text=${encodeURIComponent('Приглашаю в Platformer — финансы, активности и планы в одном месте')}`:'';return `<section class="panel link-card"><span class="eyebrow">ВАША ССЫЛКА-ПРИГЛАШЕНИЕ</span><div class="link-step ${partner?'done':'todo'}"><span class="step-n">${partner?'✓':'1'}</span><div><b>Партнёрская ссылка</b><small>${partner?'Сохранена':'Найдите свою партнёрскую ссылку в IB Portal и вставьте её сюда.'}</small></div>${partner?button('partner-link','Изменить','secondary small'):''}</div>${partner?'':button('partner-link','Вставить ссылку','primary wide','link')}<div class="link-step ${p.link?'done':'todo'}"><span class="step-n">${p.link?'✓':'2'}</span><div><b>Ссылка для гостей</b><small>Одна и постоянная</small></div></div>${p.link?`<div class="invite-url">${esc(p.link)}</div><div class="link-actions">${button('copy','Скопировать','secondary','copy',`data-text="${esc(p.link)}"`)}${typeof androidApp?.share==='function'?button('share-invite','Поделиться','primary','arrow',`data-text="${esc(inviteText(p.link))}"`):`<a class="button primary" href="${esc(share)}" target="_blank" rel="noopener">${icon('arrow')} Отправить</a>`}${button('renew-link','Обновить','secondary small','refresh')}</div>`:''}</section>`;}
+// «Друзья»: пригласить друга — ссылка, «Поделиться» и «Скопировать»
+function inviteCard(p){const share=p.link?`https://t.me/share/url?url=${encodeURIComponent(p.link)}&text=${encodeURIComponent('Приглашаю в Platformer — финансы, здоровье и планы в одном месте')}`:'';if(!p.link)return '';return `<section class="panel link-card invite-card"><span class="eyebrow">ПРИГЛАСИТЬ ДРУГА</span><p class="invite-lead">Друг получит свой Platformer, а вы сможете делить с ним траты.</p><div class="invite-url">${esc(p.link)}</div><div class="link-actions">${button('copy','Скопировать','secondary','copy',`data-text="${esc(p.link)}"`)}${typeof androidApp?.share==='function'?button('share-invite','Поделиться','primary','arrow',`data-text="${esc(inviteText(p.link))}"`):`<a class="button primary" href="${esc(share)}" target="_blank" rel="noopener">${icon('arrow')} Отправить</a>`}${button('renew-link','Обновить','secondary small','refresh')}</div></section>`;}
+// TagMarket: партнёрская ссылка IB Portal — для гостей, которым вы выдаёте счета
+function linkCard(p){const partner=p.partner_url;return `<section class="panel link-card partner-card"><span class="eyebrow">ПАРТНЁРСКАЯ ПРОГРАММА</span><div class="link-step ${partner?'done':'todo'}"><span class="step-n">${partner?'✓':'1'}</span><div><b>Партнёрская ссылка</b><small>${partner?'Сохранена':'Найдите свою партнёрскую ссылку в IB Portal и вставьте её сюда.'}</small></div>${partner?button('partner-link','Изменить','secondary small'):''}</div>${partner?'':button('partner-link','Вставить ссылку','primary wide','link')}<div class="link-step ${p.link?'done':'todo'}"><span class="step-n">${p.link?'✓':'2'}</span><div><b>Ссылка для гостей</b><small>Одна и постоянная</small></div></div>${p.link?`<div class="invite-url">${esc(p.link)}</div>`:''}</section>`;}
+function partnerBlock(){const p=state.people;if(!p)return '';return `<div class="partner-zone"><div class="section-head"><h2>Гости и выданные счета <span class="muted">${p.guests.length}</span></h2></div>${linkCard(p)}${p.guests.length?`<div class="cards-grid">${p.guests.map(g=>guestCard(g,p)).join('')}</div>`:empty('Гостей пока нет','Гости появляются, когда человек приходит по вашей ссылке и вы выдаёте ему счёт.')}</div>`;}
 function guestCard(g,p){
  const have=new Set(g.accounts.filter(a=>a.shared).map(a=>String(a.login))),canShare=(p.shareable||[]).filter(a=>!have.has(String(a.login))),mine=g.accounts.filter(a=>a.shared).length,own=g.accounts.length-mine;
  const sub=[countLabel(g.accounts.length,['счёт','счёта','счетов']),mine?`${mine} ваш${mine===1?'':'их'}`:'',own?`${own} личн${own===1?'ый':'ых'}`:'',g.since?`с ${g.since}`:''].filter(Boolean).join(' · ');
  return `<details class="panel people-card guest-card" data-ui-key="guest-${esc(g.id)}" style="${toneStyle(g.name)}"><summary class="person-head"><span class="avatar guest-avatar">${esc(g.name.slice(0,1).toUpperCase())}</span><span class="person-copy"><b>${esc(g.name)}</b><small class="guest-sub">${esc(sub)}</small></span>${icon('chevron')}</summary><div class="faq-body">${g.accounts.map(a=>`<div class="guest-account ${a.shared?'is-shared':''}"><span class="ga-ico">${icon(a.shared?'link':'chart')}</span><div><b>${esc(a.name)}</b><small>${a.shared?'Ваш счёт у гостя':'Личный · только просмотр'}</small></div>${a.shared?button('take','Забрать','secondary small','',`data-guest="${esc(g.id)}" data-login="${esc(a.login)}"`):''}</div>`).join('')||'<p class="guest-empty">Счетов пока нет — откройте гостю один из своих.</p>'}<div class="actions guest-actions">${canShare.length?button('share-accounts','Открыть счета','secondary small','plus',`data-guest="${esc(g.id)}"`):''}${button('guest-detail','Подробнее','secondary small','',`data-guest="${esc(g.id)}"`)}${button('revoke-guest','Убрать доступ','danger small','',`data-guest="${esc(g.id)}"`)}</div></div></details>`;
 }
 
-function peopleView(){const p=state.people;if(!p)return secHero('people','Друзья')+skeleton('list',2);return secHero('people','Друзья',p.guests.length?`${esc(countLabel(p.guests.length,['человек','человека','человек']))} уже с вами`:'Пригласите по ссылке — у каждого свой Platformer')+friendsSection()+linkCard(p)+`<div class="section-head"><h2>Приглашены <span class="muted">${p.guests.length}</span></h2></div>${p.guests.length?`<div class="cards-grid">${p.guests.map(g=>guestCard(g,p)).join('')}</div>`:empty('Гостей пока нет','')}`;}
+function peopleView(){const p=state.people;if(!p)return secHero('people','Друзья')+skeleton('list',2);const n=(state.friends?.friends||[]).filter(f=>!f.former).length;return secHero('people','Друзья',n?`${esc(countLabel(n,['друг','друга','друзей']))} в вашем круге`:'Пригласите по ссылке — у каждого свой Platformer')+friendsSection()+inviteCard(p);}
 function toggle(label,note,action,on,attrs=''){return `<div class="settings-row"><div><p>${esc(label)}</p>${note?`<small>${esc(note)}</small>`:''}</div><button class="switch" role="switch" aria-label="${esc(label)}" aria-checked="${!!on}" data-action="${action}" ${attrs}></button></div>`;}
 const MACHINE_STATE={polling:['Опрашивает','ok'],waiting:['Готова','ok'],legacy:['Старый код','warning'],offline:['Офлайн','muted']};
 function nextCheck(sec){if(sec==null)return '';const at=new Intl.DateTimeFormat('ru-RU',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Moscow'}).format(new Date(Date.now()+sec*1000));const wait=sec<60?'меньше минуты':`${Math.ceil(sec/60)} мин`;return ` Следующая проверка через ${wait}, в ${at} МСК.`;}
@@ -884,7 +890,7 @@ async function viewParts(){
  const out={},jobs=[];
  if(['tagmarket','account'].includes(state.view))jobs.push((async()=>{try{out.report=await loadReport();out.reportError='';}catch(error){out.report=null;out.reportError=error.message;}})());
  if(state.view==='tagmarket'){const sonic=state.data.accounts.find(a=>/sonic|sonik/i.test(`${a.strategy||''} ${a.name||''}`));jobs.push((async()=>{out.priceChart=sonic?await api(`/accounts/${sonic.login}/candles?period=${state.period==='custom'?'week':state.period}`).catch(()=>null):null;})());}
- if(state.view==='people')jobs.push((async()=>{out.people=await api('/people');})());
+ if(['people','tagmarket'].includes(state.view))jobs.push((async()=>{out.people=await api('/people');})());
  if(['projects','spend','income'].includes(state.view))jobs.push((async()=>{try{out.spend=preview?{...previewSpend(),span:state.view==='spend'?state.spendSpan:'month'}:await api('/spend'+(state.view==='spend'&&state.spendSpan==='year'?'?span=year':''));out.spendError='';}catch(error){out.spend=state.spend;out.spendError=error.message;}})());
  if(state.view==='projects')jobs.push((async()=>{try{out.goals=preview?previewGoals():await api('/goals');}catch(error){out.goals=state.goals;}})());
  if(state.view==='people')jobs.push((async()=>{try{out.friends=preview?previewFriends():await api('/friends');out.friendsError='';}catch(error){out.friends=state.friends;out.friendsError=error.message;}})());
@@ -1043,8 +1049,8 @@ function currentScheme(){return document.documentElement.dataset.scheme||'lime';
 function setScheme(id,persist=true){const sc=SCHEMES.find(x=>x[0]===id)||SCHEMES[0],root=document.documentElement;root.dataset.scheme=sc[0];try{if(persist)localStorage.setItem('tag-scheme',sc[0]);}catch{}document.querySelector('meta[name="theme-color"]').content=sc[2];try{androidApp?.theme?.(sc[2]);}catch{}try{tg?.setHeaderColor(sc[2]);tg?.setBackgroundColor(sc[2]);}catch{}if(state.data&&state.view==='settings')render();}
 let modalLock=null;
 function dialogBack(){tg?.BackButton?.[($('#dialog').open||['account','project'].includes(state.view))?'show':'hide']();}
-function lockDialog(){if(modalLock)return;modalLock={x:scrollX,y:scrollY};document.documentElement.classList.add('modal-open');document.body.style.setProperty('--modal-top',`${-modalLock.y}px`);dialogBack();}
-document.querySelector('#dialog').addEventListener('close',()=>{if($('#dialog').open||!modalLock)return;const pos=modalLock;modalLock=null;document.documentElement.classList.remove('modal-open');document.body.style.removeProperty('--modal-top');window.scrollTo(pos.x,pos.y);dialogBack();});
+function lockDialog(){try{tg?.disableVerticalSwipes?.();}catch{}if(modalLock)return;modalLock={x:scrollX,y:scrollY};document.documentElement.classList.add('modal-open');document.body.style.setProperty('--modal-top',`${-modalLock.y}px`);dialogBack();}
+document.querySelector('#dialog').addEventListener('close',()=>{try{tg?.enableVerticalSwipes?.();}catch{}if($('#dialog').open||!modalLock)return;const pos=modalLock;modalLock=null;document.documentElement.classList.remove('modal-open');document.body.style.removeProperty('--modal-top');window.scrollTo(pos.x,pos.y);dialogBack();});
 async function dialog(title,body,label='Сохранить',opts={}){const current=$('#dialog');if(current.open||modalLock){const closed=new Promise(resolve=>current.addEventListener('close',resolve,{once:true}));if(current.open&&!await requestDialogExit(current))return null;await closed;}return new Promise(resolve=>{const d=$('#dialog');$('#dialog-title').textContent=title;$('#dialog-body').innerHTML=body;$('#dialog-submit').textContent=label;const info=['Закрыть','Понятно','Готово'].includes(label);d.classList.toggle('info-only',info);d.onclick=e=>{if(info&&e.target===d)requestDialogExit(d);};d.returnValue='';d.onclose=()=>{d.dataset.dirty='';const cancelButton=d.querySelector('.dialog-actions button[value="cancel"]');if(cancelButton)cancelButton.textContent='Отмена';const values=Object.fromEntries(new FormData($('form',d)));resolve(d.returnValue==='confirm'?values:null);};const form=$('form',d);form.querySelectorAll('select[name="capitalization"]').forEach(select=>{const date=form.querySelector('input[name="capitalization_from"]');if(date)date.disabled=select.value==='inherit';});const cancelButton=d.querySelector('.dialog-actions button[value="cancel"]');if(cancelButton)cancelButton.textContent=opts.cancelLabel||'Отмена';
   form.oninput=()=>d.querySelector('.dialog-error')?.remove();
   form.onsubmit=e=>{if(e.submitter?.value==='cancel'){e.preventDefault();requestDialogExit(d,true);return;}const fields=[...d.querySelectorAll('input,select,textarea')];if(!fields.every(f=>f.reportValidity())){e.preventDefault();return;}
@@ -1063,8 +1069,62 @@ const filePickerReturned=()=>{if(filePickerUntil>Date.now())filePickerUntil=Math
 window.addEventListener('focus',filePickerReturned);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)filePickerReturned();});
 // explicit — нажата наша кнопка «Отмена»/«Назад»/крестик: это решение человека, а не «cancel» окна выбора файла
-function requestDialogExit(d,explicit=false){if(!explicit&&filePickerGuard())return Promise.resolve(false);if(!dialogHasChanges(d)){d.close('cancel');return Promise.resolve(true);}return new Promise(resolve=>{const finish=ok=>{if(ok&&d.open)d.close('cancel');resolve(ok);};if(tg?.showConfirm)tg.showConfirm('Выйти без сохранения изменений?',finish);else finish(window.confirm('Выйти без сохранения изменений?'));});}
+function requestDialogExit(d,explicit=false){if(!explicit&&filePickerGuard())return Promise.resolve(false);if(!dialogHasChanges(d)){d.close('cancel');return Promise.resolve(true);}return new Promise(resolve=>{const finish=ok=>{if(ok&&d.open)d.close('cancel');resolve(ok);};if(tg?.showConfirm&&tg.platform&&tg.platform!=='unknown')tg.showConfirm('Выйти без сохранения изменений?',finish);else exitConfirm(d).then(finish);});}
+// Вне Telegram (приложение для Android, браузер) — вопрос прямо в окне. window.confirm здесь
+// нельзя: его подменяет наша confirm() для окон, и вопрос вызывал сам себя по кругу.
+function exitConfirm(d){return new Promise(resolve=>{
+ d.querySelector('.exit-confirm')?.remove();
+ const box=document.createElement('div');box.className='exit-confirm';box.setAttribute('role','alertdialog');
+ box.innerHTML='<b>Выйти без сохранения?</b><small>Введённое пропадёт.</small><div class="exit-actions"><button type="button" class="button secondary small" data-exit="stay">Остаться</button><button type="button" class="button primary small" data-exit="leave">Выйти</button></div>';
+ d.querySelector('.dialog-shell').prepend(box);d.scrollTop=0;
+ box.addEventListener('click',e=>{const b=e.target.closest('[data-exit]');if(!b)return;e.preventDefault();box.remove();resolve(b.dataset.exit==='leave');});
+ box.querySelector('[data-exit=stay]').focus();
+});}
 $('#dialog').addEventListener('cancel',event=>{if(event.target!==event.currentTarget)return;event.preventDefault();requestDialogExit(event.currentTarget);});
+// Окно на телефоне — лист снизу: его можно смахнуть пальцем вниз. Тянется за шапку или за
+// содержимое, прокрученное к началу; отпустили ниже порога или быстро смахнули — лист
+// уезжает и закрывается (с вопросом, если есть несохранённое), иначе пружинит обратно.
+(function sheetSwipe(){
+ const d=$('#dialog'),mobile=()=>matchMedia('(max-width:740px)').matches,ease='transform .32s cubic-bezier(.2,.9,.3,1.15)';
+ let y0=null,x0=0,t0=0,dy=0,drag=false,fromHead=false;
+ const reset=(animate=true)=>{d.style.transition=animate?ease:'';d.style.transform='';d.classList.remove('sheet-dragging');setTimeout(()=>{if(!drag)d.style.transition='';},340);};
+ d.addEventListener('touchstart',e=>{
+  if(!d.open||!mobile()||e.touches.length!==1)return;
+  const t=e.target;fromHead=!!t.closest('.dialog-head');
+  // в полях ввода и на ползунках палец занят своим делом
+  if(!fromHead&&t.closest('input,textarea,select,[contenteditable],input[type=range]'))return;
+  y0=e.touches[0].clientY;x0=e.touches[0].clientX;t0=performance.now();dy=0;drag=false;
+ },{passive:true});
+ d.addEventListener('touchmove',e=>{
+  if(y0==null)return;
+  const y=e.touches[0].clientY,x=e.touches[0].clientX;dy=y-y0;
+  if(!drag){
+   if(Math.abs(x-x0)>Math.abs(dy)+4){y0=null;return;}            // горизонтальный жест — не наш
+   if(dy>8&&(fromHead||d.scrollTop<=0)){drag=true;d.classList.add('sheet-dragging');d.style.transition='';}
+   else if(dy<-4){y0=null;return;}                                   // палец вверх — обычная прокрутка
+   else return;
+  }
+  e.preventDefault();
+  const pull=Math.max(0,dy),shown=pull<=0?0:pull;
+  d.style.transform=`translateY(${shown}px)`;
+ },{passive:false});
+ const end=async()=>{
+  if(y0==null)return;y0=null;
+  if(!drag)return;drag=false;
+  const v=dy/Math.max(1,performance.now()-t0);
+  if(dy>Math.min(160,d.offsetHeight*.28)||(v>.55&&dy>40)){
+   // есть несохранённое — лист возвращается, и вопрос задаётся на виду
+   if(dialogHasChanges(d)){reset();requestDialogExit(d,true);return;}
+   d.style.transition='transform .22s cubic-bezier(.4,0,1,1)';d.style.transform=`translateY(${d.offsetHeight+40}px)`;
+   haptics?.impactOccurred?.('light');
+   await new Promise(r=>setTimeout(r,200));
+   const closed=await requestDialogExit(d,true);
+   if(!closed||d.open)reset();else{d.classList.remove('sheet-dragging');d.style.transition='';d.style.transform='';}
+  }else reset();
+ };
+ d.addEventListener('touchend',end);d.addEventListener('touchcancel',end);
+ d.addEventListener('close',()=>{d.style.transform='';d.style.transition='';d.classList.remove('sheet-dragging');});
+})();
 window.addEventListener('beforeunload',event=>{if($('#dialog').open&&dialogHasChanges($('#dialog'))){event.preventDefault();event.returnValue='';}});
 async function confirm(title,text,label='Подтвердить'){return !!await dialog(title,`<p>${esc(text)}</p>`,label);}
 async function mutate(path,data,method='POST'){await api(path,{method,body:data===undefined?undefined:JSON.stringify(data)});haptics?.notificationOccurred('success');toast('Сохранено. Изменения доступны и в боте.');await refresh();}
@@ -1411,12 +1471,12 @@ function projectView(){
 // вручную можно добавить или поправить что угодно. Что показывать — настройки пользователя
 // на сервере (state.data.station), одинаковые на всех устройствах.
 // Шаги, сон и пульс убраны: их должен присылать телефон, а вводить руками — не дело.
-const ACT_KINDS={steps:['Шаги','шагов','activity']};   // шаги приходят только с телефона
+const ACT_KINDS={steps:['Шаги','шагов','activity'],sleep:['Сон','ч','moon'],pulse:['Пульс покоя','уд/мин','heart']};   // всё приходит с телефона: Health Connect и счётчик шагов
 const ACT_DAYS=[[7,'7 дней'],[30,'30 дней'],[90,'90 дней']];
 const NOTE_COLORS=[['accent','Основной'],['green','Свежий'],['purple','Светлый'],['orange','Тёплый'],['pink','Глубокий'],['blue','Мягкий']];
 const REPEATS=[['none','Не повторять'],['weekly','Каждую неделю'],['monthly','Каждый месяц'],['yearly','Каждый год']];
 const MONTH_NAMES=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
-const HOME_CARDS={circle:'Баланс жизни',finance:'Финансы',activity:'Активности',tasks:'Дела на сегодня',events:'Ближайшие события',notes:'Заметки'};
+const HOME_CARDS={circle:'Баланс жизни',finance:'Финансы',activity:'Здоровье',tasks:'Дела на сегодня',events:'Ближайшие события',notes:'Заметки'};
 const STATION_DEFAULTS={home:Object.keys(HOME_CARDS),metrics:Object.keys(ACT_KINDS)};
 state.activity=null;state.activityError='';state.activityDays=30;
 state.lists=null;state.listsError='';state.events=null;state.listsTab='tasks';state.circle=null;
@@ -1492,18 +1552,38 @@ function stepsNote(){const sync=state.activity?.sync,p=String(tg?.platform||'').
 function syncDot(){const s=state.activity?.sync;if(!s?.connected)return '';const fresh=s.last_sync&&Date.now()-Date.parse(s.last_sync)<36*36e5;return `<span class="sync-dot${fresh?' on':''}" title="${fresh?`Синхронизировано ${esc(agoText(s.last_sync))}`:'Ждём синхронизацию с телефона'}"></span>`;}
 
 // ── Активности ──
+function sleepText(h){if(h==null)return '—';const m=Math.round(h*60);return `${Math.floor(m/60)} ч${m%60?` ${m%60} мин`:''}`;}
+// ── Здоровье: шаги, сон и пульс с телефона ──
+function healthCards(sum,goals){
+ const sl=sum?.sleep,pu=sum?.pulse,avg=sum?.hr_avg,mx=sum?.hr_max,cards=[];
+ if(sl?.series?.length){
+  const goal=goals?.sleep||8,last=sl.today??sl.last,pct=last==null?0:Math.min(100,Math.round(last/goal*100));
+  cards.push(`<section class="hl-card hl-sleep" data-ui-key="health-sleep"><div class="hl-head"><span class="hl-ico">${icon('moon')}</span><span>Сон</span><em>${sl.today!=null?'эта ночь':esc(shortDay(sl.last_day))}</em></div><b class="hl-big">${esc(sleepText(last))}</b><div class="hl-meter" aria-hidden="true"><i style="--w:${pct}%"></i></div><small>${pct>=100?'Норма выполнена':`${pct}% от цели ${number(goal)} ч`}${sl.week_avg!=null?` · в среднем ${esc(sleepText(sl.week_avg))}`:''}</small>${actBars(sl.series,{goal,days:7,kind:'sleep'})}</section>`);
+ }
+ const restNow=pu?.today??pu?.last,avgNow=avg?.today??avg?.last;
+ if(pu?.series?.length||avg?.series?.length){
+  const main=restNow??avgNow,label=restNow!=null?'пульс покоя':'средний за день',series=(pu?.series?.length?pu:avg).series.slice(-14);
+  const lo=Math.min(...series.map(p=>p.value)),hi=Math.max(...series.map(p=>p.value)),w=280,h=56;
+  const pts=series.map((p,i)=>`${(series.length<2?w/2:i/(series.length-1)*w).toFixed(1)},${(h-4-(hi===lo?.5:(p.value-lo)/(hi-lo))*(h-12)).toFixed(1)}`).join(' ');
+  cards.push(`<section class="hl-card hl-pulse" data-ui-key="health-pulse"><div class="hl-head"><span class="hl-ico">${icon('heart')}</span><span>Пульс</span><em>${esc(label)}</em></div><b class="hl-big">${main==null?'—':number(Math.round(main))}<small> уд/мин</small></b><div class="hl-chips">${avgNow!=null&&restNow!=null?`<span>средний <b>${number(Math.round(avgNow))}</b></span>`:''}${mx?.today??mx?.last?`<span>максимум <b>${number(Math.round(mx.today??mx.last))}</b></span>`:''}</div>${series.length>1?`<svg class="hl-line" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true"><polyline points="${pts}"/></svg>`:''}</section>`);
+ }
+ return cards.length?`<div class="hl-grid">${cards.join('')}</div>`:'';
+}
 function activityView(){
  const sum=state.activity?.summary,st=sum?.steps;
- const line=!sum?'Шаги с телефона':stepsLive()?`${number(st.today||0)} шагов сегодня`:stepsNote();
- const head=secHero('act','Шаги',esc(line));
+ const bits=[];if(stepsLive())bits.push(`${number(st.today||0)} шагов сегодня`);const sl=sum?.sleep,pu=sum?.pulse;
+ if(sl?.series?.length)bits.push(`сон ${sleepText(sl.today??sl.last)}`);if(pu?.series?.length)bits.push(`пульс ${number(Math.round(pu.today??pu.last))}`);
+ const line=!sum?'Шаги, сон и пульс с телефона':bits.length?bits.join(' · '):stepsNote();
+ const head=secHero('act','Здоровье',esc(line));
  if(!state.activity)return head+(state.activityError?sectionError(state.activityError,'activity-reload'):skeleton('chart'));
- const a=state.activity,days=a.days,g0=a.goals?.steps||10000;
- if(!stepsLive())return head+`<section class="steps-empty"><span class="empty-orb">${icon('activity')}</span><b>Шаги появятся сами</b><p>${esc(stepsNote())}. Когда приложение получит данные с телефона, здесь будут шаги за сегодня и динамика по дням.</p></section>`;
+ const a=state.activity,days=a.days,g0=a.goals?.steps||10000,cards=healthCards(sum,a.goals);
+ if(!stepsLive()&&!cards)return head+`<section class="steps-empty"><span class="empty-orb">${icon('activity')}</span><b>Шаги, сон и пульс появятся сами</b><p>${esc(stepsNote())}. Когда приложение получит данные с телефона, здесь будут шаги за сегодня, сон за ночь, пульс и динамика по дням.</p></section>`;
+ if(!stepsLive())return head+cards;
  const tabs=`<div class="segmented act-days">${ACT_DAYS.map(([n,label])=>`<button type="button" data-action="activity-days" data-value="${n}" class="${state.activityDays===n?'active':''}">${label}</button>`).join('')}</div>`;
  const pct=Math.min(100,Math.round((st.today||0)/g0*100));
  const hero=`<section class="steps-hero${pct>=100?' done':''}" data-ui-key="steps-hero"><span class="steps-glow" aria-hidden="true"></span><span class="steps-ring">${ring(st.today||0,g0,132,'Шаги')}<span class="steps-ring-in"><b>${countUp(st.today||0,'int')}</b><small>из ${number(g0)}</small></span></span><span class="steps-meta"><i class="live-tag"><i></i>${esc(agoText(a.sync?.last_sync)||'с телефона')}</i>${st.week_avg!=null?`<small>в среднем ${number(Math.round(st.week_avg))} в день</small>`:''}<small>${pct>=100?'Цель выполнена':`${pct}% дневной цели`}</small></span></section>`;
  const chart=st.series.length>1?`<section class="act-chart" data-ui-key="act-chart-steps"><div class="sec-row"><h2>По дням</h2>${tabs}</div>${actBars(st.series,{goal:g0,days,kind:'steps'})}</section>`:'';
- return head+hero+chart;
+ return head+hero+cards+chart;
 }
 async function ensureActivity(){if(!state.activity)state.activity=preview?previewActivity(7):await api('/activity?days=7');}
 let syncKeyShown=null;
@@ -1575,7 +1655,7 @@ async function taskEditor(task=null){
  }
 }
 document.addEventListener('click',event=>{const chip=event.target.closest?.('[data-due-set]');if(!chip)return;event.preventDefault();const input=$('#dialog input[name="due"]');if(input){input.value=chip.dataset.dueSet;input.dispatchEvent(new Event('input',{bubbles:true}));$('#dialog').dataset.dirty='1';}});
-document.addEventListener('submit',async event=>{const form=event.target.closest?.('[data-task-quick]');if(!form)return;event.preventDefault();const input=form.elements.title,title=input.value.trim();if(!title)return;input.disabled=true;try{await api('/tasks',{method:'POST',body:JSON.stringify({title})});haptics?.impactOccurred('light');await sectionReload();$('[data-task-quick] input')?.focus();}catch(error){toast(error.message);input.disabled=false;}});
+document.addEventListener('submit',async event=>{const form=event.target.closest?.('[data-task-quick]');if(!form)return;event.preventDefault();const input=form.elements.title,title=input.value.trim();if(!title){input.focus();input.classList.add('nudge');setTimeout(()=>input.classList.remove('nudge'),450);return;}input.disabled=true;try{await api('/tasks',{method:'POST',body:JSON.stringify({title})});haptics?.impactOccurred('light');await sectionReload();$('[data-task-quick] input')?.focus();}catch(error){toast(error.message);input.disabled=false;}});
 // ── Импорт заметок с телефона: файлы (.txt, .md, Google Keep .json/.html) или вставленный текст ──
 const NOTE_FILES='.txt,.md,.markdown,.json,.html,.htm,text/plain,text/markdown,application/json,text/html';
 function noteFromText(text,name=''){
@@ -1822,8 +1902,11 @@ function previewActivity(days){
  for(let i=0;i<days;i++)steps.push({day:addDaysIso(end,-i),value:Math.round(8200+(Math.sin(i*1.7)+Math.cos(i*.6))*2600)});
  steps.reverse();
  const week=steps.filter(p=>p.day>=addDaysIso(end,-6));
- return {days,entries:[],goals:{steps:10000},
-  summary:{steps:{today:steps.at(-1)?.value??null,week_avg:week.reduce((n,p)=>n+p.value,0)/(week.length||1),series:steps}},
+ const sleep=steps.map((p,i)=>({day:p.day,value:Math.round((7.2+Math.sin(i*1.3)*1.1)*10)/10})),pulse=steps.map((p,i)=>({day:p.day,value:Math.round(58+Math.cos(i*.9)*4)}));
+ return {days,entries:[],goals:{steps:10000,sleep:8},
+  summary:{steps:{today:steps.at(-1)?.value??null,week_avg:week.reduce((n,p)=>n+p.value,0)/(week.length||1),series:steps},
+   sleep:{today:sleep.at(-1).value,last:sleep.at(-1).value,last_day:sleep.at(-1).day,week_avg:sleep.slice(-7).reduce((n,p)=>n+p.value,0)/7,series:sleep},
+   pulse:{today:pulse.at(-1).value,last:pulse.at(-1).value,series:pulse},hr_avg:{today:74,last:74,series:[]},hr_max:{today:146,last:146,series:[]}},
   sync:{connected:true,last_sync:new Date(Date.parse(PREVIEW_STAMP)-12*6e4).toISOString().replace(/\.\d+Z$/,'Z'),last_saved:'steps'}};
 }
 const PREVIEW_STAMP=new Date(Math.floor(Date.now()/36e5)*36e5).toISOString().replace(/\.\d+Z$/,'Z');
@@ -2012,7 +2095,9 @@ document.addEventListener('click',async event=>{const el=event.target.closest('[
   }
  }
  }catch(error){toast(error.message);}finally{el.disabled=false;}});
-document.addEventListener('click',event=>{const tool=event.target.closest('[data-format]');if(!tool)return;event.preventDefault();const area=$('#dialog textarea[name="text"]');if(!area)return;const start=area.selectionStart,end=area.selectionEnd,selected=area.value.slice(start,end);const tags={bold:['<b>','</b>'],italic:['<i>','</i>'],mono:['<code>','</code>'],quote:['<blockquote>','</blockquote>']}[tool.dataset.format];if(!tags)return;area.setRangeText(tags[0]+selected+tags[1],start,end,'end');area.focus();area.setSelectionRange(start+tags[0].length,start+tags[0].length+selected.length);area.dispatchEvent(new Event('input',{bubbles:true}));});
+// только кнопки форматирования в окне рассылки: data-format есть и у анимированных чисел (countUp),
+// и раньше нажатие по ссылке с числом внутри («все активы» на главной) отменялось здесь
+document.addEventListener('click',event=>{const tool=event.target.closest('#dialog [data-format]');if(!tool)return;event.preventDefault();const area=$('#dialog textarea[name="text"]');if(!area)return;const start=area.selectionStart,end=area.selectionEnd,selected=area.value.slice(start,end);const tags={bold:['<b>','</b>'],italic:['<i>','</i>'],mono:['<code>','</code>'],quote:['<blockquote>','</blockquote>']}[tool.dataset.format];if(!tags)return;area.setRangeText(tags[0]+selected+tags[1],start,end,'end');area.focus();area.setSelectionRange(start+tags[0].length,start+tags[0].length+selected.length);area.dispatchEvent(new Event('input',{bubbles:true}));});
 document.addEventListener('input',event=>{if(event.target.matches('#dialog textarea[name="text"]')){const area=event.target,preview=$('#compose-live'),count=$('#compose-count');if(preview)preview.innerHTML=area.value?broadcastPreview(area.value):'<span class="muted">Сообщение появится здесь</span>';const length=broadcastLength(area.value);if(count){count.textContent=`${length} / 4096`;count.classList.toggle('over',length>4096);}const meter=$('#compose-meter');if(meter){meter.style.width=`${Math.min(100,length/4096*100).toFixed(1)}%`;meter.classList.toggle('warn',length>3600);}const clear=$('[data-cmp-clear]');if(clear)clear.hidden=!area.value;}});
  document.addEventListener('change',async event=>{try{if(event.target.matches('#dialog input[name="media"]')){const info=$('#compose-file-name');if(info)info.textContent=event.target.files?.[0]?`${event.target.files[0].name} · ${fileSize(event.target.files[0].size)}`:'JPG/PNG до 10 МБ · MP4 до 20 МБ';}if(event.target.id==='add-cabinet-choice'){const fresh=$('#add-new-cabinet');fresh.hidden=event.target.value!=='new';fresh.querySelector('input').disabled=fresh.hidden;}if(event.target.id==='account-select'){state.login=Number(event.target.value);state.offset=0;if(state.view==='account'){location.hash='account/'+state.login;}else await refresh();}if(event.target.id==='currency'){state.currency=event.target.value;await showCached();}}catch(error){toast(error.message);}});
 $('#notifications').innerHTML=icon('bell');$('#settings-link').innerHTML=icon('settings');$('#refresh').innerHTML=icon('refresh');$('#refresh').addEventListener('click',()=>refresh());

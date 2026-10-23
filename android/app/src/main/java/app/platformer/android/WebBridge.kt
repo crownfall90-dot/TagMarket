@@ -26,14 +26,14 @@ class WebBridge(
     @JavascriptInterface
     fun signOut() = onSignOut()
 
-    /** Доступы телефона: {"steps":"granted|denied|unavailable","notifications":true|false}. */
+    /** Доступы телефона: {"steps","health": "granted|denied|unavailable", "notifications": true|false}. */
     @JavascriptInterface
     fun permissions(): String = onPermissions()
 
     /** Включить доступ: steps — шаги из Health Connect, notifications — уведомления. */
     @JavascriptInterface
     fun fix(kind: String?) {
-        if (kind == "steps" || kind == "notifications") onFix(kind)
+        if (kind == "steps" || kind == "health" || kind == "notifications") onFix(kind)
     }
 
     /** Меню «Поделиться» Android: приглашение уходит в любой мессенджер. */

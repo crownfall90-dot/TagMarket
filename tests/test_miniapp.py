@@ -2061,6 +2061,15 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sync.status, 200, await sync.text())
         act = await (await self.call("GET", "/api/activity?days=7")).json()
         self.assertEqual(act["summary"]["steps"]["today"], 4321)
+        # «Здоровье»: сон (часы) и пульс за день из Health Connect — тем же токеном
+        today = (await (await self.call("GET", "/api/activity?days=1")).json())["to"]
+        r = await self.client.post("/api/activity/sync", headers=auth, json={"days": [
+            {"day": today, "steps": 5000, "sleep": 7.5, "pulse": 58, "hr_avg": 74, "hr_max": 151}]})
+        self.assertEqual(r.status, 200, await r.text())
+        act = (await (await self.call("GET", "/api/activity?days=7")).json())["summary"]
+        self.assertEqual((act["sleep"]["today"], act["pulse"]["today"], act["hr_avg"]["today"], act["hr_max"]["today"]),
+                         (7.5, 58, 74, 151))
+        self.assertEqual(act["hr_max"]["label"], "Максимальный пульс")
         # список устройств и отвязка
         listed = await (await self.client.get("/api/devices", headers=auth)).json()
         self.assertEqual([d["name"] for d in listed["devices"]], ["Realme"])

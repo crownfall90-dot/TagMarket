@@ -25,6 +25,8 @@ DAILY = {
     "sleep": ("Сон", "ч", (0, 24), 0.1),
     "water": ("Вода", "л", (0, 20), 0.1),
     "pulse": ("Пульс покоя", "уд/мин", (20, 250), 1),
+    "hr_avg": ("Средний пульс", "уд/мин", (20, 250), 1),
+    "hr_max": ("Максимальный пульс", "уд/мин", (20, 250), 1),
 }
 WORKOUT = "workout"
 KINDS = set(DAILY) | {WORKOUT}
@@ -253,6 +255,8 @@ SYNC_FIELDS = {
     "sleep": ("sleep", "sleep_hours", "сон"),
     "water": ("water", "вода"),
     "pulse": ("pulse", "resting_heart_rate", "heart_rate", "пульс"),
+    "hr_avg": ("hr_avg", "heart_rate_avg"),
+    "hr_max": ("hr_max", "heart_rate_max"),
 }
 NUMBER_RE = re.compile(r"-?\d[\d\s  ]*(?:[.,]\d+)?")
 MAX_SYNC_DAYS = 31

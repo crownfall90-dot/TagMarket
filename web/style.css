@@ -2388,7 +2388,7 @@ html.native .footer{display:none}
  html.native #dialog{margin:auto 0 0;width:100%;max-width:none;border-radius:26px 26px 0 0;border-bottom:0;max-height:calc(100dvh - 24px)}
  html.native #dialog .dialog-shell{padding-bottom:calc(14px + var(--safe-bottom,0px))}
  html.native #dialog .dialog-shell:before{content:"";display:block;width:38px;height:4px;margin:-6px auto 12px;border-radius:2px;background:rgb(var(--fg-rgb) / .16)}
- html.native dialog[open]{animation:sheet-in .34s cubic-bezier(.2,.9,.25,1) both}
+ html.native dialog[open]{animation:sheet-in .34s cubic-bezier(.2,.9,.25,1) backwards}
  html.native #toast.has-event{top:12px}
 }
 /* узкие телефоны (320–360 px): компактнее отступы и подписи вкладок */
@@ -2466,3 +2466,48 @@ body{background:radial-gradient(130% 55% at 50% -14%,rgb(var(--glow-rgb) / .2),t
 .bal-info b{font-size:15px;font-weight:600;letter-spacing:-.02em}
 .bal-info small{font-size:12px;color:var(--muted);line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 @media(min-width:741px){.bal-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+/* ── Здоровье: карточки сна и пульса ── */
+.hl-grid{display:grid;gap:12px;margin:0 0 var(--gap)}
+@media(min-width:741px){.hl-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.hl-card{--tc:var(--accent);position:relative;overflow:hidden;padding:16px 16px 14px;border-radius:24px;border:1px solid rgb(var(--fg-rgb) / .07);
+ background:radial-gradient(80% 70% at 100% 0%,color-mix(in srgb,var(--tc) 16%,transparent),transparent 70%),var(--panel)}
+.hl-sleep{--tc:var(--tone2)}
+.hl-pulse{--tc:var(--tone4)}
+.hl-head{display:flex;align-items:center;gap:10px;font-size:14px;font-weight:600}
+.hl-head em{margin-left:auto;font-style:normal;font-size:12px;font-weight:500;color:var(--muted)}
+.hl-ico{display:grid;place-items:center;width:34px;height:34px;border-radius:12px;color:var(--tc);background:color-mix(in srgb,var(--tc) 14%,transparent)}
+.hl-ico svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.hl-big{display:block;margin:12px 0 6px;font-size:32px;font-weight:600;letter-spacing:-.045em;line-height:1.05}
+.hl-big small{font-size:14px;font-weight:500;color:var(--muted);letter-spacing:0}
+.hl-card>small{display:block;color:var(--muted);font-size:12.5px;margin:6px 0 10px}
+.hl-meter{height:6px;border-radius:999px;background:rgb(var(--fg-rgb) / .07);overflow:hidden}
+.hl-meter i{display:block;height:100%;width:var(--w);border-radius:inherit;background:linear-gradient(90deg,var(--tc),var(--accent));box-shadow:0 0 12px color-mix(in srgb,var(--tc) 60%,transparent)}
+.hl-sleep .act-bars{height:74px}
+.hl-sleep .act-bars .bar{background:color-mix(in srgb,var(--tc) 45%,transparent)}
+.hl-sleep .act-bars .bar.hit,.hl-sleep .act-bars .bar.today{background:var(--tc)}
+.hl-chips{display:flex;flex-wrap:wrap;gap:8px;margin:2px 0 10px}
+.hl-chips span{padding:5px 10px;border-radius:999px;font-size:12px;color:var(--muted);background:rgb(var(--fg-rgb) / .05)}
+.hl-chips b{color:var(--text);font-weight:600}
+.hl-line{display:block;width:100%;height:56px;overflow:visible}
+.hl-line polyline{fill:none;stroke:var(--tc);stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round;vector-effect:non-scaling-stroke;filter:drop-shadow(0 0 6px color-mix(in srgb,var(--tc) 55%,transparent))}
+/* «Друзья»: приглашение друга; TagMarket: партнёрская программа и гости */
+.invite-lead{margin:6px 0 12px;color:var(--muted);font-size:13.5px;line-height:1.45}
+.partner-zone{margin-top:26px}
+
+/* ── Окна на телефоне — лист снизу с «ручкой»: смахивается пальцем вниз ── */
+@media(max-width:740px){
+ #dialog{margin:auto 0 0;width:100%;max-width:none;border-radius:26px 26px 0 0;border-bottom:0;max-height:calc(100dvh - 24px - var(--tg-content-safe-area-inset-top,0px));will-change:transform}
+ #dialog .dialog-shell{padding-bottom:calc(14px + var(--safe-bottom,0px))}
+ #dialog .dialog-shell:before{content:"";display:block;width:40px;height:5px;margin:-8px auto 12px;border-radius:3px;background:rgb(var(--fg-rgb) / .2);transition:background .2s ease,width .2s ease}
+ #dialog .dialog-head{touch-action:none}
+ #dialog.sheet-dragging{overflow:hidden}
+ #dialog.sheet-dragging .dialog-shell:before{background:rgb(var(--accent-rgb) / .7);width:52px}
+ dialog[open]{animation:sheet-in .34s cubic-bezier(.2,.9,.25,1) backwards}
+}
+@media(max-width:740px) and (prefers-reduced-motion:reduce){dialog[open]{animation:none}}
+.exit-confirm{position:sticky;top:0;z-index:5;display:grid;gap:4px;margin:0 0 14px;padding:14px;border-radius:18px;border:1px solid rgb(var(--accent-rgb) / .35);background:color-mix(in srgb,var(--raised) 92%,var(--accent));box-shadow:0 12px 30px -14px rgb(0 0 0 / .6);animation:row-in .25s ease both}
+.exit-confirm b{font-size:15px}
+.exit-confirm small{color:var(--muted)}
+.exit-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:6px}
+.task-quick input.nudge{animation:nudge .4s ease}
+@keyframes nudge{20%{transform:translateX(-5px)}40%{transform:translateX(5px)}60%{transform:translateX(-3px)}80%{transform:translateX(2px)}}

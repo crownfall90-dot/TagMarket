@@ -23,11 +23,19 @@ object Api {
         return post("/device/pair", body, token = null).getString("token")
     }
 
-    /** Шаги по дням: [{day, steps}] → /api/activity/sync с токеном устройства. */
-    fun sendSteps(token: String, days: List<Pair<String, Long>>) {
-        val list = JSONArray()
-        days.forEach { (day, steps) -> list.put(JSONObject().put("day", day).put("steps", steps)) }
-        post("/activity/sync", JSONObject().put("days", list), token)
+    /** Шаги, сон и пульс по дням: [{day, steps, sleep, pulse, hr_avg, hr_max}] → /api/activity/sync. */
+    fun sendSteps(token: String, days: List<Pair<String, Long>>, extra: Map<String, Steps.DayHealth> = emptyMap()) {
+        val byDay = sortedMapOf<String, JSONObject>()
+        days.forEach { (day, steps) -> byDay.getOrPut(day) { JSONObject().put("day", day) }.put("steps", steps) }
+        extra.forEach { (day, h) ->
+            val item = byDay.getOrPut(day) { JSONObject().put("day", day) }
+            h.sleepHours?.let { item.put("sleep", it) }
+            h.pulse?.let { item.put("pulse", it) }
+            h.hrAvg?.let { item.put("hr_avg", it) }
+            h.hrMax?.let { item.put("hr_max", it) }
+        }
+        if (byDay.isEmpty()) return
+        post("/activity/sync", JSONObject().put("days", JSONArray(byDay.values)), token)
     }
 
     /** FCM-токен телефона → сервер: на него приходят мгновенные уведомления. */

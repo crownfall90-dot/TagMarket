@@ -19,7 +19,7 @@
     <string name="share_title">Пригласить в Platformer</string>
     <string name="alerts_channel">События</string>
     <string name="alerts_channel_text">Пополнения, выводы, профит и напоминания — то же, что в колокольчике Platformer</string>
-    <string name="rationale_title">Зачем Platformer шаги</string>
-    <string name="rationale_text">Platformer читает из Health Connect только количество шагов — суммы по дням за последнюю неделю — и показывает их в разделе «Шаги»: сегодня, цель и динамику. Данные отправляются только на сервер Platformer, к вашему аккаунту, и никому не передаются. Ничего не записывается в Health Connect. Разрешение можно отозвать в любой момент в настройках Health Connect.</string>
+    <string name="rationale_title">Зачем Platformer шаги, сон и пульс</string>
+    <string name="rationale_text">Platformer читает из Health Connect только шаги, сон и пульс — итоги по дням за последнюю неделю: шаги за день, длительность сна за ночь, пульс покоя, средний и максимальный. Они показываются в разделе «Здоровье»: сегодня, цель и динамика. Данные отправляются только на сервер Platformer, к вашему аккаунту, и никому не передаются. Ничего не записывается в Health Connect. Разрешения можно отозвать в любой момент в настройках Health Connect.</string>
     <string name="rationale_close">Понятно</string>
 </resources>
