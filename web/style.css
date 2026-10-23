@@ -2453,3 +2453,30 @@ html.native .footer{display:none}
 [data-scheme=paper] .split-row.settle .sp-amount{color:color-mix(in srgb,#8fe0b4 58%,#000)}
 [data-scheme=paper] .fc-debt.plus{color:color-mix(in srgb,#8fe0b4 58%,#000)}
 [data-scheme=paper] .fc-debt.minus{color:color-mix(in srgb,#f29ac0 58%,#000)}
+/* ── Цветные темы по референсам: «Аметист», «Океан», «Янтарь» — почти чёрный фон с подсветкой акцента ── */
+:root[data-scheme=amethyst]{--bg:#0d0b14;--bg-rgb:13 11 20;--panel:#17141f;--panel-rgb:23 20 31;--raised:#211c2c;--line:#2c2638;--text:#f3f0fa;--muted:#9a93ab;--accent:#a48bff;--accent-rgb:164 139 255;--purple:#e3b4ff;--purple-rgb:227 180 255;--on-accent:#140f24;--glow-rgb:140 110 255}
+:root[data-scheme=ocean]{--bg:#070b16;--bg-rgb:7 11 22;--panel:#0f1626;--panel-rgb:15 22 38;--raised:#16203a;--line:#1f2b46;--text:#eef3ff;--muted:#8c9ab8;--accent:#3d7bff;--accent-rgb:61 123 255;--purple:#7fb2ff;--purple-rgb:127 178 255;--on-accent:#ffffff;--glow-rgb:40 90 255}
+:root[data-scheme=amber]{--bg:#0e0b09;--bg-rgb:14 11 9;--panel:#1a1512;--panel-rgb:26 21 18;--raised:#241d18;--line:#30271f;--text:#f7f1ec;--muted:#a3968b;--accent:#ff7a2f;--accent-rgb:255 122 47;--purple:#ffb26b;--purple-rgb:255 178 107;--on-accent:#1a0d05;--glow-rgb:255 100 30}
+:root:is([data-scheme=amethyst],[data-scheme=ocean],[data-scheme=amber]) .positive{color:var(--purple)}
+/* свечение цвета темы сверху экрана, как в референсах */
+:root:is([data-scheme=amethyst],[data-scheme=ocean],[data-scheme=amber]) body{background:radial-gradient(120% 55% at 50% -12%,rgb(var(--glow-rgb) / .26),transparent 62%) fixed,var(--bg)}
+:root:is([data-scheme=amethyst],[data-scheme=ocean],[data-scheme=amber]) .ambient{display:none}
+:root:is([data-scheme=amethyst],[data-scheme=ocean],[data-scheme=amber]) .sec-glow{filter:saturate(.6) hue-rotate(0deg);opacity:.55}
+.scheme-picker{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media(max-width:420px){.scheme-picker{grid-template-columns:repeat(3,minmax(0,1fr))}}
+
+/* ── Общий стиль из референсов для всех тем ── */
+/* быстрые действия на главной: плитки с иконкой и подписью */
+.quick-acts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:14px 0 4px}
+.quick-act{display:flex;flex-direction:column;align-items:center;gap:8px;padding:0;border:0;background:none;color:var(--muted);font-size:12px;font-weight:550;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.quick-ico{display:grid;place-items:center;width:100%;max-width:68px;aspect-ratio:1;border-radius:20px;background:linear-gradient(180deg,rgb(var(--fg-rgb) / .07),rgb(var(--fg-rgb) / .03));border:1px solid rgb(var(--fg-rgb) / .07);color:var(--text);transition:transform .15s ease,background .2s ease,border-color .2s ease}
+.quick-ico svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.quick-act:hover .quick-ico{border-color:rgb(var(--accent-rgb) / .45)}
+.quick-act:active .quick-ico{transform:scale(.93);background:rgb(var(--accent-rgb) / .16)}
+.quick-act:first-child .quick-ico{background:var(--accent);border-color:transparent;color:var(--on-accent);box-shadow:0 10px 26px -10px rgb(var(--accent-rgb) / .8)}
+@media(min-width:741px){.quick-acts{max-width:420px}}
+/* переключатели периода: активная — залитая капсула цвета темы */
+.segmented .segmented-thumb{background:var(--accent)!important;box-shadow:0 6px 18px -8px rgb(var(--accent-rgb) / .9)!important;border-radius:999px}
+.segmented:has(.segmented-thumb) button.active,.segmented:has(.segmented-thumb) button[aria-pressed=true],.segmented:has(.segmented-thumb) button[aria-selected=true]{color:var(--on-accent)!important}
+/* кнопка «+»: яркий круг со свечением */
+.fab{background:var(--accent)!important;color:var(--on-accent)!important;border:0!important;box-shadow:0 12px 30px -8px rgb(var(--accent-rgb) / .85),0 0 0 6px rgb(var(--accent-rgb) / .12)!important}
