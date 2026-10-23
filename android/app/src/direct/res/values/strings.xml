@@ -20,5 +20,9 @@
     <string name="update_allow">Разрешить</string>
     <string name="update_retry">Повторить</string>
     <string name="update_later">Обновить позже</string>
+    <string name="update_channel">Обновления</string>
+    <string name="update_channel_text">Сообщение о новой версии Platformer</string>
+    <string name="update_push_title">Мы обновились · Platformer %1$s</string>
+    <string name="update_push_text">Зайдите, чтобы посмотреть, что изменилось</string>
     <string name="update_failed">Не получилось обновить: %1$s</string>
 </resources>
