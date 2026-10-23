@@ -2076,6 +2076,13 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         # код для входа можно получить и из Mini App
         made = await (await self.call("POST", "/api/devices/code")).json()
         self.assertEqual(made["minutes"], 10)
+        # «Выйти» в приложении: токен этого телефона перестаёт работать сразу
+        token = (await (await self.client.post("/api/device/pair", json={"code": made["code"]})).json())["token"]
+        auth = {"Authorization": f"Bearer {token}"}
+        self.assertEqual((await self.client.get("/api/bootstrap", headers=auth)).status, 200)
+        self.assertEqual((await self.client.post("/api/device/logout", headers=auth)).status, 200)
+        self.assertEqual((await self.client.get("/api/bootstrap", headers=auth)).status, 401)
+        self.assertEqual((await self.client.post("/api/device/logout")).status, 400)
         # политика конфиденциальности для Google Play открывается без входа
         page = await self.client.get("/app/privacy.html")
         self.assertEqual(page.status, 200)

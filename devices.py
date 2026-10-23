@@ -2,7 +2,8 @@
 
 Mini App в Telegram узнаёт человека по подписи Telegram (initData). В
 приложении из Google Play такой подписи нет, поэтому устройство «привязывают»:
-в боте команда /app выдаёт код из 8 символов на 10 минут, приложение
+кнопка «Запросить код» открывает бота, и он присылает код из 8 символов
+на 10 минут (то же делает команда /app); приложение
 обменивает его на личный токен устройства. В базе — только SHA-256 кода и
 токена; сам токен показывается приложению один раз и хранится в нём.
 
@@ -73,14 +74,14 @@ def pair(db, code, name="") -> dict:
     """Обменять код на токен устройства. ValueError — код неверный или устарел."""
     code = _norm_code(code)
     if len(code) != 8:
-        raise ValueError("Код — 8 символов из бота: команда /app")
+        raise ValueError("Код — 8 символов из бота: нажмите «Запросить код»")
     name = str(name or "").strip()[:64] or "Android"
     now = _now()
     with db:
         row = db.execute("SELECT owner_id, expires_at FROM app_pairing WHERE code_hash=?", (_hash(code),)).fetchone()
         db.execute("DELETE FROM app_pairing WHERE code_hash=?", (_hash(code),))     # код одноразовый в любом случае
         if row is None or datetime.fromisoformat(row[1]) < now:
-            raise ValueError("Код не подходит или устарел — получите новый в боте: /app")
+            raise ValueError("Код не подходит или устарел — нажмите «Запросить код» ещё раз")
         owner = row[0]
         devices_now = db.execute("SELECT id FROM app_devices WHERE owner_id=? ORDER BY last_seen DESC", (owner,)).fetchall()
         for (old,) in devices_now[MAX_DEVICES - 1:]:
@@ -109,6 +110,14 @@ def owner_for(db, token):
 def devices(db, owner):
     return [{"id": r[0], "name": r[1], "created_at": r[2], "last_seen": r[3]} for r in db.execute(
         "SELECT id,name,created_at,last_seen FROM app_devices WHERE owner_id=? ORDER BY last_seen DESC", (str(owner),))]
+
+
+def revoke_token(db, token) -> int:
+    """Выход с этого телефона: токен перестаёт работать сразу."""
+    if not isinstance(token, str) or not token.startswith(TOKEN_PREFIX):
+        return 0
+    with db:
+        return db.execute("DELETE FROM app_devices WHERE token_hash=?", (_hash(token),)).rowcount
 
 
 def revoke(db, owner, device_id=None) -> int:

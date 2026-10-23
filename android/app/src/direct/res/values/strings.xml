@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="update_eyebrow">Доступно обновление</string>
+    <string name="update_title">Platformer %1$s</string>
+    <string name="update_current">Чтобы продолжить, обновите приложение — это займёт несколько секунд, данные сохранятся. Сейчас у вас версия %1$s.</string>
+    <string name="update_reinstall">Эта копия Platformer подписана другим ключом, поверх неё обновление не встанет. Удалите Platformer и установите новую версию по кнопке ниже — данные сохранятся на сервере, нужно будет только войти.</string>
+    <string name="update_offline_eyebrow">Проверка обновлений</string>
+    <string name="update_offline_title">Нет интернета</string>
+    <string name="update_offline">Без интернета не получается проверить, есть ли новая версия Platformer, а войти можно только в актуальную. Подключитесь к сети — проверка повторится сама.</string>
+    <string name="update_checking">Проверяем обновления…</string>
+    <string name="update_download">Скачать новую версию</string>
+    <string name="update_whats_new">Что нового</string>
+    <string name="update_now">Обновить до %1$s</string>
+    <string name="update_no_notes">Исправления и улучшения</string>
+    <string name="update_downloading">Скачиваем новую версию · %1$s</string>
+    <string name="update_installing">Устанавливаем… Platformer закроется на секунду — откройте его снова.</string>
+    <string name="update_permission">Чтобы Platformer обновлялся сам, разрешите ему устанавливать приложения. Это нужно сделать один раз.</string>
+    <string name="update_allow">Разрешить</string>
+    <string name="update_retry">Повторить</string>
+    <string name="update_later">Позже</string>
+    <string name="update_failed">Не получилось обновить: %1$s</string>
+</resources>

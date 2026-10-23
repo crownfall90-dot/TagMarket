@@ -5,6 +5,10 @@ const preview = new URLSearchParams(location.search).get('preview') === '1';
 // Приложение для Android (Google Play): вместо подписи Telegram — токен устройства из нативной оболочки
 const androidApp = window.PlatformerAndroid;
 function appToken(){try{return String(androidApp?.token?.()||'');}catch{return '';}}
+// В приложении: нативный вид (класс .native), отклик вибрацией и «Назад», который сначала закрывает окна
+if(androidApp)document.documentElement.classList.add('native');
+function buzz(kind){try{androidApp?.haptic?.(kind);}catch{}}
+const haptics=androidApp?{impactOccurred:()=>buzz('impact'),notificationOccurred:kind=>buzz(['error','warning'].includes(kind)?kind:'success'),selectionChanged:()=>buzz('select')}:tg?.HapticFeedback;
 const state = {data:null, people:null, admin:null, report:null, reportError:'', priceChart:null, notifications:{items:[],unread:0}, view:'overview', login:null, period:'today', kind:'trades', offset:0, from:'', to:'', filters:{tagmarket:{period:'today',from:'',to:''},account:{period:'today',from:'',to:''}}, busy:false, currency:null};
 try{state.displayCurrency=localStorage.getItem('tag-display-currency')||'USD';}catch{state.displayCurrency='USD';}
 let generation = 0, refreshTimer, toastTimer, notificationsStarted = false, lastNotificationId = 0;
@@ -609,12 +613,12 @@ function servicePanel(){const machines=state.admin?.machines||[];return `<sectio
 // Значок гаммы — мини-превью интерфейса в её цветах: карточка с графиком
 // доходности в акценте, заливка под линией, плашка второго цвета, свечение.
 // Две точки на тёмном прямоугольнике не говорили, как будет выглядеть приложение
-function schemeSwatch(id,[bg,accent,second]){
+function schemeSwatch(id,[bg,accent,second,card='#1a1e21',line='#ffffff14']){
  const g=`sw-${id}`;
- return `<svg class="swatch" viewBox="0 0 100 60" aria-hidden="true"><defs><radialGradient id="${g}-glow" cx="85%" cy="10%" r="70%"><stop offset="0" stop-color="${accent}" stop-opacity=".35"/><stop offset="1" stop-color="${accent}" stop-opacity="0"/></radialGradient><linearGradient id="${g}-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${accent}" stop-opacity=".38"/><stop offset="1" stop-color="${accent}" stop-opacity="0"/></linearGradient></defs><rect width="100" height="60" rx="9" fill="${bg}"/><rect width="100" height="60" rx="9" fill="url(#${g}-glow)"/><rect x="8" y="8" width="84" height="44" rx="7" fill="#1a1e21" stroke="#ffffff14"/><rect x="14" y="14" width="20" height="5" rx="2.5" fill="${second}"/><rect x="14" y="22" width="32" height="3" rx="1.5" fill="#ffffff2e"/><path d="M14 45 L25 39 L36 42 L48 31 L60 34 L72 23 L86 26 L86 48 L14 48Z" fill="url(#${g}-fill)"/><path d="M14 45 L25 39 L36 42 L48 31 L60 34 L72 23 L86 26" fill="none" stroke="${accent}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="86" cy="26" r="3" fill="${accent}" stroke="#1a1e21" stroke-width="1.5"/><rect x="66" y="13" width="20" height="7" rx="3.5" fill="${accent}"/></svg>`;
+ return `<svg class="swatch" viewBox="0 0 100 60" aria-hidden="true"><defs><radialGradient id="${g}-glow" cx="85%" cy="10%" r="70%"><stop offset="0" stop-color="${accent}" stop-opacity=".35"/><stop offset="1" stop-color="${accent}" stop-opacity="0"/></radialGradient><linearGradient id="${g}-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${accent}" stop-opacity=".38"/><stop offset="1" stop-color="${accent}" stop-opacity="0"/></linearGradient></defs><rect width="100" height="60" rx="9" fill="${bg}"/><rect width="100" height="60" rx="9" fill="url(#${g}-glow)"/><rect x="8" y="8" width="84" height="44" rx="7" fill="${card}" stroke="${line}"/><rect x="14" y="14" width="20" height="5" rx="2.5" fill="${second}"/><rect x="14" y="22" width="32" height="3" rx="1.5" fill="#ffffff2e"/><path d="M14 45 L25 39 L36 42 L48 31 L60 34 L72 23 L86 26 L86 48 L14 48Z" fill="url(#${g}-fill)"/><path d="M14 45 L25 39 L36 42 L48 31 L60 34 L72 23 L86 26" fill="none" stroke="${accent}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="86" cy="26" r="3" fill="${accent}" stroke="#1a1e21" stroke-width="1.5"/><rect x="66" y="13" width="20" height="7" rx="3.5" fill="${accent}"/></svg>`;
 }
 function schemePicker(){const cur=currentScheme();return `<div class="scheme-picker" role="radiogroup" aria-label="Цветовая гамма">${SCHEMES.map(([id,name,,sw])=>`<button type="button" role="radio" aria-checked="${cur===id}" class="scheme ${cur===id?'active':''}" data-action="scheme" data-value="${id}" style="--sw:${sw[1]}">${schemeSwatch(id,sw)}<b>${name}</b><span class="scheme-check" aria-hidden="true">${icon('check')}</span></button>`).join('')}</div>`;}
-function settingsView(){const personal=state.data.accounts;return secHero('set','Настройки','Тема и счета')+`<div class="two-column"><section class="panel"><span class="eyebrow">ЦВЕТОВАЯ ГАММА</span>${schemePicker()}${appToken()?'':`<button class="shortcut-card" type="button" data-action="shortcut"><span class="shortcut-tile">${icon('overview')}</span><span class="shortcut-copy"><b>Ярлык на экран</b><small>Открывать Platformer в один тап</small></span><span class="pill">Добавить</span></button>`}</section><section class="panel"><div class="panel-head"><h2>Мои счета</h2><span class="badge">${personal.length}</span></div>${personal.map(a=>`<button type="button" class="settings-row settings-account-row compact-row" data-ui-key="account-${esc(a.login)}" data-action="account-settings" data-login="${esc(a.login)}"><span class="settings-account-info"><b>${esc(a.strategy||a.name)}</b><small>${esc(a.cabinet||'Без кабинета')}${a.holder?` · ${esc(a.holder)}`:''}</small></span><span class="settings-balance">${a.totals?money(a.totals.now,a.totals.cur):'—'}</span>${icon('chevron')}</button>`).join('')||'<p class="muted mt">Счетов пока нет.</p>'}</section></div>${state.data.founder?servicePanel():`<section class="panel leave-card"><div><b>Доступ</b><small>Счета и данные будут удалены</small></div><button type="button" class="leave-btn" data-action="leave">${icon('exit')}<span>Отключить мой доступ</span></button></section>`}`;}
+function settingsView(){const personal=state.data.accounts;return secHero('set','Настройки','Тема и счета')+`<div class="two-column"><section class="panel"><span class="eyebrow">ЦВЕТОВАЯ ГАММА</span>${schemePicker()}${appToken()?'':`<button class="shortcut-card" type="button" data-action="shortcut"><span class="shortcut-tile">${icon('overview')}</span><span class="shortcut-copy"><b>Ярлык на экран</b><small>Открывать Platformer в один тап</small></span><span class="pill">Добавить</span></button>`}</section><section class="panel"><div class="panel-head"><h2>Мои счета</h2><span class="badge">${personal.length}</span></div>${personal.map(a=>`<button type="button" class="settings-row settings-account-row compact-row" data-ui-key="account-${esc(a.login)}" data-action="account-settings" data-login="${esc(a.login)}"><span class="settings-account-info"><b>${esc(a.strategy||a.name)}</b><small>${esc(a.cabinet||'Без кабинета')}${a.holder?` · ${esc(a.holder)}`:''}</small></span><span class="settings-balance">${a.totals?money(a.totals.now,a.totals.cur):'—'}</span>${icon('chevron')}</button>`).join('')||'<p class="muted mt">Счетов пока нет.</p>'}</section></div>${appToken()?`<section class="panel leave-card"><div><b>Это устройство</b><small>Выйти из Platformer на этом телефоне</small></div><button type="button" class="leave-btn" data-action="app-logout">${icon('exit')}<span>Выйти</span></button></section>`:''}${state.data.founder?servicePanel():`<section class="panel leave-card"><div><b>Доступ</b><small>Счета и данные будут удалены</small></div><button type="button" class="leave-btn" data-action="leave">${icon('exit')}<span>Отключить мой доступ</span></button></section>`}`;}
 // отпечаток всего, из чего строится экран; server_time меняется на каждом
 // запросе и на вид не влияет — без него одинаковые данные дают одинаковый ключ
 let paintedKey='';
@@ -658,7 +662,16 @@ function fabToggle(force){
  // пункты меню появляются только при открытии: скрытые кнопки не путаются с кнопками страницы
  menu.innerHTML=open?(FABS[state.view]?.()||[]).map(([a,l,ico],i)=>`<button type="button" class="fab-item" style="--i:${i}" data-action="${a}">${icon(ico)}<span>${esc(l)}</span></button>`).join(''):'';
  root.classList.toggle('open',open);root.querySelector('.fab').setAttribute('aria-expanded',String(open));
- if(open)tg?.HapticFeedback?.selectionChanged?.();
+ if(open)haptics?.selectionChanged?.();
+}
+if(androidApp){
+ // «Назад» на телефоне: окно → меню кнопки «+» → выбор валюты; иначе — обычная история страниц
+ window.platformerBack=()=>{const d=$('#dialog');if(d?.open){d.querySelector('button[value=cancel]')?.click();return true;}
+  if($('#fab-root')?.classList.contains('open')){fabToggle(false);return true;}
+  const menu=$('#currency-menu');if(menu&&!menu.hidden){$('#currency-btn')?.click();return true;}return false;};
+ // тень под шапкой появляется, когда страница уехала вверх
+ let lifted=false;addEventListener('scroll',()=>{const on=scrollY>4;if(on!==lifted){lifted=on;document.documentElement.classList.toggle('scrolled',on);}},{passive:true});
+ document.addEventListener('click',event=>{if(event.target.closest?.('.mobile-nav a,.segmented button,.tabs button'))buzz('select');},true);
 }
 document.addEventListener('click',event=>{if(!$('#fab-root')?.classList.contains('open'))return;if(event.target.closest?.('.fab-item')||!event.target.closest?.('#fab-root'))setTimeout(()=>fabToggle(false));},true);
 function render(preserve=false){const snapshot=preserve?captureUiState():null;$('#main').classList.toggle('quiet-paint',preserve);paintedKey='';nav();
@@ -1015,9 +1028,9 @@ async function navigate(){
 }
 // [id, название, цвет шапки Telegram, образцы]. Фон у всех схем один —
 // графитовый: гамма меняет только акценты, не всю тему
-const SCHEMES=[['lime','Лайм','#111416',['#111416','#d0f29b','#b8a6e9']],['sapphire','Сапфир','#111416',['#111416','#5eb3ff','#b18bff']],['velvet','Золото','#111416',['#111416','#e8c576','#d999a8']]];
-function currentScheme(){return document.documentElement.dataset.scheme||'lime';}
-function setScheme(id,persist=true){const sc=SCHEMES.find(x=>x[0]===id)||SCHEMES[0],root=document.documentElement;root.dataset.scheme=sc[0];try{if(persist)localStorage.setItem('tag-scheme',sc[0]);}catch{}document.querySelector('meta[name="theme-color"]').content=sc[2];try{tg?.setHeaderColor(sc[2]);tg?.setBackgroundColor(sc[2]);}catch{}if(state.data&&state.view==='settings')render();}
+const SCHEMES=[['graphite','Графит','#0b0b0c',['#0b0b0c','#f2f2f2','#8a8a8e','#18181a','#ffffff12']],['paper','Светлая','#f1f1f2',['#e9e9eb','#111111','#8a8a8e','#ffffff','#00000010']],['lime','Лайм','#111416',['#111416','#d0f29b','#b8a6e9']],['sapphire','Сапфир','#111416',['#111416','#5eb3ff','#b18bff']],['velvet','Золото','#111416',['#111416','#e8c576','#d999a8']]];
+function currentScheme(){return document.documentElement.dataset.scheme||'graphite';}
+function setScheme(id,persist=true){const sc=SCHEMES.find(x=>x[0]===id)||SCHEMES[0],root=document.documentElement;root.dataset.scheme=sc[0];try{if(persist)localStorage.setItem('tag-scheme',sc[0]);}catch{}document.querySelector('meta[name="theme-color"]').content=sc[2];try{androidApp?.theme?.(sc[2]);}catch{}try{tg?.setHeaderColor(sc[2]);tg?.setBackgroundColor(sc[2]);}catch{}if(state.data&&state.view==='settings')render();}
 let modalLock=null;
 function dialogBack(){tg?.BackButton?.[($('#dialog').open||['account','project'].includes(state.view))?'show':'hide']();}
 function lockDialog(){if(modalLock)return;modalLock={x:scrollX,y:scrollY};document.documentElement.classList.add('modal-open');document.body.style.setProperty('--modal-top',`${-modalLock.y}px`);dialogBack();}
@@ -1044,7 +1057,7 @@ function requestDialogExit(d,explicit=false){if(!explicit&&filePickerGuard())ret
 $('#dialog').addEventListener('cancel',event=>{if(event.target!==event.currentTarget)return;event.preventDefault();requestDialogExit(event.currentTarget);});
 window.addEventListener('beforeunload',event=>{if($('#dialog').open&&dialogHasChanges($('#dialog'))){event.preventDefault();event.returnValue='';}});
 async function confirm(title,text,label='Подтвердить'){return !!await dialog(title,`<p>${esc(text)}</p>`,label);}
-async function mutate(path,data,method='POST'){await api(path,{method,body:data===undefined?undefined:JSON.stringify(data)});tg?.HapticFeedback?.notificationOccurred('success');toast('Сохранено. Изменения доступны и в боте.');await refresh();}
+async function mutate(path,data,method='POST'){await api(path,{method,body:data===undefined?undefined:JSON.stringify(data)});haptics?.notificationOccurred('success');toast('Сохранено. Изменения доступны и в боте.');await refresh();}
 function field(label,name,type='text',value='',extra=''){return `<label class="field">${esc(label)}<input type="${type}" name="${name}" value="${esc(value)}" ${extra}></label>`;}
 const PROJECT_PERIODS={day:'день',week:'неделю',month:'месяц'};
 let projectFormSeq=0;
@@ -1134,7 +1147,7 @@ async function spendEditor(item=null){
   draft={...draft,kind,title:values.title,amount:values.amount,currency:values.currency,category:values.category,period:values.period||'month',day:values.day,note:values.note||'',active:item&&kind==='recurring'?values.active==='on':true};
   const payload={title:draft.title,amount:String(draft.amount).replace(/\s/g,'').replace(',','.'),currency:draft.currency,category:draft.category,kind,day:draft.day,note:draft.note,active:draft.active};if(kind==='recurring')payload.period=draft.period;
   if(preview){toast('В демо-режиме траты не сохраняются');return;}
-  try{await api('/spend'+(item?'/'+item.id:''),{method:item?'PATCH':'POST',body:JSON.stringify(payload)});tg?.HapticFeedback?.notificationOccurred('success');toast('Сохранено');await sectionReload();return;}catch(exc){error=exc.message;}
+  try{await api('/spend'+(item?'/'+item.id:''),{method:item?'PATCH':'POST',body:JSON.stringify(payload)});haptics?.notificationOccurred('success');toast('Сохранено');await sectionReload();return;}catch(exc){error=exc.message;}
  }
 }
 // переключатель «Регулярно / Покупка» в окне траты: период нужен только регулярной
@@ -1196,7 +1209,7 @@ async function incomeEditor(item=null){
   draft={...draft,kind:values.kind||draft.kind,amount:values.amount,day:values.day,account_id:values.account_id||'',currency:values.currency||draft.currency,credit:values.credit==='on',active:item?values.active==='on':true};
   const payload={kind:draft.kind,amount:String(draft.amount).replace(/\s/g,'').replace(',','.'),day:Number(String(draft.day).trim())||0,account_id:draft.account_id||null,credit:draft.credit,active:draft.active};if(!draft.account_id)payload.currency=draft.currency;
   if(preview){toast('В демо-режиме зачисления не сохраняются');return;}
-  try{await api('/income'+(item?'/'+item.id:''),{method:item?'PATCH':'POST',body:JSON.stringify(payload)});tg?.HapticFeedback?.notificationOccurred('success');toast('Сохранено');await sectionReload();return;}catch(exc){error=exc.message;}
+  try{await api('/income'+(item?'/'+item.id:''),{method:item?'PATCH':'POST',body:JSON.stringify(payload)});haptics?.notificationOccurred('success');toast('Сохранено');await sectionReload();return;}catch(exc){error=exc.message;}
  }
 }
 // карта выбрана — валюта берётся из неё и появляется «зачислять на карту»
@@ -1239,7 +1252,7 @@ async function goalEditor(goal=null){
   const num=v=>String(v||'').replace(/\s/g,'').replace(',','.');
   const payload={title:draft.title,emoji:draft.emoji,target:num(draft.target),saved:num(draft.saved)||0,currency:draft.currency,deadline:draft.deadline||null};
   if(preview){toast('В демо-режиме цели не сохраняются');return;}
-  try{await api('/goals'+(goal?'/'+goal.id:''),{method:goal?'PATCH':'POST',body:JSON.stringify(payload)});tg?.HapticFeedback?.notificationOccurred('success');toast('Сохранено');await sectionReload();return;}catch(exc){error=exc.message;}
+  try{await api('/goals'+(goal?'/'+goal.id:''),{method:goal?'PATCH':'POST',body:JSON.stringify(payload)});haptics?.notificationOccurred('success');toast('Сохранено');await sectionReload();return;}catch(exc){error=exc.message;}
  }
 }
 async function goalMoney(goal,sign){
@@ -1249,7 +1262,7 @@ async function goalMoney(goal,sign){
   const values=await dialog(sign>0?`Отложить на «${goal.title}»`:`Забрать из «${goal.title}»`,`${error?notice(error,true):''}${field('Сумма, '+goal.currency,'amount','text','','required inputmode="decimal" placeholder="0,00" autocomplete="off"')}<p class="muted">Отложено ${esc(bankMoney(goal.saved,goal.currency))} из ${esc(bankMoney(goal.target,goal.currency))}</p>`,sign>0?'Отложить':'Забрать');
   if(!values)return;
   if(preview){toast('В демо-режиме цели не сохраняются');return;}
-  try{const g=await api(`/goals/${goal.id}/add`,{method:'POST',body:JSON.stringify({amount:(sign<0?'-':'')+String(values.amount).replace(/\s/g,'').replace(',','.')})});tg?.HapticFeedback?.notificationOccurred('success');toast(g.done?'Цель достигнута 🎉':'Сохранено');await sectionReload();return;}catch(exc){error=exc.message;}
+  try{const g=await api(`/goals/${goal.id}/add`,{method:'POST',body:JSON.stringify({amount:(sign<0?'-':'')+String(values.amount).replace(/\s/g,'').replace(',','.')})});haptics?.notificationOccurred('success');toast(g.done?'Цель достигнута 🎉':'Сохранено');await sectionReload();return;}catch(exc){error=exc.message;}
  }
 }
 async function goalAction(action,el){
@@ -1300,7 +1313,7 @@ async function splitEditor(){
   const values=await dialog('Общая трата',body,'Записать');if(!values)return;
   draft={...draft,title:values.title,amount:values.amount,currency:values.currency,payer:values.payer,day:values.day,members:people.filter(p=>values['m_'+p.id]==='on').map(p=>p.id)};
   if(preview){toast('В демо-режиме траты не сохраняются');return;}
-  try{state.friends=await api('/friends/split',{method:'POST',body:JSON.stringify({title:draft.title,amount:String(draft.amount).replace(/\s/g,'').replace(',','.'),currency:draft.currency,payer:draft.payer,members:draft.members,day:draft.day})});tg?.HapticFeedback?.notificationOccurred('success');toast('Записано');render(true);return;}catch(exc){error=exc.message;}
+  try{state.friends=await api('/friends/split',{method:'POST',body:JSON.stringify({title:draft.title,amount:String(draft.amount).replace(/\s/g,'').replace(',','.'),currency:draft.currency,payer:draft.payer,members:draft.members,day:draft.day})});haptics?.notificationOccurred('success');toast('Записано');render(true);return;}catch(exc){error=exc.message;}
  }
 }
 async function settleEditor(friend){
@@ -1547,11 +1560,11 @@ async function taskEditor(task=null){
   const body=`${error?notice(error,true):''}${field('Что нужно сделать','title','text',draft.title,'required maxlength="200"')}<div class="field-row">${field('Срок','due','date',draft.due||'','')}<label class="field">Сфера<select name="area">${Object.entries(areas).map(([id,label])=>`<option value="${id}" ${id===draft.area?'selected':''}>${esc(label)}</option>`).join('')}</select></label></div><div class="due-chips" role="group" aria-label="Быстрый срок">${[['Сегодня',0],['Завтра',1],['Через неделю',7]].map(([l,n])=>`<button type="button" class="home-chip" data-due-set="${addDaysIso(projectToday(),n)}">${l}</button>`).join('')}<button type="button" class="home-chip" data-due-set="">Без срока</button></div>${field('Заметка (необязательно)','note','text',draft.note||'','maxlength="2000"')}${task?`<div class="guest-danger">${button('task-delete','Удалить задачу','danger small','',`data-id="${esc(task.id)}"`)}</div>`:''}`;
   const values=await dialog(task?'Задача':'Новая задача',body);if(!values)return;
   draft={title:values.title,due:values.due||null,area:values.area||'personal',note:values.note||''};
-  try{await api('/tasks'+(task?'/'+task.id:''),{method:task?'PATCH':'POST',body:JSON.stringify(draft)});tg?.HapticFeedback?.notificationOccurred('success');toast('Сохранено');await sectionReload();return;}catch(exc){error=exc.message;}
+  try{await api('/tasks'+(task?'/'+task.id:''),{method:task?'PATCH':'POST',body:JSON.stringify(draft)});haptics?.notificationOccurred('success');toast('Сохранено');await sectionReload();return;}catch(exc){error=exc.message;}
  }
 }
 document.addEventListener('click',event=>{const chip=event.target.closest?.('[data-due-set]');if(!chip)return;event.preventDefault();const input=$('#dialog input[name="due"]');if(input){input.value=chip.dataset.dueSet;input.dispatchEvent(new Event('input',{bubbles:true}));$('#dialog').dataset.dirty='1';}});
-document.addEventListener('submit',async event=>{const form=event.target.closest?.('[data-task-quick]');if(!form)return;event.preventDefault();const input=form.elements.title,title=input.value.trim();if(!title)return;input.disabled=true;try{await api('/tasks',{method:'POST',body:JSON.stringify({title})});tg?.HapticFeedback?.impactOccurred('light');await sectionReload();$('[data-task-quick] input')?.focus();}catch(error){toast(error.message);input.disabled=false;}});
+document.addEventListener('submit',async event=>{const form=event.target.closest?.('[data-task-quick]');if(!form)return;event.preventDefault();const input=form.elements.title,title=input.value.trim();if(!title)return;input.disabled=true;try{await api('/tasks',{method:'POST',body:JSON.stringify({title})});haptics?.impactOccurred('light');await sectionReload();$('[data-task-quick] input')?.focus();}catch(error){toast(error.message);input.disabled=false;}});
 // ── Импорт заметок с телефона: файлы (.txt, .md, Google Keep .json/.html) или вставленный текст ──
 const NOTE_FILES='.txt,.md,.markdown,.json,.html,.htm,text/plain,text/markdown,application/json,text/html';
 function noteFromText(text,name=''){
@@ -1599,7 +1612,7 @@ async function notesImport(){
   let result;
   if(preview){const have=new Set(state.lists.notes.map(n=>n.title+'\n'+n.body)),stamp=new Date().toISOString(),fresh=notes.filter(n=>!have.has(n.title+'\n'+n.body));state.lists.notes=[...fresh.map((n,i)=>({id:'imp'+Date.now()+i,title:n.title,body:n.body,pinned:false,color:'accent',created_at:stamp,updated_at:stamp})),...state.lists.notes];result={imported:fresh.length,skipped:notes.length-fresh.length};}
   else{result=await api('/notes/import',{method:'POST',body:JSON.stringify({notes:notes.slice(0,500)})});state.lists.notes=result.notes;}
-  tg?.HapticFeedback?.notificationOccurred('success');
+  haptics?.notificationOccurred('success');
   toast(result.imported?`Импортировано: ${countLabel(result.imported,['заметка','заметки','заметок'])}${result.skipped?` · ${result.skipped} уже были`:''}`:'Все эти заметки уже есть');
   state.listsTab='notes';render();
  }catch(exc){toast(exc.message);}
@@ -1646,7 +1659,7 @@ async function sectionAction(action,el){
  if(action==='lists-tab'){state.listsTab=el.dataset.value;markChoice(el);render();return;}
  if(action==='task-add')return taskEditor();
  if(action==='task-edit')return taskEditor(state.lists?.tasks.find(t=>t.id===el.dataset.id));
- if(action==='task-toggle'){const t=state.lists?.tasks.find(x=>x.id===el.dataset.id);if(!t)return;el.closest('li')?.classList.toggle('done');await api('/tasks/'+t.id,{method:'PATCH',body:JSON.stringify({done:!t.done})});if(!t.done)tg?.HapticFeedback?.notificationOccurred('success');await sectionReload();return;}
+ if(action==='task-toggle'){const t=state.lists?.tasks.find(x=>x.id===el.dataset.id);if(!t)return;el.closest('li')?.classList.toggle('done');await api('/tasks/'+t.id,{method:'PATCH',body:JSON.stringify({done:!t.done})});if(!t.done)haptics?.notificationOccurred('success');await sectionReload();return;}
  if(action==='task-delete'){if(!await closeDialogFirst())return;await api('/tasks/'+el.dataset.id,{method:'DELETE'});await sectionReload();return;}
  if(action==='lists-open'){state.listsTab=el.dataset.value||'tasks';if(el.dataset.day){state.calDay=el.dataset.day;state.calMonth=el.dataset.day.slice(0,7);}if(location.hash!=='#plans'){location.hash='plans/'+state.listsTab;}else render();return;}
  if(action==='cal-month'||action==='cal-today'){state.calMonth=action==='cal-today'?projectToday().slice(0,7):shiftMonth(state.calMonth,Number(el.dataset.value));state.calDay=state.calMonth===projectToday().slice(0,7)?projectToday():`${state.calMonth}-01`;state.events=null;render();return sectionReload();}
@@ -1771,7 +1784,7 @@ async function bankEditor(acc=null,seed={}){
   const values=await dialog(acc?'Счёт':'Новый счёт',body,'Сохранить',{onOpen:bankSuggestInit});if(!values)return;
   draft={...draft,bank:values.bank,title:values.title||'',kind:values.kind,currency:acc?acc.currency:values.currency,balance:values.balance,last4:values.last4||'',counted:values.counted==='on'};
   const payload={bank:draft.bank,title:draft.title,kind:draft.kind,balance:Number(draft.balance),last4:draft.last4||null,counted:draft.counted};if(!acc)payload.currency=draft.currency;
-  try{await api('/banks'+(acc?'/'+acc.id:''),{method:acc?'PATCH':'POST',body:JSON.stringify(payload)});tg?.HapticFeedback?.notificationOccurred('success');toast('Сохранено');await sectionReload();return;}catch(exc){error=exc.message;}
+  try{await api('/banks'+(acc?'/'+acc.id:''),{method:acc?'PATCH':'POST',body:JSON.stringify(payload)});haptics?.notificationOccurred('success');toast('Сохранено');await sectionReload();return;}catch(exc){error=exc.message;}
  }
 }
 async function bankAction(action,el){
@@ -1946,6 +1959,7 @@ document.addEventListener('click',async event=>{const el=event.target.closest('[
  else if(action==='revoke-guest'){if(await confirm('Закрыть доступ гостю?','Ваши переданные счета исчезнут у гостя. Его личные счета и доступ к собственному кабинету сохранятся.','Закрыть доступ'))await mutate('/guests/'+el.dataset.guest,{action:'revoke'});}
  else if(action==='take'){if(await confirm('Забрать счёт у гостя?','Остальные счета гостя сохранятся.'))await mutate('/guests/'+el.dataset.guest,{action:'take',login:Number(el.dataset.login)});}
  else if(action==='alerts')await mutate('/actions',{action:'update_alerts',value:!state.data.update_alerts});
+ else if(action==='app-logout'){if(await confirm('Выйти на этом телефоне?','Чтобы войти снова, запросите новый код в боте.','Выйти')){try{await api('/device/logout',{method:'POST'});}catch{}try{androidApp?.signOut?.();}catch{}}}
  else if(action==='leave'){if(await confirm('Отключить доступ?','Счета и приглашения в боте будут удалены. Для возвращения понадобится новое приглашение.','Отключить')){await api('/actions',{method:'POST',body:JSON.stringify({action:'leave'})});state.data=null;await refresh();}}
  else if(action==='broadcast'){
   const users=state.admin?.users||[];
@@ -1987,7 +2001,7 @@ document.addEventListener('click',event=>{const tool=event.target.closest('[data
 document.addEventListener('input',event=>{if(event.target.matches('#dialog textarea[name="text"]')){const area=event.target,preview=$('#compose-live'),count=$('#compose-count');if(preview)preview.innerHTML=area.value?broadcastPreview(area.value):'<span class="muted">Сообщение появится здесь</span>';const length=broadcastLength(area.value);if(count){count.textContent=`${length} / 4096`;count.classList.toggle('over',length>4096);}const meter=$('#compose-meter');if(meter){meter.style.width=`${Math.min(100,length/4096*100).toFixed(1)}%`;meter.classList.toggle('warn',length>3600);}const clear=$('[data-cmp-clear]');if(clear)clear.hidden=!area.value;}});
  document.addEventListener('change',async event=>{try{if(event.target.matches('#dialog input[name="media"]')){const info=$('#compose-file-name');if(info)info.textContent=event.target.files?.[0]?`${event.target.files[0].name} · ${fileSize(event.target.files[0].size)}`:'JPG/PNG до 10 МБ · MP4 до 20 МБ';}if(event.target.id==='add-cabinet-choice'){const fresh=$('#add-new-cabinet');fresh.hidden=event.target.value!=='new';fresh.querySelector('input').disabled=fresh.hidden;}if(event.target.id==='account-select'){state.login=Number(event.target.value);state.offset=0;if(state.view==='account'){location.hash='account/'+state.login;}else await refresh();}if(event.target.id==='currency'){state.currency=event.target.value;await showCached();}}catch(error){toast(error.message);}});
 $('#notifications').innerHTML=icon('bell');$('#settings-link').innerHTML=icon('settings');$('#refresh').innerHTML=icon('refresh');$('#refresh').addEventListener('click',()=>refresh());
-let savedScheme;try{savedScheme=localStorage.getItem('tag-scheme');}catch{}setScheme(savedScheme||'lime',false);
+let savedScheme;try{savedScheme=localStorage.getItem('tag-scheme');if(!localStorage.getItem('tag-scheme-mono')){localStorage.setItem('tag-scheme-mono','1');if(!savedScheme||savedScheme==='lime')savedScheme='graphite';}}catch{}setScheme(savedScheme||'graphite',false);
 try{tg?.ready();tg?.expand();tg?.BackButton?.onClick(()=>{if($('#dialog').open){requestDialogExit($('#dialog'));return;}location.hash=state.view==='project'?'projects':'accounts';});tg?.onEvent('homeScreenAdded',()=>toast('Ярлык Platformer добавлен на экран'));tg?.onEvent('homeScreenChecked',e=>{if(e?.status==='added')toast('Ярлык уже добавлен');});tg?.onEvent('homeScreenFailed',()=>toast('Telegram не смог добавить ярлык'));}catch{}
 window.addEventListener('hashchange',navigate);
 // подсветка вкладки следует за размерами панели: смена ориентации, переход
@@ -1995,7 +2009,7 @@ window.addEventListener('hashchange',navigate);
 if(window.ResizeObserver){const watcher=new ResizeObserver(entries=>entries.forEach(e=>moveGlider(e.target,true)));NAV_ROOTS.forEach(s=>watcher.observe($(s)));}
 else window.addEventListener('resize',()=>NAV_ROOTS.forEach(s=>moveGlider($(s),true)));
 // лёгкий отклик Telegram на смену вкладки — как у родных панелей
-document.addEventListener('click',event=>{const link=event.target.closest('nav a[data-tab]');if(link&&!link.classList.contains('active'))try{tg?.HapticFeedback?.selectionChanged();}catch{}});
+document.addEventListener('click',event=>{const link=event.target.closest('nav a[data-tab]');if(link&&!link.classList.contains('active'))try{haptics?.selectionChanged();}catch{}});
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh(true);});
  // интервал фонового обновления задаёт сервер (refresh_seconds в /api/bootstrap);
  // не чаще раза в 30 секунд — каждый круг это четыре запроса и перерисовка
@@ -2068,7 +2082,7 @@ document.addEventListener('pointerdown',event=>{
   centers:rects.map(r=>r.top+scroll0+r.height/2)};
  grip.setPointerCapture?.(event.pointerId);
  card.classList.add('is-dragging');document.body.classList.add('pa-dragging');
- try{tg?.HapticFeedback?.impactOccurred('light');}catch{}
+ try{haptics?.impactOccurred('light');}catch{}
  paDrag.raf=requestAnimationFrame(paFrame);
 });
 document.addEventListener('pointermove',event=>{if(paDrag&&event.pointerId===paDrag.pointer){paDrag.lastY=event.clientY;event.preventDefault();}},{passive:false});
@@ -2101,7 +2115,7 @@ function currencyMenuOpen(open,{focus=false}={}){
 function currencyPick(code){
  const select=$('#display-currency');if(!select||select.value===code){currencyMenuOpen(false);return;}
  select.value=code;select.dispatchEvent(new Event('change',{bubbles:true}));syncCurrencyUi();currencyMenuOpen(false);$('#currency-btn')?.focus({preventScroll:true});
- try{tg?.HapticFeedback?.selectionChanged();}catch{}
+ try{haptics?.selectionChanged();}catch{}
 }
 document.addEventListener('click',event=>{
  const button=event.target.closest?.('#currency-btn');
