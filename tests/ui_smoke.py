@@ -426,7 +426,9 @@ def station_sections(page, nav):
     assert page.locator('.home-chip').count() == 0, "быстрых кнопок на главной больше нет"
     assert page.locator('.home-circle .circle-seg').count() == 4   # финансы, дела, планы, мечты
     assert page.locator('.greet-stat').count() == 3 and page.locator('.greet-day i').count() == 1
-    assert page.locator('.home-activity .ring').count() == 1 and page.locator('.home-activity .live-tag').count() == 1
+    # «Ваша активность»: шаги, пульс и сон карточками с мини-графиками
+    assert page.locator('.home-activity .ac-card').count() == 3 and page.locator('.home-activity .live-tag').count() == 1
+    assert page.locator('.ac-steps .ac-bars line').count() == 7 and page.locator('.ac-pulse .ac-spikes').count() == 1 and page.locator('.ac-sleep .ac-curve').count() == 1
     assert page.locator('.home-activity').inner_text().lower().count('трениров') == 0 and 'вес' not in page.locator('.home-activity').inner_text().lower()
     assert page.locator('.home-circle .insight').count() >= 3
     assert page.locator('.page-head [data-action="onboard-open"]').count() == 0, "на главной не навязываем счёт"

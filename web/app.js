@@ -1535,7 +1535,7 @@ function overview(){
   circle:()=>circleCard(),
   tasks:()=>tasksCard(),
   finance:()=>`<a href="#projects" class="panel home-card home-finance" data-ui-key="home-finance"><div class="home-card-head"><span class="home-icon">${icon('projects')}</span><span class="eyebrow">Финансы</span>${icon('arrow')}</div><b class="home-big">${portfolio.own==null?'—':countUp(portfolio.own,`money:${state.displayCurrency}`)}</b><small>${state.projects?countLabel(activeProjects().length,['проект','проекта','проектов']):'Проекты'}${d.accounts.length?` · TagMarket ${portfolio.tag==null?'—':money(portfolio.tag,state.displayCurrency)}`:''}</small>${projectsIncomeLine()}</a>`,
-  activity:()=>`<a href="#activity" class="panel home-card home-activity" data-ui-key="home-activity"><div class="home-card-head"><span class="home-icon">${icon('activity')}</span><span class="eyebrow">Шаги</span>${icon('arrow')}</div>${act?(stepsLive()?`<div class="home-steps">${ring(act.steps.today||0,state.activity?.goals?.steps||10000,74,'Шаги')}<div><b class="home-big">${countUp(act.steps.today||0,'int')} <small>шагов</small></b><small><i class="live-tag"><i></i>${esc(agoText(state.activity?.sync?.last_sync)||'с телефона')}</i></small></div></div>`:`<small class="steps-off-line">${esc(stepsNote())}</small>`):state.activityError?'<small>Не удалось загрузить</small>':skeleton('list',1)}</a>`,
+  activity:()=>activityStrip(act),
   events:()=>{const upcoming=lists?.upcoming||[];return `<section class="panel home-card home-events" data-ui-key="home-events"><div class="home-card-head"><span class="home-icon">${icon('calendar')}</span><span class="eyebrow">Ближайшее</span><button type="button" class="icon-btn small" data-action="event-add" aria-label="Добавить событие">${icon('plus')}</button></div>${upcoming.length?`<ul class="home-events-list">${upcoming.map(e=>`<li><button type="button" data-action="lists-open" data-value="calendar" data-day="${esc(e.date)}"><span class="ev-dot c-${esc(e.color)}"></span><b>${esc(e.title)}</b><small>${esc(shortDay(e.date))}${e.time?` · ${esc(e.time)}`:''}</small></button></li>`).join('')}</ul>`:'<p class="muted home-empty">На ближайшие две недели ничего не запланировано.</p>'}</section>`;},
   notes:()=>{const all=lists?.notes||[],pinned=all.filter(n=>n.pinned).slice(0,3);return `<a href="#plans/notes" class="panel home-card home-wish" data-ui-key="home-notes" data-action="lists-open" data-value="notes"><div class="home-card-head"><span class="home-icon">${icon('note')}</span><span class="eyebrow">Заметки</span>${icon('arrow')}</div><b class="home-big">${all.length} <small>${countLabel(all.length,['заметка','заметки','заметок']).split(' ').slice(1).join(' ')}</small></b>${pinned.length?`<span class="home-notes">${pinned.map(n=>`<i class="c-${esc(n.color)}">${esc(n.title||n.body.slice(0,60))}</i>`).join('')}</span>`:'<small>Идеи и списки — всё под рукой</small>'}</a>`;}};
  const grid=p.home.filter(id=>cards[id]).map(id=>cards[id]()).join('');
@@ -1543,6 +1543,30 @@ function overview(){
  const quick=[['spend-add','Трата','minus'],['goal-add','Цель','target'],['task-add','Задача','check'],['event-add','Событие','calendar']];
  const acts=`<nav class="quick-acts" aria-label="Быстрые действия">${quick.map(([a,l,ico])=>`<button type="button" class="quick-act" data-action="${a}"><span class="quick-ico">${icon(ico)}</span><span>${l}</span></button>`).join('')}</nav>`;
  return `<div class="home">${hero}${acts}${grid?`<div class="home-grid">${grid}</div>`:''}</div>`;
+}
+// «Ваша активность» на главной — ряд карточек как в фитнес-приложениях:
+// шаги столбиками, пульс «осциллограммой», сон плавной кривой; любая ведёт в «Здоровье»
+function miniBars(vals,w=120,h=44){const n=vals.length,hi=Math.max(...vals,1),step=w/n;
+ return `<svg class="ac-chart ac-bars" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">${vals.map((v,i)=>{const x=((i+.5)*step).toFixed(1),y=(h-Math.max(4,v/hi*(h-3))).toFixed(1);return `<line class="${i===n-1?'now':''}" x1="${x}" x2="${x}" y1="${h-1}" y2="${y}" style="--i:${i}"/>`;}).join('')}</svg>`;}
+function miniSpikes(vals,w=120,h=44){const n=vals.length,lo=Math.min(...vals),hi=Math.max(...vals),step=w/n,mid=h/2;
+ return `<svg class="ac-chart ac-spikes" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">${vals.map((v,i)=>{const k=hi===lo?.6:.35+.65*(v-lo)/(hi-lo),len=k*(h-6),x=((i+.5)*step).toFixed(1),off=(i%2?1:-1)*len*.12;return `<line class="${i===n-1?'now':''}" x1="${x}" x2="${x}" y1="${(mid-len/2+off).toFixed(1)}" y2="${(mid+len/2+off).toFixed(1)}" style="--i:${i}"/>`;}).join('')}</svg>`;}
+function miniCurve(vals,w=120,h=44){const n=vals.length,lo=Math.min(...vals),hi=Math.max(...vals);
+ const pt=vals.map((v,i)=>[n<2?w/2:i/(n-1)*w,h-6-(hi===lo?.5:(v-lo)/(hi-lo))*(h-14)]);
+ let d=`M${pt[0][0].toFixed(1)},${pt[0][1].toFixed(1)}`;for(let i=1;i<n;i++){const [x0,y0]=pt[i-1],[x1,y1]=pt[i],cx=(x0+x1)/2;d+=` C${cx.toFixed(1)},${y0.toFixed(1)} ${cx.toFixed(1)},${y1.toFixed(1)} ${x1.toFixed(1)},${y1.toFixed(1)}`;}
+ const [ex,ey]=pt.at(-1);
+ return `<svg class="ac-chart ac-curve" viewBox="0 0 ${w} ${h}" aria-hidden="true"><path class="ac-area" d="${d} L${w},${h} L0,${h}Z"/><path class="ac-stroke" d="${d}"/><circle cx="${ex.toFixed(1)}" cy="${ey.toFixed(1)}" r="3.2"/></svg>`;}
+function activityStrip(act){
+ const head=`<div class="home-card-head"><span class="home-icon">${icon('activity')}</span><span class="eyebrow">Ваша активность</span><span class="ac-live">${state.activity?.sync?.last_sync?`<i class="live-tag"><i></i>${esc(agoText(state.activity.sync.last_sync))}</i>`:''}</span>${icon('arrow')}</div>`;
+ if(!act)return `<a href="#activity" class="panel home-card home-activity" data-ui-key="home-activity">${head}${state.activityError?'<small>Не удалось загрузить</small>':skeleton('list',1)}</a>`;
+ const card=(cls,title,sub,chart,val,unit)=>`<span class="ac-card ${cls}"><span class="ac-top"><b>${title}</b>${icon('chevron')}</span><small>${sub}</small>${chart}<span class="ac-val"><b>${val}</b><em>${unit}</em></span></span>`;
+ const cards=[];const last7=s=>(s?.series||[]).slice(-7).map(p=>p.value);
+ if(stepsLive()){const g=state.activity?.goals?.steps||10000,t=act.steps.today||0;cards.push(card('ac-steps','Шаги',t>=g?'цель выполнена':`${Math.round(t/g*100)}% от цели`,miniBars(last7(act.steps)),countUp(t,'int'),'шагов'));}
+ const pv=last7(act.pulse).length>1?last7(act.pulse):last7(act.hr_avg),pnow=act.pulse?.today??act.pulse?.last??act.hr_avg?.today??act.hr_avg?.last;
+ if(pv.length>1&&pnow!=null)cards.push(card('ac-pulse','Пульс',act.pulse?.today!=null?'покоя · сегодня':'последний',miniSpikes(pv),number(Math.round(pnow)),'уд/мин'));
+ const sv=last7(act.sleep),snow=act.sleep?.today??act.sleep?.last;
+ if(sv.length>1&&snow!=null){const m=Math.round(snow*60);cards.push(card('ac-sleep','Сон',act.sleep?.today!=null?'эта ночь':'последняя ночь',miniCurve(sv),`${Math.floor(m/60)}<small>ч</small> ${m%60}`,'мин'));}
+ const body=cards.length?`<span class="ac-row">${cards.join('')}</span>`:`<small class="steps-off-line">${esc(stepsNote())}</small>`;
+ return `<a href="#activity" class="panel home-card home-activity" data-ui-key="home-activity">${head}${body}</a>`;
 }
 function projectsIncomeLine(){const cur=state.displayCurrency;let daily=0,known=false;for(const p of activeProjects()){const inc=projectDailyIncome(p),v=inc==null||p.calculation_limited?null:displayAmount(inc,p.currency);if(v!=null){daily+=v;known=true;}}return known&&daily?`<small class="positive">≈ ${money(daily,cur,true)} в день по проектам</small>`:'';}
 function stepsLive(){const st=state.activity?.summary?.steps;return !!st&&(st.series||[]).length>0;}
