@@ -332,13 +332,13 @@ class MainActivity : ComponentActivity() {
     }
 
     private companion object {
-        val BG = Color.parseColor("#0B0B0C")
+        val BG = Color.parseColor("#0A0D09")
         const val OFFLINE_PAGE = """<!doctype html><html lang="ru"><head><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<style>*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(420px 320px at 85% 0%,#ffffff12,transparent),#0b0b0c;color:#f5f5f6;font:16px system-ui,sans-serif;text-align:center;-webkit-user-select:none;user-select:none}
-.card{width:min(360px,100%);padding:32px 24px;border-radius:26px;background:#161618e6;border:1px solid #ffffff14;animation:in .5s cubic-bezier(.2,.9,.3,1) both}
-.dot{width:56px;height:56px;margin:0 auto 18px;border-radius:18px;display:grid;place-items:center;background:#ffffff14;color:#f2f2f3;font-size:26px}
-b{display:block;font-size:21px;margin-bottom:8px;letter-spacing:-.02em}p{color:#8d8d93;margin:0 0 24px;line-height:1.45}
-a{display:block;padding:15px 22px;border-radius:16px;background:linear-gradient(180deg,#fff,#e4e4e7);color:#0b0b0c;text-decoration:none;font-weight:650;transition:transform .15s}a:active{transform:scale(.97)}
+<style>*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(420px 320px at 85% 0%,#8fe03c33,transparent),#0a0d09;color:#f1f6ea;font:16px system-ui,sans-serif;text-align:center;-webkit-user-select:none;user-select:none}
+.card{width:min(360px,100%);padding:32px 24px;border-radius:26px;background:#131810e6;border:1px solid #ffffff14;animation:in .5s cubic-bezier(.2,.9,.3,1) both}
+.dot{width:56px;height:56px;margin:0 auto 18px;border-radius:18px;display:grid;place-items:center;background:#c6f36a1f;color:#c6f36a;font-size:26px}
+b{display:block;font-size:21px;margin-bottom:8px;letter-spacing:-.02em}p{color:#94a18b;margin:0 0 24px;line-height:1.45}
+a{display:block;padding:15px 22px;border-radius:16px;background:linear-gradient(180deg,#d4f784,#a9e04f);color:#132008;text-decoration:none;font-weight:650;transition:transform .15s}a:active{transform:scale(.97)}
 @keyframes in{from{opacity:0;transform:translateY(14px)}}@media(prefers-reduced-motion:reduce){.card{animation:none}}</style>
 </head><body><div class="card"><div class="dot">⟳</div><b>Нет соединения</b><p>Platformer откроется сам, как только появится интернет.</p><a href="{retry}">Повторить</a></div>
 <script>addEventListener('online',function(){location.href=document.querySelector('a').href})</script></body></html>"""

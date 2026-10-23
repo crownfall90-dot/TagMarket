@@ -418,7 +418,7 @@ def friends_ui(page, nav):
 
 
 def station_sections(page, nav):
-    """Главная Platformer, круг жизни, шаги, планы (задачи, календарь, заметки) и настройки."""
+    """Главная Platformer, баланс жизни, шаги, планы (задачи, календарь, заметки) и настройки."""
     page.locator(f'{nav} a[href="#overview"]').click()
     page.locator('.home-grid').wait_for()
     assert page.locator('.greet').count() == 1 and page.locator('.greet-title').inner_text().strip()
@@ -434,11 +434,11 @@ def station_sections(page, nav):
     # число в приветствии «набегает» и приходит к итогу
     page.wait_for_function("[...document.querySelectorAll('.greet .count-up')].every(e => e.textContent === formatCount(Number(e.dataset.to), e.dataset.format))")
     assert page.locator('[data-action="home-settings"]').count() == 0, "настройка главной убрана"
-    # круг жизни открывается из карточки и ведёт в сферы
+    # баланс жизни открывается из карточки и ведёт в сферы
     page.locator('.home-circle a.text-link').click()
-    page.locator('.circle-hero .circle-ring').wait_for()
-    assert page.locator('.sphere-row').count() == 4 and page.locator('.insight').count() >= 3
-    assert not page.locator('.sphere-row', has_text='Здоровье').count() and not page.locator('.sphere-row', has_text='Люди').count()
+    page.locator('.bal-hero .circle-ring').wait_for()
+    assert page.locator('.bal-tile').count() == 4 and page.locator('.insight').count() >= 3
+    assert not page.locator('.bal-tile', has_text='Здоровье').count() and not page.locator('.bal-tile', has_text='Люди').count()
     assert page.locator(f'{nav} a[href="#overview"].active').count() == 1
     assert page.locator('.circle-core b').inner_text().strip().isdigit()
     fits(page)
