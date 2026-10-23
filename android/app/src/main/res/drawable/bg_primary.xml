@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:state_enabled="false">
-        <shape><solid android:color="#4DF2F2F3" /><corners android:radius="18dp" /></shape>
+        <shape><solid android:color="#4DC6F36A" /><corners android:radius="18dp" /></shape>
     </item>
     <item>
         <shape>
-            <gradient android:angle="270" android:startColor="#FFFFFF" android:endColor="#E4E4E7" />
+            <gradient android:angle="270" android:startColor="#D4F784" android:endColor="#A9E04F" />
             <corners android:radius="18dp" />
         </shape>
     </item>

@@ -1747,11 +1747,11 @@ STATION_DEFAULTS = {"home": list(STATION_CHOICES["home"]),
                     "metrics": list(STATION_CHOICES["metrics"])}
 
 
-_tag_cache = OrderedDict()      # uid -> (month, today, currency): TagMarket для круга жизни между обновлениями
+_tag_cache = OrderedDict()      # uid -> (month, today, currency): TagMarket для баланса жизни между обновлениями
 
 
 def insights_for(db, uid, display="USD", rates=None, tag=None):
-    """Круг жизни пользователя по его данным; любой сбой не должен ломать приложение."""
+    """Баланс жизни пользователя по его данным; любой сбой не должен ломать приложение."""
     def conv(value, cur):
         if value is None:
             return None
@@ -1842,7 +1842,7 @@ async def station_preferences(request):
 
 
 async def insights_api(request):
-    """Круг жизни без полной перезагрузки: после правки задач, активностей, проектов."""
+    """Баланс жизни без полной перезагрузки: после правки задач, активностей, проектов."""
     uid, _ = authorize(request)
     db = request.app["db"]
     display = partner.kv_get(db, f"display_currency:{uid}", "USD")
@@ -1854,7 +1854,7 @@ async def insights_api(request):
             rates = None
     result = insights_for(db, uid, display, rates)
     if result is None:
-        raise web.HTTPServiceUnavailable(text="Не удалось построить круг жизни")
+        raise web.HTTPServiceUnavailable(text="Не удалось построить баланс жизни")
     return web.json_response(result)
 
 

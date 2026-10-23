@@ -99,6 +99,9 @@ jobs:
               --title "Platformer для Android" --notes "Последняя сборка APK. Приложение обновляется само при входе."
           # сначала APK, потом latest.json — приложение не увидит ссылку на ещё не загруженный файл
           gh release upload android-latest "$RUNNER_TEMP/$name" --clobber
+          # постоянная ссылка для приглашений: …/android-latest/Platformer.apk — всегда последняя версия
+          cp "$RUNNER_TEMP/$name" "$RUNNER_TEMP/Platformer.apk"
+          gh release upload android-latest "$RUNNER_TEMP/Platformer.apk" --clobber
           gh release upload android-latest "$RUNNER_TEMP/latest.json" --clobber
           gh release view android-latest --json assets --jq '.assets[].name' \
             | grep -E '^platformer-[0-9]+\.apk$' | grep -vx "$name" \

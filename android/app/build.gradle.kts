@@ -123,6 +123,8 @@ dependencies {
     implementation("androidx.webkit:webkit:1.14.0")
     implementation("androidx.work:work-runtime-ktx:2.10.5")
     implementation("androidx.health.connect:connect-client:1.1.0")
+    // Recording API: шаги со счётчика телефона, сервисы Google Play считают их в фоне
+    implementation("com.google.android.gms:play-services-fitness:21.2.0")
     implementation("com.google.firebase:firebase-messaging:24.1.2")
     // Firebase и app-update тянут старый Fragment 1.1 — с ним ActivityResult API работает неверно
     implementation("androidx.fragment:fragment-ktx:1.8.9")

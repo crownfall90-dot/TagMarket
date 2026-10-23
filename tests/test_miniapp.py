@@ -1870,7 +1870,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_spend_subscriptions_and_purchases(self):
         """Траты: регулярные (подписки) сами считают следующее списание и сумму в месяц,
-        разовые покупки идут в «этот месяц»; ближайшие списания попадают в круг жизни."""
+        разовые покупки идут в «этот месяц»; ближайшие списания попадают в баланс жизни."""
         today = spend.today()
         tomorrow = today + timedelta(days=1)
         netflix = await (await self.call("POST", "/api/spend", json={
@@ -1903,7 +1903,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         data = await (await self.call("GET", "/api/spend")).json()
         self.assertNotIn("Спортзал", [u["title"] for u in data["upcoming"]])
         self.assertAlmostEqual(data["monthly"]["USD"], 10.0, places=2)
-        # ближайшее списание — в круге жизни, со ссылкой на траты
+        # ближайшее списание — в балансе жизни, со ссылкой на траты
         circle = (await (await self.call("GET", "/api/bootstrap")).json())["insights"]
         self.assertTrue(any("спишется «Netflix»" in i["text"] and i["href"] == "#spend" for i in circle["insights"]), circle["insights"])
         # проверка ввода и чужие траты
@@ -1947,7 +1947,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data["monthly"], {"BYN": 1400.5, "USD": 600.0})
         self.assertEqual(data["received"]["BYN"], 1400.5)
         self.assertEqual(data["limit"], 3)
-        # доход — в круге жизни
+        # доход — в балансе жизни
         circle = (await (await self.call("GET", "/api/bootstrap")).json())["insights"]
         self.assertTrue(any(i["text"].startswith("Зарплата:") and i["href"] == "#income" for i in circle["insights"]),
                         circle["insights"])
