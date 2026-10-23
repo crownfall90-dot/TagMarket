@@ -9,6 +9,11 @@
 Ключ сервера Firebase (JSON сервисного аккаунта) лежит в файле FCM_SERVICE_ACCOUNT
 (.env, доступ только владельцу сервера). Нет ключа — модуль молчит, остаётся
 проверка раз в 15 минут из приложения.
+
+Ещё одна рассылка — «Мы обновились»: раз в минуту сервер читает latest.json релиза
+приложения для Android; вышла новая версия — сразу шлёт её номер и «что нового» на
+все телефоны. Приложение само решает, показывать ли: у кого она уже стоит или кто
+сейчас в приложении — уведомления не будет.
 """
 import asyncio
 import base64
@@ -25,6 +30,10 @@ SCOPE = "https://www.googleapis.com/auth/firebase.messaging"
 EVERY = 3                    # секунд между проверками новых событий
 BATCH = 50
 KEY_LAST = "push:last_id"
+KEY_RELEASE = "push:release_code"
+RELEASE_EVERY = 60           # секунд между проверками нового релиза
+RELEASE_URL = os.getenv("ANDROID_UPDATE_URL", "").strip() or \
+    "https://github.com/crownfall90-dot/TagMarket/releases/download/android-latest/latest.json"
 
 _cache = {"token": None, "exp": 0.0, "account": None, "mtime": None}
 
@@ -93,11 +102,16 @@ def _access_token(acc) -> str:
 
 def send(acc, push_token, event) -> str:
     """Отправить событие на один телефон: 'ok', 'gone' (токен больше не действует) или 'error'."""
+    return send_data(acc, push_token, {"id": str(event["id"]), "kind": str(event.get("kind") or ""),
+                                       "title": str(event["title"])[:160], "body": str(event.get("body") or "")[:1200]})
+
+
+def send_data(acc, push_token, data) -> str:
+    """Сообщение «data» на один телефон: 'ok', 'gone' (токен больше не действует) или 'error'."""
     message = {"message": {
         "token": push_token,
         "android": {"priority": "HIGH", "ttl": "86400s"},
-        "data": {"id": str(event["id"]), "kind": str(event.get("kind") or ""),
-                 "title": str(event["title"])[:160], "body": str(event.get("body") or "")[:1200]},
+        "data": data,
     }}
     url = f"https://fcm.googleapis.com/v1/projects/{acc['project_id']}/messages:send"
     req = Request(url, data=json.dumps(message).encode(), method="POST",
@@ -158,6 +172,62 @@ async def deliver(db) -> int:
     return sent
 
 
+def fetch_release():
+    """latest.json релиза: {"code", "name", "notes"} или None."""
+    try:
+        with urlopen(Request(RELEASE_URL + f"?t={int(time.time()) // 60}",
+                             headers={"User-Agent": "Platformer-server"}), timeout=15) as r:
+            raw = r.read(64 * 1024 + 1)
+        if len(raw) > 64 * 1024:
+            return None
+        data = json.loads(raw)
+        notes = [str(n).strip()[:160] for n in (data.get("notes") or []) if str(n).strip()][:3]
+        return {"code": int(data["versionCode"]), "name": str(data.get("versionName") or "")[:32], "notes": notes}
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+async def announce_release(db) -> int:
+    """Вышла новая версия приложения — «Мы обновились» на все телефоны. Возвращает, сколько ушло.
+    Первый запуск только запоминает текущую версию, чтобы не рассылать старый релиз."""
+    import partner
+    acc = account()
+    release = await asyncio.to_thread(fetch_release)
+    if release is None:
+        return 0
+    raw = partner.kv_get(db, KEY_RELEASE)
+    if raw is None or acc is None or release["code"] <= int(raw):
+        if raw is None or release["code"] > int(raw):
+            partner.kv_set(db, KEY_RELEASE, str(release["code"]))
+        return 0
+    partner.kv_set(db, KEY_RELEASE, str(release["code"]))
+    data = {"kind": "app_update", "code": str(release["code"]), "version": release["name"],
+            "notes": "\n".join(release["notes"])}
+    tokens = [t for (t,) in db.execute("SELECT DISTINCT push_token FROM app_devices WHERE push_token IS NOT NULL")]
+    sent = 0
+    for tok in tokens:
+        result = await asyncio.to_thread(send_data, acc, tok, data)
+        if result == "gone":
+            with db:
+                db.execute("UPDATE app_devices SET push_token=NULL WHERE push_token=?", (tok,))
+        sent += result == "ok"
+    log.info("push: «Мы обновились» %s — на %d телефонов", release["name"], sent)
+    return sent
+
+
+async def release_loop(app):
+    """Проверка нового релиза приложения, пока работает сервер."""
+    db = app["db"]
+    while True:
+        try:
+            await announce_release(db)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("push: проверка релиза не удалась")
+        await asyncio.sleep(RELEASE_EVERY)
+
+
 async def loop(app):
     """Фоновая рассылка, пока работает сервер."""
     db = app["db"]
@@ -173,9 +243,11 @@ async def loop(app):
 
 async def start(app):
     app["push_task"] = asyncio.create_task(loop(app))
+    app["push_release_task"] = asyncio.create_task(release_loop(app))
 
 
 async def stop(app):
-    task = app.get("push_task")
-    if task:
-        task.cancel()
+    for key in ("push_task", "push_release_task"):
+        task = app.get(key)
+        if task:
+            task.cancel()

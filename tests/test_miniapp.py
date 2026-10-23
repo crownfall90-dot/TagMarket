@@ -2128,6 +2128,29 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             await push.deliver(db)
         self.assertIsNone(db.execute("SELECT push_token FROM app_devices").fetchone()[0])
 
+    async def test_push_announces_new_app_release_once(self):
+        """«Мы обновились»: новая версия в релизе — сообщение на все телефоны, один раз; старый релиз не шлём."""
+        import push
+        db = self.app["db"]
+        code = devices.new_code(db, 1)
+        token = (await (await self.client.post("/api/device/pair", json={"code": code})).json())["token"]
+        await self.client.post("/api/device/push", headers={"Authorization": f"Bearer {token}"}, json={"token": "fcm-u"})
+        db.execute("DELETE FROM kv WHERE key=?", (push.KEY_RELEASE,))
+        db.commit()
+        sent = []
+        release = {"code": 126, "name": "0.3.26", "notes": ["Новый дизайн"]}
+        with patch.object(push, "account", return_value={"project_id": "p"}), \
+                patch.object(push, "fetch_release", side_effect=lambda: dict(release)), \
+                patch.object(push, "send_data", side_effect=lambda a, t, d: sent.append((t, d)) or "ok"):
+            self.assertEqual(await push.announce_release(db), 0)     # первый проход: только запоминаем
+            self.assertEqual(await push.announce_release(db), 0)     # та же версия — тишина
+            release.update(code=127, name="0.3.27")
+            self.assertEqual(await push.announce_release(db), 1)
+            self.assertEqual(await push.announce_release(db), 0)     # повторно не шлём
+        self.assertEqual(sent[0][0], "fcm-u")
+        self.assertEqual(sent[0][1]["kind"], "app_update")
+        self.assertEqual((sent[0][1]["code"], sent[0][1]["version"], sent[0][1]["notes"]), ("127", "0.3.27", "Новый дизайн"))
+
     def test_push_signs_google_token_request_with_service_key(self):
         """Ключ сервисного аккаунта → JWT RS256 для Google; подпись проверяется открытым ключом."""
         import base64, json as _json, io
