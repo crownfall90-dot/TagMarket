@@ -7,6 +7,7 @@ from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import base64
+import re
 import contextlib
 import os
 import tempfile
@@ -512,6 +513,8 @@ def station_sections(page, nav):
     page.locator('.theme-picker').wait_for()
     assert page.locator('.theme-opt').count() == 2, "тем ровно две: тёмная и светлая"
     assert page.locator('.scheme-picker, .scheme').count() == 0, "цветовых гамм больше нет"
+    # внизу настроек — какая версия открыта (в браузере — дата выкладки интерфейса)
+    assert re.search(r'интерфейс от \d\d\.\d\d\.\d{4}', page.locator('.app-version').inner_text())
     assert page.locator('.station-settings, .station-row').count() == 0
     assert 'platformer' not in page.locator('.two-column').inner_text().lower().replace('открывать platformer в один тап', '')
     fits(page)
