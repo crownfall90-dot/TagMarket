@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- окно «Вышло обновление», пока приложение открыто (версия из Google Play) -->
+    <string name="update_live_title">Вышло обновление Platformer</string>
+    <string name="update_live_play">Новая версия уже в Google Play. Можно обновить сейчас или позже — тогда обновление понадобится при следующем входе.</string>
+    <string name="update_play_now">Обновить</string>
+    <string name="update_play_later">Обновить позже</string>
+</resources>

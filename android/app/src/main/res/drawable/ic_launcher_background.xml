@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- значок приложения — чёрная плитка с белым знаком, без цветов -->
+<!-- значок приложения — фиолетовая плитка с белым знаком, как Aura -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android">
-    <gradient android:angle="315" android:startColor="#000000" android:endColor="#2A2A2F" />
+    <gradient android:angle="315" android:startColor="#1A1238" android:endColor="#6A4FE0" />
 </shape>

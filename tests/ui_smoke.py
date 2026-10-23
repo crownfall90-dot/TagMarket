@@ -1365,7 +1365,7 @@ def main():
                     page.locator('.theme-opt[data-value="light"]').click()
                     page.wait_for_function("document.documentElement.dataset.theme === 'light'")
                     assert page.evaluate("localStorage.getItem('tag-theme')") == 'light'
-                    page.wait_for_function("getComputedStyle(document.body).backgroundColor === 'rgb(243, 243, 245)'")
+                    page.wait_for_function("getComputedStyle(document.documentElement).backgroundColor === 'rgb(246, 245, 251)'")
                     assert page.locator('.theme-opt[data-value="light"][aria-checked="true"]').count() == 1
                     page.goto(url + "#tagmarket", wait_until="domcontentloaded")
                     assert page.locator('html').get_attribute('data-theme') == 'light'

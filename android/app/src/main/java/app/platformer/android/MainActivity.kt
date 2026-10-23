@@ -157,6 +157,7 @@ class MainActivity : ComponentActivity() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 if (updater?.blocking == true) { finish(); return }      // обновление обязательное
+                if (updater?.back() == true) return                       // «Назад» у окна с «Позже» — позже
                 // сначала страница: открытое окно или меню закрываются «Назад», как в обычном приложении
                 web.evaluateJavascript("window.platformerBack ? window.platformerBack() : false") { handled ->
                     if (handled == "true") return@evaluateJavascript
@@ -182,7 +183,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        updater?.onResume()                 // новая версия приложения — проверяем при каждом входе
+        updater?.onResume()                 // вход в приложение — новая версия обязательна; пока открыто, ищет сам
         refreshPermissions()                // вернулись из настроек — строка «Шаги» в настройках обновится
         if (::web.isInitialized) lifecycleScope.launch {
             if (StepRecorder.ready(this@MainActivity)) StepRecorder.subscribe(this@MainActivity)
@@ -436,8 +437,8 @@ class MainActivity : ComponentActivity() {
         /** Страница «нет соединения» в цветах темы приложения: тёмной или светлой. */
         fun offlinePage(light: Boolean): String {
             val (bg, card, line, text, muted) =
-                if (light) listOf("#f3f3f5", "#ffffff", "#0000000f", "#111114", "#6b6b74")
-                else listOf("#0b0b0d", "#151518", "#ffffff12", "#f4f4f6", "#9a9aa2")
+                if (light) listOf("#f6f5fb", "#ffffff", "#15122b12", "#15122b", "#6c6789")
+                else listOf("#0c0a18", "#18142e", "#ffffff14", "#f5f3ff", "#a9a3c9")
             return OFFLINE_PAGE.replace("{bg}", bg).replace("{card}", card).replace("{line}", line)
                 .replace("{text}", text).replace("{muted}", muted).replace("{ink}", bg)
         }
