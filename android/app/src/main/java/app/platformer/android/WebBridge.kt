@@ -12,6 +12,8 @@ class WebBridge(
     private val onSignOut: () -> Unit,
     private val onHaptic: (String) -> Unit,
     private val onTheme: (Int) -> Unit,
+    private val onPermissions: () -> String = { "{}" },
+    private val onFix: (String) -> Unit = {},
 ) {
     @JavascriptInterface
     fun token(): String = store.token.orEmpty()
@@ -21,6 +23,16 @@ class WebBridge(
 
     @JavascriptInterface
     fun signOut() = onSignOut()
+
+    /** Доступы телефона: {"steps":"granted|denied|unavailable","notifications":true|false}. */
+    @JavascriptInterface
+    fun permissions(): String = onPermissions()
+
+    /** Включить доступ: steps — шаги из Health Connect, notifications — уведомления. */
+    @JavascriptInterface
+    fun fix(kind: String?) {
+        if (kind == "steps" || kind == "notifications") onFix(kind)
+    }
 
     /** select · impact · success · warning · error */
     @JavascriptInterface

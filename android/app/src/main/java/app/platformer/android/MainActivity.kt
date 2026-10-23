@@ -27,6 +27,7 @@ import androidx.core.view.HapticFeedbackConstantsCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -49,10 +50,12 @@ class MainActivity : ComponentActivity() {
 
     private val askNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) Alerts.schedule(this)
+        refreshPermissions()
     }
 
     private val askHealth = registerForActivityResult(PermissionController.createRequestPermissionResultContract()) { granted ->
         if (Steps.readSteps in granted) Steps.schedule(this)
+        refreshPermissions()
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -100,6 +103,8 @@ class MainActivity : ComponentActivity() {
                     onSignOut = { runOnUiThread { signOut() } },
                     onHaptic = { kind -> runOnUiThread { haptic(kind) } },
                     onTheme = { color -> runOnUiThread { root.setBackgroundColor(color); setBackgroundColor(color); barIcons(color) } },
+                    onPermissions = { permissionsJson() },
+                    onFix = { kind -> runOnUiThread { fixPermission(kind) } },
                 ),
                 "PlatformerAndroid",
             )
@@ -155,6 +160,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         updater?.onResume()                 // новая версия приложения — проверяем при каждом входе
+        refreshPermissions()                // вернулись из настроек — строка «Шаги» в настройках обновится
         if (::web.isInitialized) lifecycleScope.launch { if (Steps.granted(this@MainActivity)) Steps.schedule(this@MainActivity) }
     }
 
@@ -165,6 +171,57 @@ class MainActivity : ComponentActivity() {
 
     private fun startUrl(): String = Uri.parse(BuildConfig.BASE_URL).buildUpon()
         .appendQueryParameter("app", "android").build().toString()
+
+    @Volatile
+    private var stepsAccess = "unavailable"
+
+    private fun permissionsJson(): String =
+        org.json.JSONObject().put("steps", stepsAccess).put("notifications", Alerts.allowed(this)).toString()
+
+    /** Перечитать доступы и сказать странице — она перерисует строки в настройках. */
+    private fun refreshPermissions() {
+        if (!::web.isInitialized) return
+        lifecycleScope.launch {
+            stepsAccess = when {
+                !Steps.available(this@MainActivity) -> "unavailable"
+                Steps.granted(this@MainActivity) -> "granted"
+                else -> "denied"
+            }
+            web.evaluateJavascript("window.onPlatformerPermissions && window.onPlatformerPermissions()", null)
+        }
+    }
+
+    /** «Включить» в настройках: сначала системный вопрос, если Android больше не спрашивает — экран настроек. */
+    private fun fixPermission(kind: String) {
+        if (kind == "steps") {
+            if (!Steps.available(this)) {
+                runCatching {
+                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=com.google.android.apps.healthdata")))
+                }
+                return
+            }
+            val prefs = getSharedPreferences("perm_fix", MODE_PRIVATE)
+            if (!prefs.getBoolean("steps_asked", false)) {
+                prefs.edit().putBoolean("steps_asked", true).apply()
+                askHealth.launch(Steps.permissions(this))
+            } else {
+                runCatching { startActivity(Intent(HealthConnectClient.ACTION_HEALTH_CONNECT_SETTINGS)) }
+                    .onFailure { askHealth.launch(Steps.permissions(this)) }
+            }
+        } else {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED &&
+                shouldShowRequestPermissionRationale(android.Manifest.permission.POST_NOTIFICATIONS)
+            ) {
+                askNotifications.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            } else {
+                runCatching {
+                    startActivity(Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                        .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, packageName))
+                }
+            }
+        }
+    }
 
     /** Уведомления о событиях: на Android 13+ спросим разрешение один раз, дальше — как решил человек. */
     private fun offerAlerts() {
