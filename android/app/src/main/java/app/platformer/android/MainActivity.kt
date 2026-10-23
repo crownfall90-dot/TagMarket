@@ -65,7 +65,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private val askHealth = registerForActivityResult(PermissionController.createRequestPermissionResultContract()) { granted ->
-        if (Steps.readSteps in granted) Steps.schedule(this)
+        if (granted.isNotEmpty()) {
+            Steps.schedule(this)
+            lifecycleScope.launch { Steps.syncNow(this@MainActivity) }
+        }
         refreshPermissions()
     }
 
@@ -191,8 +194,11 @@ class MainActivity : ComponentActivity() {
     @Volatile
     private var stepsAccess = "unavailable"
 
+    @Volatile
+    private var healthAccess = "unavailable"
+
     private fun permissionsJson(): String =
-        org.json.JSONObject().put("steps", stepsAccess).put("notifications", Alerts.allowed(this)).toString()
+        org.json.JSONObject().put("steps", stepsAccess).put("health", healthAccess).put("notifications", Alerts.allowed(this)).toString()
 
     /** Перечитать доступы и сказать странице — она перерисует строки в настройках. */
     private fun refreshPermissions() {
@@ -203,12 +209,32 @@ class MainActivity : ComponentActivity() {
                 !Steps.available(this@MainActivity) && !StepRecorder.available(this@MainActivity) -> "unavailable"
                 else -> "denied"
             }
+            healthAccess = when {
+                !Steps.available(this@MainActivity) -> "unavailable"
+                Steps.healthGranted(this@MainActivity) -> "granted"
+                else -> "denied"
+            }
             web.evaluateJavascript("window.onPlatformerPermissions && window.onPlatformerPermissions()", null)
         }
     }
 
     /** «Включить» в настройках: сначала системный вопрос, если Android больше не спрашивает — экран настроек. */
     private fun fixPermission(kind: String) {
+        if (kind == "health") {
+            if (!Steps.available(this)) {
+                runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=com.google.android.apps.healthdata"))) }
+                return
+            }
+            val prefs = getSharedPreferences("perm_fix", MODE_PRIVATE)
+            if (!prefs.getBoolean("health_asked", false)) {
+                prefs.edit().putBoolean("health_asked", true).apply()
+                askHealth.launch(Steps.permissions(this))
+            } else {
+                runCatching { startActivity(Intent(HealthConnectClient.ACTION_HEALTH_CONNECT_SETTINGS)) }
+                    .onFailure { askHealth.launch(Steps.permissions(this)) }
+            }
+            return
+        }
         if (kind == "steps") {
             // сначала счётчик телефона — он ближе всего к встроенному трекеру
             if (StepRecorder.available(this) && !StepRecorder.permitted(this)) {
@@ -308,12 +334,19 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Health Connect: шаги, сон и пульс. Спрашиваем один раз; тем, кто раньше разрешил только
+     * шаги, — ещё один раз, уже про сон и пульс. Дальше включить можно в «Доступах телефона».
+     */
     private fun offerHealth() {
         if (!Steps.available(this)) return
         lifecycleScope.launch {
-            if (Steps.granted(this@MainActivity)) {
-                Steps.schedule(this@MainActivity)
-            } else if (!store.askedHealth) {
+            val granted = Steps.grantedSet(this@MainActivity)
+            if (granted.isNotEmpty()) Steps.schedule(this@MainActivity)
+            val missing = Steps.permissions(this@MainActivity) - granted - Steps.BACKGROUND
+            val prefs = getSharedPreferences("perm_fix", MODE_PRIVATE)
+            if (missing.isNotEmpty() && !prefs.getBoolean("health_asked", false)) {
+                prefs.edit().putBoolean("health_asked", true).apply()
                 store.askedHealth = true
                 askHealth.launch(Steps.permissions(this@MainActivity))
             }
