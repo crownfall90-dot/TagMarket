@@ -30,6 +30,11 @@ object Api {
         post("/activity/sync", JSONObject().put("days", list), token)
     }
 
+    /** FCM-токен телефона → сервер: на него приходят мгновенные уведомления. */
+    fun registerPush(token: String, pushToken: String) {
+        post("/device/push", JSONObject().put("token", pushToken), token)
+    }
+
     /** Последние события пользователя (как колокольчик в приложении). */
     fun notifications(token: String): List<Event> {
         val items = request("GET", "/notifications", null, token).optJSONArray("items") ?: return emptyList()

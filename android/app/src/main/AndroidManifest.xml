@@ -13,6 +13,7 @@
     </queries>
 
     <application
+        android:name=".PlatformerApp"
         android:allowBackup="false"
         android:enableOnBackInvokedCallback="true"
         android:usesCleartextTraffic="false"
@@ -40,6 +41,21 @@
             android:name=".LoginActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
+
+        <!-- мгновенные уведомления: сообщения Firebase Cloud Messaging -->
+        <service
+            android:name=".PushService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_notification" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="events" />
 
         <!-- Health Connect показывает это окно, когда человек спрашивает, зачем приложению шаги -->
         <activity

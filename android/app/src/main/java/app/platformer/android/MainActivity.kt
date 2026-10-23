@@ -169,6 +169,7 @@ class MainActivity : ComponentActivity() {
     /** Уведомления о событиях: на Android 13+ спросим разрешение один раз, дальше — как решил человек. */
     private fun offerAlerts() {
         Alerts.schedule(this)
+        Push.register(this)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !Alerts.allowed(this)) {
             val prefs = getSharedPreferences("alerts_ask", MODE_PRIVATE)
             if (!prefs.getBoolean("asked", false)) {
@@ -232,6 +233,7 @@ class MainActivity : ComponentActivity() {
         store.token = null
         Steps.cancel(this)
         Alerts.cancel(this)
+        Push.unregister()
         openLogin()
     }
 

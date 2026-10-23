@@ -24,6 +24,31 @@ val platformerUpdates = setting(
     "https://github.com/crownfall90-dot/TagMarket/releases/download/android-latest/latest.json"
 )
 
+// Firebase Cloud Messaging (мгновенные уведомления): настройки из google-services.json —
+// переменная PLATFORMER_FIREBASE (содержимое файла, в CI — переменная репозитория) или файл
+// app/google-services.json (не в репозитории). Нет настроек — приложение собирается без
+// мгновенных уведомлений и проверяет события раз в 15 минут.
+val firebase: Map<String, String> = run {
+    val text = System.getenv("PLATFORMER_FIREBASE")?.takeIf { it.isNotBlank() }
+        ?: file("google-services.json").takeIf { it.exists() }?.readText()
+        ?: return@run emptyMap()
+    @Suppress("UNCHECKED_CAST")
+    val json = groovy.json.JsonSlurper().parseText(text) as Map<String, Any?>
+    val project = json["project_info"] as? Map<String, Any?> ?: return@run emptyMap()
+    val client = (json["client"] as? List<Map<String, Any?>>).orEmpty().firstOrNull { c ->
+        val info = c["client_info"] as? Map<String, Any?>
+        (info?.get("android_client_info") as? Map<String, Any?>)?.get("package_name") == "app.platformer.android"
+    } ?: return@run emptyMap()
+    val info = client["client_info"] as Map<String, Any?>
+    val key = (client["api_key"] as? List<Map<String, Any?>>)?.firstOrNull()?.get("current_key")
+    mapOf(
+        "APP_ID" to info["mobilesdk_app_id"].toString(),
+        "API_KEY" to key.toString(),
+        "PROJECT_ID" to project["project_id"].toString(),
+        "SENDER_ID" to project["project_number"].toString(),
+    )
+}
+
 // Подпись для Google Play: ключ загрузки из переменных окружения CI (никогда не в репозитории)
 val keystoreFile = System.getenv("PLATFORMER_KEYSTORE")?.let { file(it) }?.takeIf { it.exists() }
 
@@ -40,6 +65,9 @@ android {
         versionName = System.getenv("PLATFORMER_VERSION_NAME") ?: "0.3.0"
         buildConfigField("String", "BASE_URL", "\"$platformerUrl\"")
         buildConfigField("String", "BOT_USERNAME", "\"$platformerBot\"")
+        for (name in listOf("APP_ID", "API_KEY", "PROJECT_ID", "SENDER_ID")) {
+            buildConfigField("String", "FCM_$name", "\"${firebase[name].orEmpty()}\"")
+        }
     }
 
     signingConfigs {
@@ -95,7 +123,9 @@ dependencies {
     implementation("androidx.webkit:webkit:1.14.0")
     implementation("androidx.work:work-runtime-ktx:2.10.5")
     implementation("androidx.health.connect:connect-client:1.1.0")
+    implementation("com.google.firebase:firebase-messaging:24.1.2")
+    // Firebase и app-update тянут старый Fragment 1.1 — с ним ActivityResult API работает неверно
+    implementation("androidx.fragment:fragment-ktx:1.8.9")
     "playImplementation"("com.google.android.play:app-update-ktx:2.1.0")
-    // app-update тянет старый Fragment 1.1 — с ним ActivityResult API работает неверно
-    "playImplementation"("androidx.fragment:fragment-ktx:1.8.9")
+
 }

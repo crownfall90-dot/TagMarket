@@ -31,6 +31,8 @@ jobs:
     env:
       PLATFORMER_URL: ${{ vars.PLATFORMER_URL }}
       PLATFORMER_BOT: ${{ vars.PLATFORMER_BOT }}
+      # google-services.json из Firebase целиком — для мгновенных уведомлений (не секрет)
+      PLATFORMER_FIREBASE: ${{ vars.PLATFORMER_FIREBASE }}
       PLATFORMER_VERSION_NAME: 0.3.${{ github.run_number }}
     steps:
       - uses: actions/checkout@v4

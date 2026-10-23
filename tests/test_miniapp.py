@@ -2088,6 +2088,68 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(page.status, 200)
         self.assertIn("Health Connect", await page.text())
 
+    async def test_push_sends_new_events_to_registered_phones(self):
+        """FCM: приложение регистрирует токен, новые события уходят на телефон владельца, история — нет."""
+        import push
+        db = self.app["db"]
+        code = devices.new_code(db, 1)
+        token = (await (await self.client.post("/api/device/pair", json={"code": code})).json())["token"]
+        auth = {"Authorization": f"Bearer {token}"}
+        self.assertEqual((await self.client.post("/api/device/push", json={"token": "fcm-1"})).status, 400)
+        r = await self.client.post("/api/device/push", headers=auth, json={"token": "fcm-1"})
+        self.assertEqual(r.status, 200, await r.text())
+        self.assertEqual((await self.client.post("/api/device/push", headers=auth, json={"token": ""})).status, 400)
+        db.execute("DELETE FROM kv WHERE key=?", (push.KEY_LAST,))
+        db.commit()
+        partner.record_notification(db, 1, "push:old", "deposits", "Старое событие", "до включения")
+        sent = []
+        acc = {"project_id": "p"}
+        with patch.object(push, "account", return_value=acc), \
+                patch.object(push, "send", side_effect=lambda a, t, e: sent.append((t, e["title"])) or "ok"):
+            self.assertEqual(await push.deliver(db), 0)          # первый проход: историю не шлём
+            partner.record_notification(db, 1, "push:dep", "deposits", "Пополнение", "+100 $")
+            partner.record_notification(db, 2, "push:other", "deposits", "Чужое", "не нам")
+            self.assertEqual(await push.deliver(db), 1)
+            self.assertEqual(sent, [("fcm-1", "Пополнение")])
+            self.assertEqual(await push.deliver(db), 0)          # повторно то же не уходит
+        # токен больше не действует — снимаем его с устройства
+        partner.record_notification(db, 1, "push:wd", "withdrawals", "Вывод", "-5 $")
+        with patch.object(push, "account", return_value=acc), \
+                patch.object(push, "send", return_value="gone"):
+            await push.deliver(db)
+        self.assertIsNone(db.execute("SELECT push_token FROM app_devices").fetchone()[0])
+
+    def test_push_signs_google_token_request_with_service_key(self):
+        """Ключ сервисного аккаунта → JWT RS256 для Google; подпись проверяется открытым ключом."""
+        import base64, json as _json, io
+        import push
+        from urllib.parse import parse_qs
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import padding, rsa
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                                serialization.NoEncryption()).decode()
+        acc = {"type": "service_account", "project_id": "p", "client_email": "bot@p.iam.gserviceaccount.com",
+               "private_key": pem, "token_uri": "https://oauth2.googleapis.com/token"}
+        seen = {}
+
+        def fake_urlopen(req, timeout=0):
+            seen["url"], seen["body"] = req.full_url, req.data
+            return io.BytesIO(_json.dumps({"access_token": "ya29.x", "expires_in": 3600}).encode())
+
+        push._cache.update(token=None, exp=0.0)
+        with patch.object(push, "urlopen", side_effect=fake_urlopen):
+            self.assertEqual(push._access_token(acc), "ya29.x")
+            self.assertEqual(push._access_token(acc), "ya29.x")      # второй раз — из кэша
+        assertion = parse_qs(seen["body"].decode())["assertion"][0]
+        head, claims, sig = assertion.split(".")
+        pad = lambda x: base64.urlsafe_b64decode(x + "=" * (-len(x) % 4))
+        key.public_key().verify(pad(sig), f"{head}.{claims}".encode(), padding.PKCS1v15(), hashes.SHA256())
+        body = _json.loads(pad(claims))
+        self.assertEqual((body["iss"], body["aud"], body["scope"]),
+                         (acc["client_email"], acc["token_uri"], push.SCOPE))
+        push._cache.update(token=None, exp=0.0)
+
     async def test_live_sync_answers_as_soon_as_data_changes(self):
         """/api/live: изменение в любом окне, с телефона или у друга — сразу виден новый номер версии."""
         start = await (await self.call("GET", "/api/live")).json()          # без rev — текущий номер сразу

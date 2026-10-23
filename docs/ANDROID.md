@@ -34,8 +34,20 @@
   выводы, профит, напоминания. WorkManager раз в 15 минут берёт новые события из
   `GET /api/notifications` и показывает их системными уведомлениями (канал «События»).
   На Android 13+ разрешение спрашивается один раз. Пока приложение открыто, системные
-  уведомления не дублируют страницу. Мгновенные пуши потребуют Firebase Cloud Messaging:
-  проект Firebase и ключ сервера.
+  уведомления не дублируют страницу.
+- **Мгновенные уведомления (Firebase).** Если в сборке есть настройки Firebase, приложение после
+  входа отдаёт серверу свой FCM-токен (`POST /api/device/push`). Сервер (`push.py`) раз в 3 секунды
+  отправляет новые события на телефоны владельца. Без настроек остаётся проверка раз в 15 минут.
+
+  Включить:
+  1. В [Firebase Console](https://console.firebase.google.com) создайте проект и добавьте
+     Android-приложение с пакетом `app.platformer.android`. Скачайте `google-services.json`.
+  2. GitHub → Settings → Secrets and variables → Actions:
+     - вкладка **Variables** → `PLATFORMER_FIREBASE`: содержимое `google-services.json` целиком;
+     - вкладка **Secrets** → `FCM_SERVICE_ACCOUNT`: ключ сервера. В Firebase: Project settings →
+       Service accounts → Generate new private key, вставьте содержимое JSON целиком.
+  3. Перезапустите Android и Deploy (Actions → Run workflow). Сборка подхватит настройки,
+     деплой положит ключ на сервер (`data/fcm-service-account.json`, доступ только владельцу).
 - **Без интернета.** Показывается своя страница с кнопкой «Повторить».
 - **Ссылки.** Ссылки на Telegram и сайты открываются во внешних приложениях.
   Мост `window.PlatformerAndroid` доступен только страницам Platformer.
