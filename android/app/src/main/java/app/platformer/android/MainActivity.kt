@@ -1,8 +1,8 @@
 package app.platformer.android
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.content.Intent
-import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -72,6 +72,12 @@ class MainActivity : ComponentActivity() {
         refreshPermissions()
     }
 
+    /** Цвета экрана — по теме, выбранной в Platformer (тёмная или светлая). */
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(newBase)
+        applyOverrideConfiguration(AppTheme.override(newBase))
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen().setKeepOnScreenCondition { !loaded && ::web.isInitialized }
@@ -83,10 +89,11 @@ class MainActivity : ComponentActivity() {
             return
         }
 
-        val root = FrameLayout(this).apply { setBackgroundColor(BG) }
+        val bg = AppTheme.background(this)
+        val root = FrameLayout(this).apply { setBackgroundColor(bg) }
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
         web = WebView(this).apply {
-            setBackgroundColor(BG)
+            setBackgroundColor(bg)
             overScrollMode = View.OVER_SCROLL_NEVER
             isVerticalScrollBarEnabled = false
             isHorizontalScrollBarEnabled = false
@@ -116,7 +123,7 @@ class MainActivity : ComponentActivity() {
                     store,
                     onSignOut = { runOnUiThread { signOut() } },
                     onHaptic = { kind -> runOnUiThread { haptic(kind) } },
-                    onTheme = { color -> runOnUiThread { root.setBackgroundColor(color); setBackgroundColor(color); barIcons(color) } },
+                    onTheme = { color -> runOnUiThread { root.setBackgroundColor(color); setBackgroundColor(color); barIcons(color); AppTheme.remember(this@MainActivity, color) } },
                     onPermissions = { permissionsJson() },
                     onFix = { kind -> runOnUiThread { fixPermission(kind) } },
                     onShare = { text -> runOnUiThread { shareText(text) } },
@@ -150,6 +157,7 @@ class MainActivity : ComponentActivity() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 if (updater?.blocking == true) { finish(); return }      // обновление обязательное
+                if (updater?.back() == true) return                       // «Назад» у окна с «Позже» — позже
                 // сначала страница: открытое окно или меню закрываются «Назад», как в обычном приложении
                 web.evaluateJavascript("window.platformerBack ? window.platformerBack() : false") { handled ->
                     if (handled == "true") return@evaluateJavascript
@@ -175,7 +183,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        updater?.onResume()                 // новая версия приложения — проверяем при каждом входе
+        updater?.onResume()                 // вход в приложение — новая версия обязательна; пока открыто, ищет сам
         refreshPermissions()                // вернулись из настроек — строка «Шаги» в настройках обновится
         if (::web.isInitialized) lifecycleScope.launch {
             if (StepRecorder.ready(this@MainActivity)) StepRecorder.subscribe(this@MainActivity)
@@ -420,19 +428,27 @@ class MainActivity : ComponentActivity() {
             if (!request.isForMainFrame) return
             loaded = true
             view.loadDataWithBaseURL(
-                null, OFFLINE_PAGE.replace("{retry}", startUrl()), "text/html", "utf-8", null
+                null, offlinePage(AppTheme.light(this@MainActivity)).replace("{retry}", startUrl()), "text/html", "utf-8", null
             )
         }
     }
 
     private companion object {
-        val BG = Color.parseColor("#0A0D09")
+        /** Страница «нет соединения» в цветах темы приложения: тёмной или светлой. */
+        fun offlinePage(light: Boolean): String {
+            val (bg, card, line, text, muted) =
+                if (light) listOf("#f6f5fb", "#ffffff", "#15122b12", "#15122b", "#6c6789")
+                else listOf("#0c0a18", "#18142e", "#ffffff14", "#f5f3ff", "#a9a3c9")
+            return OFFLINE_PAGE.replace("{bg}", bg).replace("{card}", card).replace("{line}", line)
+                .replace("{text}", text).replace("{muted}", muted).replace("{ink}", bg)
+        }
+
         const val OFFLINE_PAGE = """<!doctype html><html lang="ru"><head><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<style>*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(420px 320px at 85% 0%,#8fe03c33,transparent),#0a0d09;color:#f1f6ea;font:16px system-ui,sans-serif;text-align:center;-webkit-user-select:none;user-select:none}
-.card{width:min(360px,100%);padding:32px 24px;border-radius:26px;background:#131810e6;border:1px solid #ffffff14;animation:in .5s cubic-bezier(.2,.9,.3,1) both}
-.dot{width:56px;height:56px;margin:0 auto 18px;border-radius:18px;display:grid;place-items:center;background:#c6f36a1f;color:#c6f36a;font-size:26px}
-b{display:block;font-size:21px;margin-bottom:8px;letter-spacing:-.02em}p{color:#94a18b;margin:0 0 24px;line-height:1.45}
-a{display:block;padding:15px 22px;border-radius:16px;background:linear-gradient(180deg,#d4f784,#a9e04f);color:#132008;text-decoration:none;font-weight:650;transition:transform .15s}a:active{transform:scale(.97)}
+<style>*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:{bg};color:{text};font:16px system-ui,-apple-system,Roboto,sans-serif;text-align:center;-webkit-user-select:none;user-select:none}
+.card{width:min(360px,100%);padding:32px 24px;border-radius:26px;background:{card};border:1px solid {line};animation:in .5s cubic-bezier(.2,.9,.3,1) both}
+.dot{width:56px;height:56px;margin:0 auto 18px;border-radius:50%;display:grid;place-items:center;background:{line};color:{text};font-size:26px}
+b{display:block;font-size:21px;margin-bottom:8px;letter-spacing:-.02em}p{color:{muted};margin:0 0 24px;line-height:1.45}
+a{display:block;padding:15px 22px;border-radius:999px;background:{text};color:{ink};text-decoration:none;font-weight:650;transition:transform .15s}a:active{transform:scale(.97)}
 @keyframes in{from{opacity:0;transform:translateY(14px)}}@media(prefers-reduced-motion:reduce){.card{animation:none}}</style>
 </head><body><div class="card"><div class="dot">⟳</div><b>Нет соединения</b><p>Platformer откроется сам, как только появится интернет.</p><a href="{retry}">Повторить</a></div>
 <script>addEventListener('online',function(){location.href=document.querySelector('a').href})</script></body></html>"""

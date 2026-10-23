@@ -6,25 +6,6 @@
     android:background="@color/bg"
     android:clipChildren="false">
 
-    <!-- мягкие цветные пятна за карточкой -->
-    <View
-        android:id="@+id/glow_top"
-        android:layout_width="460dp"
-        android:layout_height="460dp"
-        android:layout_gravity="top|end"
-        android:layout_marginTop="-170dp"
-        android:layout_marginEnd="-190dp"
-        android:background="@drawable/glow_accent" />
-
-    <View
-        android:id="@+id/glow_bottom"
-        android:layout_width="420dp"
-        android:layout_height="420dp"
-        android:layout_gravity="bottom|start"
-        android:layout_marginStart="-200dp"
-        android:layout_marginBottom="-150dp"
-        android:background="@drawable/glow_purple" />
-
     <ScrollView
         android:id="@+id/login_scroll"
         android:layout_width="match_parent"
@@ -55,7 +36,7 @@
                     android:layout_height="124dp"
                     android:layout_gravity="center"
                     android:contentDescription="@null"
-                    android:src="@drawable/ic_launcher_foreground" />
+                    android:src="@drawable/ic_splash" />
             </FrameLayout>
 
             <TextView
@@ -140,7 +121,7 @@
                     android:paddingHorizontal="14dp"
                     android:paddingVertical="11dp"
                     android:text="@string/login_sent"
-                    android:textColor="@color/accent"
+                    android:textColor="@color/text"
                     android:textSize="13.5sp"
                     android:visibility="gone" />
 

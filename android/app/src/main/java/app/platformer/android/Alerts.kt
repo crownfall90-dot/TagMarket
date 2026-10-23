@@ -101,7 +101,7 @@ object Alerts {
         val body = item.body.replace(Regex("<[^>]+>"), "").trim()
         val notification = NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_notification)
-            .setColor(ContextCompat.getColor(context, R.color.bg))
+            .setColor(ContextCompat.getColor(context, R.color.notification))
             .setContentTitle(item.title)
             .setContentText(body.lineSequence().firstOrNull().orEmpty())
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))

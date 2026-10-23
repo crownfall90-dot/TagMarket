@@ -1,6 +1,7 @@
 package app.platformer.android
 
 import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -48,6 +49,12 @@ class LoginActivity : ComponentActivity() {
     private var staleClip: String? = null
     private var busy = false
     private var updater: Updater? = null
+
+    /** Цвета экрана — по теме, выбранной в Platformer (тёмная или светлая). */
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(newBase)
+        applyOverrideConfiguration(AppTheme.override(newBase))
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

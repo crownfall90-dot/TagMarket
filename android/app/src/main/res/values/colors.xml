@@ -1,12 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- зелёная гамма «Лайм» — основная, как в веб-интерфейсе -->
-    <color name="bg">#0A0D09</color>
-    <color name="panel">#131810</color>
-    <color name="line">#283023</color>
-    <color name="text">#F1F6EA</color>
-    <color name="muted">#94A18B</color>
-    <color name="accent">#C6F36A</color>
-    <color name="on_accent">#132008</color>
-    <color name="negative">#FF8F8F</color>
+    <!-- Светлая тема Platformer (белая с фиолетовыми акцентами); тёмная — в values-night. Какая открыта, решает выбор
+         в настройках приложения (AppTheme задаёт экрану ночной режим сам). -->
+    <color name="bg">#F6F5FB</color>
+    <color name="panel">#FFFFFF</color>
+    <color name="line">#E6E3F3</color>
+    <color name="text">#15122B</color>
+    <color name="muted">#6C6789</color>
+    <color name="accent">#5B45E6</color>
+    <color name="on_accent">#FFFFFF</color>
+    <color name="negative">#E0445A</color>
+    <color name="negative_fill">#14E0445A</color>
+    <!-- заливки поверх фона: ячейки кода, кружки шагов -->
+    <color name="fill">#0D15122B</color>
+    <color name="fill_strong">#1A15122B</color>
+    <!-- цвет значка в шторке уведомлений: нейтральный серый, читается на светлой и тёмной -->
+    <color name="notification">#5C5C64</color>
 </resources>

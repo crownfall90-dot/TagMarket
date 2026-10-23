@@ -2,6 +2,8 @@
 <resources>
     <string name="update_eyebrow">Доступно обновление</string>
     <string name="update_title">Platformer %1$s</string>
+    <string name="update_live_eyebrow">Вышло обновление</string>
+    <string name="update_live">Можно обновить сейчас или позже — тогда обновление понадобится при следующем входе в Platformer. Сейчас у вас версия %1$s.</string>
     <string name="update_current">Чтобы продолжить, обновите приложение — это займёт несколько секунд, данные сохранятся. Сейчас у вас версия %1$s.</string>
     <string name="update_reinstall">Эта копия Platformer подписана другим ключом, поверх неё обновление не встанет. Удалите Platformer и установите новую версию по кнопке ниже — данные сохранятся на сервере, нужно будет только войти.</string>
     <string name="update_offline_eyebrow">Проверка обновлений</string>
@@ -17,6 +19,6 @@
     <string name="update_permission">Чтобы Platformer обновлялся сам, разрешите ему устанавливать приложения. Это нужно сделать один раз.</string>
     <string name="update_allow">Разрешить</string>
     <string name="update_retry">Повторить</string>
-    <string name="update_later">Позже</string>
+    <string name="update_later">Обновить позже</string>
     <string name="update_failed">Не получилось обновить: %1$s</string>
 </resources>

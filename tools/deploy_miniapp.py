@@ -26,7 +26,9 @@ FILES = {"accounts.py", "account_lock.py", "agent.py", "bot.py", "coordination.p
          "tools/audit.py", "docs/AUDIT_HOWTO.md",
          # картинки раздела «Частые вопросы» (в откате — необязательные)
          "web/faq-neo-card.jpg", "web/faq-neo-stats.jpg", "web/faq-sonic-card.jpg",
-         "web/faq-sonic-stats.jpg", "web/faq-license.jpg", "web/faq-mt5.jpg", "web/faq-neo-myfxbook.jpg"}
+         "web/faq-sonic-stats.jpg", "web/faq-license.jpg", "web/faq-mt5.jpg", "web/faq-neo-myfxbook.jpg",
+         # тема до первой отрисовки и шрифт интерфейса (в откате — необязательные)
+         "web/theme.js", "web/inter-latin.woff2", "web/inter-cyrillic.woff2", "web/inter-latin-ext.woff2"}
 SERVICES = ["tagmarkets-webhook"]
 # До 23.09.2026 бот был отдельной службой; теперь он работает в процессе
 # вебхука (aiogram грузится один раз — минус ~150 МБ). Прежнюю службу гасим,

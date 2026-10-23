@@ -1291,12 +1291,18 @@ async def broadcast(request):
 
 # картинки раздела «Частые вопросы» — скриншоты стратегий, лицензии и MT5
 FAQ_IMAGES = ("faq-neo-card.jpg", "faq-neo-stats.jpg", "faq-sonic-card.jpg", "faq-sonic-stats.jpg", "faq-license.jpg", "faq-mt5.jpg", "faq-neo-myfxbook.jpg")
+# шрифт интерфейса Inter: латиница, кириллица и расширенная латиница (₽ и др.)
+FONTS = ("inter-latin.woff2", "inter-cyrillic.woff2", "inter-latin-ext.woff2")
 
 
 async def static(request):
     name = request.match_info.get("file", "index.html") or "index.html"
-    if name not in ("index.html", "app.js", "style.css", "preview.json", "privacy.html", *FAQ_IMAGES):
+    if name not in ("index.html", "app.js", "style.css", "theme.js", "preview.json", "privacy.html", *FAQ_IMAGES, *FONTS):
         raise web.HTTPNotFound()
+    if name in FONTS:
+        # файлы шрифта не меняются — пусть лежат в кэше телефона, а не грузятся при каждом запуске
+        return web.FileResponse(STATIC / name, headers={"Content-Type": "font/woff2",
+                                                        "Cache-Control": "public, max-age=31536000, immutable"})
     response = web.FileResponse(STATIC / name)
     response.headers["Cache-Control"] = "no-cache"
     response.headers["Content-Security-Policy"] = ("default-src 'self'; script-src 'self' https://telegram.org; "

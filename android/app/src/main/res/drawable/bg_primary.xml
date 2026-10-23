@@ -1,12 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- главная кнопка — инверсная капсула: белая в тёмной теме, чёрная в светлой -->
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:state_enabled="false">
-        <shape><solid android:color="#4DC6F36A" /><corners android:radius="18dp" /></shape>
+        <shape><solid android:color="@color/fill_strong" /><corners android:radius="28dp" /></shape>
     </item>
     <item>
-        <shape>
-            <gradient android:angle="270" android:startColor="#D4F784" android:endColor="#A9E04F" />
-            <corners android:radius="18dp" />
-        </shape>
+        <shape><solid android:color="@color/accent" /><corners android:radius="28dp" /></shape>
     </item>
 </selector>

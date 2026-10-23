@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Тёмная тема Platformer (по умолчанию): глубокий фиолетовый, как Aura -->
+    <color name="bg">#0C0A18</color>
+    <color name="panel">#18142E</color>
+    <color name="line">#2A2447</color>
+    <color name="text">#F5F3FF</color>
+    <color name="muted">#A9A3C9</color>
+    <color name="accent">#B3A4FF</color>
+    <color name="on_accent">#140E30</color>
+    <color name="negative">#FF7A8C</color>
+    <color name="negative_fill">#1FFF7A8C</color>
+    <color name="fill">#12FFFFFF</color>
+    <color name="fill_strong">#24FFFFFF</color>
+</resources>

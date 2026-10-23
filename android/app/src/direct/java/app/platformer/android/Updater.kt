@@ -21,10 +21,15 @@ import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -38,10 +43,17 @@ import java.net.URL
 import java.security.MessageDigest
 
 /**
- * Самообновление APK, установленного не из Google Play. При запуске (и не чаще раза
- * в 30 минут при возвращении) читает latest.json из релиза на GitHub. Если версия
- * новее — показывает окно: номер версии, что нового и кнопку «Обновить до …».
- * Обновление обязательное: пока окно на экране, приложением пользоваться нельзя.
+ * Самообновление APK, установленного не из Google Play: читает latest.json из релиза
+ * на GitHub и, если версия новее, показывает окно — номер версии, что нового и
+ * «Обновить до …».
+ *
+ * Два случая:
+ * - при входе в приложение (запуск или возвращение после минуты в фоне) обновление
+ *   обязательное: пока окно на экране, приложением пользоваться нельзя;
+ * - пока приложение открыто, новая версия ищется раз в минуту, и вышедшее обновление
+ *   всплывает сразу — с кнопкой «Обновить позже». «Позже» действует до выхода из
+ *   приложения: при следующем входе обновление понадобится.
+ *
  * По кнопке качает APK, сверяет SHA-256, имя пакета, номер версии и подпись с
  * установленным приложением и ставит его через PackageInstaller. На Android 12+
  * обновление самого себя проходит без вопросов; на старых — одно «Установить».
@@ -58,38 +70,94 @@ class Updater(private val activity: ComponentActivity, private val host: FrameLa
     private var offered: Release? = null
     private var netCallback: ConnectivityManager.NetworkCallback? = null
     private var launched = true                             // при открытии приложения проверяем всегда
+    private var mandatory = true                            // окно без «Позже»
+    private var deferred = 0L                               // версия, отложенная «Позже» до выхода
+    private var stoppedAt = 0L                              // когда приложение ушло в фон
 
     init {
         UpdateReceiver.listener = { status, message -> activity.runOnUiThread { onStatus(status, message) } }
+        activity.lifecycle.addObserver(object : DefaultLifecycleObserver {
+            override fun onStop(owner: LifecycleOwner) { stoppedAt = System.currentTimeMillis() }
+        })
+        // пока приложение на экране — раз в минуту смотрим, не вышла ли новая версия
+        if (BuildConfig.UPDATE_URL.isNotBlank()) activity.lifecycleScope.launch {
+            activity.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                while (true) {
+                    delay(POLL_EVERY)
+                    poll()
+                }
+            }
+        }
     }
 
-    /** Новая версия найдена и ещё не установлена — приложение закрыто окном обновления. */
-    val blocking get() = overlay != null
+    /** Обязательное обновление на экране — приложение закрыто им, «Назад» выходит из приложения. */
+    val blocking get() = overlay != null && mandatory
+
+    /** «Назад», пока открыто окно с «Позже», — то же, что «Позже». */
+    fun back(): Boolean {
+        if (overlay == null || mandatory || job?.isActive == true) return false
+        later()
+        return true
+    }
 
     private class WrongSignature : Exception("подпись не совпадает")
 
+    /**
+     * Вход в приложение: запуск или возвращение после минуты в фоне. Быстрый возврат
+     * (поделились ссылкой, выдали разрешение) входом не считается — ничего не меняется.
+     */
     fun onResume() {
-        if (BuildConfig.UPDATE_URL.isBlank() || job?.isActive == true) return
+        if (BuildConfig.UPDATE_URL.isBlank()) return
         waiting?.let { (release, file) ->
             if (canInstall()) launchInstall(release, file)
             return
         }
         val now = System.currentTimeMillis()
-        if (!launched && now - prefs.getLong("checked", 0L) < CHECK_EVERY) return
+        val entry = launched || (stoppedAt > 0 && now - stoppedAt >= GRACE)
+        stoppedAt = 0L
+        if (!entry || job?.isActive == true) return
+        val fresh = launched || now - prefs.getLong("checked", 0L) >= CHECK_EVERY
         launched = false
+        deferred = 0L                                       // «Позже» было до выхода из приложения
         job = activity.lifecycleScope.launch {
             try {
                 val release = withContext(Dispatchers.IO) { fetch() }
                 prefs.edit().putLong("checked", now).apply()
-                if (release.code > BuildConfig.VERSION_CODE) offer(release)
+                if (release.code > BuildConfig.VERSION_CODE) offer(release, required = true)
+                else if (!mandatory) hide()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                // нет интернета — говорим прямо: без проверки войти нельзя; другие сбои (релиза ещё
-                // нет, GitHub недоступен) не мешают пользоваться приложением
-                if (offline(e)) showOffline()
+                // нет интернета при запуске — говорим прямо: без проверки войти нельзя; другие сбои
+                // (релиза ещё нет, GitHub недоступен) не мешают пользоваться приложением
+                if (offline(e) && fresh) showOffline()
             }
         }
+    }
+
+    /** Приложение открыто: вышла новая версия — сразу окно с «Обновить» и «Обновить позже». */
+    private fun poll() {
+        if (job?.isActive == true || overlay != null || waiting != null) return
+        job = activity.lifecycleScope.launch {
+            try {
+                val release = withContext(Dispatchers.IO) { fetch() }
+                prefs.edit().putLong("checked", System.currentTimeMillis()).apply()
+                if (release.code > BuildConfig.VERSION_CODE && release.code != deferred && overlay == null) {
+                    offer(release, required = false)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // пропустили одну проверку — следующая через минуту
+            }
+        }
+    }
+
+    /** «Обновить позже»: окно уходит до выхода из приложения или до ещё более новой версии. */
+    private fun later() {
+        deferred = offered?.code ?: 0L
+        job?.cancel()
+        hide()
     }
 
     private fun offline(e: Exception): Boolean {
@@ -101,6 +169,7 @@ class Updater(private val activity: ComponentActivity, private val host: FrameLa
 
     /** «Нет интернета»: окно с кнопкой «Повторить»; сеть появилась — проверяем сами. */
     private fun showOffline() {
+        mandatory = true
         if (overlay == null) {
             show(null)
         }
@@ -131,7 +200,7 @@ class Updater(private val activity: ComponentActivity, private val host: FrameLa
             try {
                 val release = withContext(Dispatchers.IO) { fetch() }
                 prefs.edit().putLong("checked", System.currentTimeMillis()).apply()
-                if (release.code > BuildConfig.VERSION_CODE) offer(release) else hide()
+                if (release.code > BuildConfig.VERSION_CODE) offer(release, required = true) else hide()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -148,16 +217,22 @@ class Updater(private val activity: ComponentActivity, private val host: FrameLa
         runCatching { activity.getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(callback) }
     }
 
-    /** Окно «Доступно обновление»: версия, что нового и «Обновить до …». */
-    private fun offer(release: Release) {
+    /**
+     * Окно обновления: версия, что нового и «Обновить до …». required — при входе в приложение
+     * (обязательное), иначе — вышло, пока приложение открыто: есть «Обновить позже».
+     */
+    private fun offer(release: Release, required: Boolean = mandatory) {
         stopWatchingNetwork()
+        mandatory = required
         show(release)
-        overlay?.findViewById<TextView>(R.id.update_eyebrow)?.text = activity.getString(R.string.update_eyebrow)
+        overlay?.findViewById<TextView>(R.id.update_eyebrow)?.text =
+            activity.getString(if (required) R.string.update_eyebrow else R.string.update_live_eyebrow)
         val view = overlay ?: return
         val notes = release.notes.ifEmpty { listOf(activity.getString(R.string.update_no_notes)) }
         view.findViewById<TextView>(R.id.update_notes).text = notes.joinToString("\n") { "•  $it" }
         notesVisible(true)
-        state(release, activity.getString(R.string.update_current, BuildConfig.VERSION_NAME), busy = false,
+        val text = activity.getString(if (required) R.string.update_current else R.string.update_live, BuildConfig.VERSION_NAME)
+        state(release, text, busy = false,
             action = activity.getString(R.string.update_now, release.name.ifBlank { release.code.toString() })) {
             start(release)
         }
@@ -377,7 +452,7 @@ class Updater(private val activity: ComponentActivity, private val host: FrameLa
         when (status) {
             PackageInstaller.STATUS_PENDING_USER_ACTION, PackageInstaller.STATUS_SUCCESS -> Unit
             // нажали «Отмена» в окне Android — обновление обязательное, предлагаем снова
-            PackageInstaller.STATUS_FAILURE_ABORTED -> offered?.let { offer(it) }
+            PackageInstaller.STATUS_FAILURE_ABORTED -> offered?.let { offer(it, mandatory) }
             else -> fail(offered, message ?: "ошибка $status")
         }
     }
@@ -420,7 +495,10 @@ class Updater(private val activity: ComponentActivity, private val host: FrameLa
         button.visibility = if (action != null) View.VISIBLE else View.GONE
         button.text = action.orEmpty()
         button.setOnClickListener { onAction?.invoke() }
-        view.findViewById<Button>(R.id.update_later).visibility = View.GONE   // обновление обязательное
+        // «Обновить позже» — только у обновления, вышедшего при открытом приложении, и не во время загрузки
+        val later = view.findViewById<Button>(R.id.update_later)
+        later.visibility = if (!mandatory && !busy) View.VISIBLE else View.GONE
+        later.setOnClickListener { later() }
     }
 
     private fun progress(pct: Int, total: Long) {
@@ -463,7 +541,9 @@ class Updater(private val activity: ComponentActivity, private val host: FrameLa
         if (bytes > 0) "%.1f МБ".format(bytes / 1_048_576.0) else "…"
 
     private companion object {
-        const val CHECK_EVERY = 30 * 60 * 1000L
+        const val CHECK_EVERY = 30 * 60 * 1000L             // без интернета не пускаем, если не проверяли полчаса
+        const val POLL_EVERY = 60 * 1000L                   // пока приложение открыто
+        const val GRACE = 60 * 1000L                        // короче — не «вход», а быстрый возврат
         const val MAX_SIZE = 80L * 1024 * 1024
     }
 }

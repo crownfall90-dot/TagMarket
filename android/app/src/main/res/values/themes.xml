@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.Platformer" parent="android:Theme.Material.NoActionBar">
+    <!-- основа: светлая системная тема; в values-night — тёмная (поля ввода, курсор, выделение) -->
+    <style name="Base.Platformer" parent="android:Theme.Material.Light.NoActionBar" />
+
+    <style name="Theme.Platformer" parent="Base.Platformer">
         <item name="android:windowBackground">@color/bg</item>
         <item name="android:colorBackground">@color/bg</item>
         <item name="android:colorAccent">@color/accent</item>
@@ -8,12 +11,12 @@
         <item name="android:textColorSecondary">@color/muted</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
-        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightStatusBar">@bool/light_bars</item>
     </style>
 
     <style name="Theme.Platformer.Starting" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">@color/bg</item>
-        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash</item>
         <item name="postSplashScreenTheme">@style/Theme.Platformer</item>
     </style>
 </resources>
