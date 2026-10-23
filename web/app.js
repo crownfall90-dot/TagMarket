@@ -629,8 +629,13 @@ function appPermissions(){try{return JSON.parse(androidApp?.permissions?.()||'{}
 function permissionsPanel(){const p=appPermissions();if(!('steps' in p))return '';
  const row=(kind,title,on,off,state)=>`<div class="settings-row perm-row"><span class="settings-account-info"><b>${title}</b><small>${state==='on'?on:off}</small></span>${state==='on'?'<span class="badge">включено</span>':`<button type="button" class="pill" data-action="perm-fix" data-kind="${kind}">Включить</button>`}</div>`;
  const steps=p.steps==='granted'?'on':'off',note=p.steps==='unavailable'?'Нужно приложение Health Connect — откроем его в Google Play':'Доступ выключен — шаги не обновляются';
- return `<section class="panel"><div class="panel-head"><h2>Доступы телефона</h2></div>${row('steps','Шаги','Шаги обновляются сами в фоне',note,steps)}${row('notifications','Уведомления','Пополнения, выводы и профит приходят на телефон','Выключены — события не придут на телефон',p.notifications?'on':'off')}</section>`;}
-window.onPlatformerPermissions=()=>{if(state.data&&state.view==='settings')render(true);};
+ return `<section class="panel"><div class="panel-head"><h2>Доступы телефона</h2></div>${row('steps','Шаги','Шаги обновляются сами в фоне',note,steps)}${'health' in p?row('health','Сон и пульс','Читаем из Health Connect',p.health==='unavailable'?'Нужно приложение Health Connect — откроем его в Google Play':'Доступ выключен — сон и пульс не приходят',p.health==='granted'?'on':'off'):''}${row('notifications','Уведомления','Пополнения, выводы и профит приходят на телефон','Выключены — события не придут на телефон',p.notifications?'on':'off')}</section>`;}
+let healthAccess=null;
+window.onPlatformerPermissions=()=>{
+ const now=appPermissions().health;
+ if(healthAccess&&healthAccess!=='granted'&&now==='granted'&&!preview)setTimeout(async()=>{try{state.activity=await api('/activity?days='+(state.activityDays||7));if(state.view==='activity')render(true);}catch{}},5000);
+ healthAccess=now;
+ if(state.data&&(state.view==='settings'||state.view==='activity'))render(true);};
 function settingsView(){const personal=state.data.accounts;return secHero('set','Настройки','Тема и счета')+`<div class="two-column"><section class="panel"><div class="panel-head"><h2>Оформление</h2></div>${themePicker()}${appToken()?'':`<button class="shortcut-card" type="button" data-action="shortcut"><span class="shortcut-tile">${icon('overview')}</span><span class="shortcut-copy"><b>Ярлык на экран</b><small>Открывать Platformer в один тап</small></span><span class="pill">Добавить</span></button>`}</section><section class="panel"><div class="panel-head"><h2>Мои счета</h2><span class="badge">${personal.length}</span></div>${personal.map(a=>`<button type="button" class="settings-row settings-account-row compact-row" data-ui-key="account-${esc(a.login)}" data-action="account-settings" data-login="${esc(a.login)}"><span class="settings-account-info"><b>${esc(a.strategy||a.name)}</b><small>${esc(a.cabinet||'Без кабинета')}${a.holder?` · ${esc(a.holder)}`:''}</small></span><span class="settings-balance">${a.totals?money(a.totals.now,a.totals.cur):'—'}</span>${icon('chevron')}</button>`).join('')||'<p class="muted mt">Счетов пока нет.</p>'}</section></div>${appToken()?permissionsPanel():''}${appToken()?`<section class="panel leave-card"><div><b>Это устройство</b><small>Выйти из Platformer на этом телефоне</small></div><button type="button" class="leave-btn" data-action="app-logout">${icon('exit')}<span>Выйти</span></button></section>`:''}${state.data.founder?servicePanel():`<section class="panel leave-card"><div><b>Доступ</b><small>Счета и данные будут удалены</small></div><button type="button" class="leave-btn" data-action="leave">${icon('exit')}<span>Отключить мой доступ</span></button></section>`}`+appVersionLine();}
 // Внизу настроек — какая версия открыта: у приложения для Android — номер из сборки
 // (он же в окне обновления), у веб-части — дата выкладки интерфейса
@@ -1600,7 +1605,20 @@ function healthCards(sum,goals){
   const pts=series.map((p,i)=>`${(series.length<2?w/2:i/(series.length-1)*w).toFixed(1)},${(h-4-(hi===lo?.5:(p.value-lo)/(hi-lo))*(h-12)).toFixed(1)}`).join(' ');
   cards.push(`<section class="hl-card hl-pulse" data-ui-key="health-pulse"><div class="hl-head"><span class="hl-ico">${icon('heart')}</span><span>Пульс</span><em>${esc(label)}</em></div><b class="hl-big">${main==null?'—':number(Math.round(main))}<small> уд/мин</small></b><div class="hl-chips">${avgNow!=null&&restNow!=null?`<span>средний <b>${number(Math.round(avgNow))}</b></span>`:''}${mx?.today??mx?.last?`<span>максимум <b>${number(Math.round(mx.today??mx.last))}</b></span>`:''}</div>${series.length>1?`<svg class="hl-line" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true"><polyline points="${pts}"/></svg>`:''}</section>`);
  }
+ const hint=healthHint(sum);if(hint)cards.push(hint);
  return cards.length?`<div class="hl-grid">${cards.join('')}</div>`:'';
+}
+// Сон и пульс приходят только через Health Connect: без доступа или без часов, которые туда
+// пишут, карточек нет — объясняем почему и даём кнопку вместо тишины
+function healthHint(sum){
+ const p=appPermissions();if(!('health' in p))return '';
+ const noSleep=!sum?.sleep?.series?.length,noPulse=!sum?.pulse?.series?.length&&!sum?.hr_avg?.series?.length;
+ if(!noSleep&&!noPulse)return '';
+ const what=noSleep&&noPulse?'Сон и пульс':noSleep?'Сон':'Пульс';
+ const [title,text,label]=p.health==='unavailable'?[`${what} — через Health Connect`,'Шаги считает сам телефон, а сон и пульс приходят из Health Connect. Установите его — откроем Google Play.','Установить']
+  :p.health!=='granted'?[`Подключите ${what.toLowerCase()}`,'Разрешите Platformer читать сон и пульс в Health Connect — данные появятся здесь сами.','Подключить']
+  :[`${what}: пока нет данных`,'Доступ есть, но в Health Connect нет записей. Включите в приложении часов или браслета (Mi Fitness, Zepp Life, Samsung Health, HeyTap Health и т. п.) синхронизацию с Health Connect — и всё подтянется.','Открыть Health Connect'];
+ return `<section class="hl-card hl-hint" data-ui-key="health-hint"><div class="hl-head"><span class="hl-ico">${icon(noSleep?'moon':'heart')}</span><span>${esc(title)}</span></div><p>${esc(text)}</p><button type="button" class="pill" data-action="perm-fix" data-kind="health">${esc(label)}</button></section>`;
 }
 function activityView(){
  const sum=state.activity?.summary,st=sum?.steps;
