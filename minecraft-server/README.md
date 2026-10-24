@@ -11,6 +11,8 @@ Minecraft **1.21.1**, Fabric loader **0.17.2**, сборка [harpy-express 1.4.
 ./start.sh --accept-eula   # принимая EULA Mojang: https://aka.ms/MinecraftEULA
 ```
 
+На Windows: `start.bat --accept-eula` (из архива сервера, `install.sh` там не нужен; Java 21+ должна быть в PATH).
+
 Память: `JAVA_OPTS="-Xms4G -Xmx6G" ./start.sh`. Настройки — в `server.properties` (шаблон: `server.properties.example`).
 Стать оператором: введите `op <ник>` в консоли сервера.
 
