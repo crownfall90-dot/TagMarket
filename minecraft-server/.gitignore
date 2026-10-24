@@ -1,0 +1,18 @@
+# Скачивается install.sh
+mods/
+config/
+world/
+libraries/
+versions/
+.fabric/
+fabric-server-launch.jar
+.install-cache/
+# Состояние сервера
+server.properties
+eula.txt
+logs/
+crash-reports/
+usercache.json
+ops.json
+whitelist.json
+banned-*.json

@@ -1,0 +1,15 @@
+motd=The Last Voyage of the Harpy Express
+server-port=25565
+max-players=16
+online-mode=true
+difficulty=normal
+gamemode=adventure
+force-gamemode=true
+level-name=world
+view-distance=10
+simulation-distance=8
+spawn-protection=0
+allow-flight=true
+enable-command-block=true
+white-list=false
+enforce-secure-profile=false
