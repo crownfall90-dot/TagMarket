@@ -16,5 +16,6 @@ enforce-secure-profile=false
 # Обязательный русский ресурспак (перевод модов Extended); исходники и сборка: resourcepack/
 resource-pack=https://raw.githubusercontent.com/crownfall90-dot/TagMarket/962df4714b2035451abae4f5ea5272945de54f33/minecraft-server/resourcepack/harpy-express-ru.zip
 resource-pack-sha1=71f18be1aa09bb6a0c67b6bcd21443015216a447
+resource-pack-id=873a945b-e3f0-4987-bafc-0246cdd911da
 require-resource-pack=true
 resource-pack-prompt={"text":"\u041e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u044b\u0439 \u0440\u0443\u0441\u0441\u043a\u0438\u0439 \u043f\u0435\u0440\u0435\u0432\u043e\u0434 \u0441\u0431\u043e\u0440\u043a\u0438 Harpy Express: Extended","color":"gold"}
