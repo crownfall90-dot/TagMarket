@@ -1,6 +1,6 @@
-# The Last Voyage of the Harpy Express — сервер
+# The Harpy Express: Extended — сервер
 
-Minecraft **1.21.1**, Fabric loader **0.17.2**, сборка [harpy-express 1.4.1](https://modrinth.com/modpack/harpy-express) (Modrinth).
+Minecraft **1.21.1**, Fabric loader **0.18.4**, сборка [The Harpy Express: Extended 3.8.141](https://modrinth.com/modpack/the-harpy-express-extended) (Modrinth).
 
 ## Запуск
 
@@ -25,11 +25,10 @@ Minecraft **1.21.1**, Fabric loader **0.17.2**, сборка [harpy-express 1.4.
 
 ## Клиент
 
-Игрокам нужна та же сборка: импортируйте `.mrpack` с Modrinth в Prism Launcher / Modrinth App (версия 1.4.1).
+Игрокам нужна та же сборка: импортируйте `.mrpack` с Modrinth в Prism Launcher / Modrinth App (**Extended 3.8.141**, не оригинальную 1.4.1).
 
 ## Что установлено на сервере
 
-Fabric API, Wathe (Train Murder Mystery), Simple Voice Chat, Sound Physics Remastered, Carpet, Cloth Config, Placeholder API, Ratatouille.
-Клиентские `modmenu` и `InvMove` пропущены. Карта `The Harpy Express` копируется в `world/`.
+Моды из `modrinth.index.json` сборки, помеченные как серверные (Wathe, Wathe Extended, Noelle's Roles, Supplementaries, Simple Voice Chat и др.); клиентские (Sodium, Iris, ModMenu и т.д.) пропущены. Карта из сборки копируется в `world/`.
 
-Обновление сборки: поправьте `PACK_URL` в `install.sh`; существующий `world/` не перезаписывается.
+Обновление сборки: поправьте `PACK_URL` в `install.sh` (или `PACK_URL=... ./install.sh`). `mods/` пересоздаётся, `config/` и существующий `world/` не перезаписываются.

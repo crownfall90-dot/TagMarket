@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Устанавливает сервер The Last Voyage of the Harpy Express (Minecraft 1.21.1, Fabric).
-# Источник сборки: https://modrinth.com/modpack/harpy-express
+# Устанавливает сервер The Harpy Express: Extended (Minecraft 1.21.1, Fabric).
+# Источник сборки: https://modrinth.com/modpack/the-harpy-express-extended
+# Другая сборка: PACK_URL=<ссылка на .mrpack> ./install.sh
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
-PACK_URL="${PACK_URL:-https://cdn.modrinth.com/data/qusMP4Bj/versions/pGekvIav/The%20Last%20Voyage%20of%20the%20Harpy%20Express%201.4.1.mrpack}"
+PACK_URL="${PACK_URL:-https://cdn.modrinth.com/data/2i0gqJXe/versions/SQLyLSA9/The%20Harpy%20Express%20-%20Extended%203.8.141.mrpack}"
 INSTALLER_VERSION="${INSTALLER_VERSION:-1.0.1}"
 WORK=".install-cache"
 
@@ -18,7 +19,7 @@ curl -fsSL -o "$WORK/pack.mrpack" "$PACK_URL"
 python3 -I -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$WORK/pack.mrpack" "$WORK/pack"
 
 echo "==> Скачиваю серверные моды (с проверкой sha512)"
-mkdir -p mods
+rm -rf mods && mkdir -p mods
 python3 -I - "$WORK/pack/modrinth.index.json" <<'PY'
 import hashlib, json, os, sys, urllib.request
 
@@ -47,9 +48,10 @@ curl -fsSL -o fabric-server-launch.jar \
 echo "==> Конфиги сборки"
 cp -rn "$WORK/pack/overrides/config" . 2>/dev/null || true
 
-if [ ! -d world ] && [ -d "$WORK/pack/overrides/saves/The Harpy Express" ]; then
-  echo "==> Копирую карту The Harpy Express в world/"
-  cp -r "$WORK/pack/overrides/saves/The Harpy Express" world
+SAVE_DIR=$(find "$WORK/pack/overrides/saves" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -n 1)
+if [ ! -d world ] && [ -n "$SAVE_DIR" ]; then
+  echo "==> Копирую карту из сборки в world/"
+  cp -r "$SAVE_DIR" world
   rm -f world/session.lock
 fi
 
