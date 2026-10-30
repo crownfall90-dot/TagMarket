@@ -1,0 +1,23 @@
+{
+  "argument.harpymodloader.role.notfound": "Роль %s не найдена",
+  "argument.harpymodloader.role.found-multiple": "В %s найдено несколько ролей",
+  "argument.harpymodloader.modifier.notfound": "Модификатор %s не найден",
+  "argument.harpymodloader.modifier.found-multiple": "В %s найдено несколько модификаторов",
+  "commands.setenabledrole.unchanged": "Ничего не изменилось",
+  "commands.setenabledrole.enable.success": "Роль %s включена",
+  "commands.setenabledrole.disable.success": "Роль %s отключена",
+  "commands.setenabledmodifier.unchanged": "Ничего не изменилось",
+  "commands.setenabledmodifier.enable.success": "Модификатор %s включён",
+  "commands.setenabledmodifier.disable.success": "Модификатор %s отключён",
+  "commands.forcerole.success": "Роль %s принудительно назначена игроку %s",
+  "commands.forcerole.query": "У игрока %s принудительно назначена роль %s",
+  "commands.forcerole.query.none": "У игрока %s нет принудительной роли",
+  "commands.listroles.role.title": "§bРоли:",
+  "commands.listroles.modifier.title": "§eМодификаторы:",
+  "commands.listroles.status.enabled.text": "§a[Включено]",
+  "commands.listroles.status.enabled.hover": "§cНажмите, чтобы отключить\n%s",
+  "commands.listroles.status.disabled.text": "§c[Отключено]",
+  "commands.listroles.status.disabled.hover": "§aНажмите, чтобы включить\n%s",
+  "announcement.modifier": "Модификаторы: ",
+  "announcement.no_modifiers": "Без модификаторов"
+}
