@@ -40,7 +40,27 @@ for f in index["files"]:
     print("  ok:", dest)
 PY
 
+# Дополнительные серверные моды с Modrinth (слаги через пробел), не входящие в сборку
+EXTRA_MODS="${EXTRA_MODS:-carpet}"
 read -r MC_VERSION LOADER_VERSION < "$WORK/loader.txt"
+echo "==> Дополнительные моды: $EXTRA_MODS"
+python3 -I - "$MC_VERSION" $EXTRA_MODS <<'PY'
+import hashlib, json, sys, urllib.parse, urllib.request
+
+mc = sys.argv[1]
+for slug in sys.argv[2:]:
+    q = urllib.parse.urlencode({"game_versions": json.dumps([mc]), "loaders": json.dumps(["fabric"])})
+    versions = json.load(urllib.request.urlopen(f"https://api.modrinth.com/v2/project/{slug}/version?{q}"))
+    if not versions:
+        sys.exit(f"Нет версии {slug} для {mc}")
+    f = next(f for f in versions[0]["files"] if f["primary"])
+    data = urllib.request.urlopen(f["url"]).read()
+    if hashlib.sha512(data).hexdigest() != f["hashes"]["sha512"]:
+        sys.exit(f"Хеш не совпал: {f['filename']}")
+    open("mods/" + f["filename"], "wb").write(data)
+    print("  ok:", f["filename"])
+PY
+
 echo "==> Fabric server launcher (MC $MC_VERSION, loader $LOADER_VERSION)"
 curl -fsSL -o fabric-server-launch.jar \
   "https://meta.fabricmc.net/v2/versions/loader/$MC_VERSION/$LOADER_VERSION/$INSTALLER_VERSION/server/jar"

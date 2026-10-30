@@ -29,6 +29,6 @@ Minecraft **1.21.1**, Fabric loader **0.18.4**, сборка [The Harpy Express:
 
 ## Что установлено на сервере
 
-Моды из `modrinth.index.json` сборки, помеченные как серверные (Wathe, Wathe Extended, Noelle's Roles, Supplementaries, Simple Voice Chat и др.); клиентские (Sodium, Iris, ModMenu и т.д.) пропущены. Карта из сборки копируется в `world/`.
+Моды из `modrinth.index.json` сборки, помеченные как серверные (Wathe, Wathe Extended, Noelle's Roles, Supplementaries, Simple Voice Chat и др.); клиентские (Sodium, Iris, ModMenu и т.д.) пропущены. Дополнительно ставится Carpet (`EXTRA_MODS`, на клиенте необязателен). Карта из сборки копируется в `world/`.
 
 Обновление сборки: поправьте `PACK_URL` в `install.sh` (или `PACK_URL=... ./install.sh`). `mods/` пересоздаётся, `config/` и существующий `world/` не перезаписываются.
