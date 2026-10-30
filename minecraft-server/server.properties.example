@@ -13,3 +13,8 @@ allow-flight=true
 enable-command-block=true
 white-list=false
 enforce-secure-profile=false
+# Обязательный русский ресурспак (перевод модов Extended); исходники и сборка: resourcepack/
+resource-pack=https://raw.githubusercontent.com/crownfall90-dot/TagMarket/962df4714b2035451abae4f5ea5272945de54f33/minecraft-server/resourcepack/harpy-express-ru.zip
+resource-pack-sha1=71f18be1aa09bb6a0c67b6bcd21443015216a447
+require-resource-pack=true
+resource-pack-prompt={"text":"Обязательный русский перевод сборки Harpy Express: Extended","color":"gold"}
