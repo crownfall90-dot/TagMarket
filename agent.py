@@ -377,7 +377,7 @@ def _reload_config() -> None:
 # секунд без сбоев (подтверждается через сервер, не напрямую между машинами —
 # агенты друг про друга ничего не знают, кроме общего /status).
 AUTO_UPDATE = os.getenv("AUTO_UPDATE", "1") not in ("0", "false", "no")
-UPDATE_CHECK_EVERY = int(os.getenv("UPDATE_CHECK_EVERY", 900))     # раз в 15 минут
+UPDATE_CHECK_EVERY = int(os.getenv("UPDATE_CHECK_EVERY", 60))     # раз в 15 минут
 CANARY_DELAY = int(os.getenv("CANARY_DELAY", 1800))                # 30 минут пробега на standby
 GIT_REMOTE = os.getenv("GIT_REMOTE", "origin")
 GIT_BRANCH = os.getenv("GIT_BRANCH", "main")
