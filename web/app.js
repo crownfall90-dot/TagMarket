@@ -792,7 +792,7 @@ function previewBounds(period,params){
  if(period==='yesterday')return [key(move(day,-1)),key(move(day,-1))];
  if(period==='week')return [key(monday),key(day)];
  if(period==='lastweek')return [key(move(monday,-7)),key(move(monday,-1))];
- if(period==='month')return [key(month),key(day)];
+ if(period==='month')return [day.getUTCDate()<5?key(move(day,-14)):key(month),key(day)];
  if(period==='lastmonth')return [key(new Date(Date.UTC(day.getUTCFullYear(),day.getUTCMonth()-1,1))),key(move(month,-1))];
  if(period==='custom')return [params.get('from')||'9999-12-31',params.get('to')||'0000-01-01'];
  return ['0000-01-01','9999-12-31'];

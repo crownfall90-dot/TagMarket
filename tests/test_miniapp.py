@@ -1371,22 +1371,22 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             saved = projects.save(self.db, "1", {"name": "Mixed", "currency": "USD", "rate_percent": 2,
                 "period": "month", "multi": True,
                 "accounts": [{"name": "A", "amount": 1000, "fixed_income": 50}, {"name": "B", "amount": 1000}]})
-        first, second = saved["accounts"]
-        self.assertEqual(first["fixed_income"], 50)
-        self.assertIsNone(second["fixed_income"])
-        self.assertAlmostEqual(first["expected_income"], 70)       # 2% от 1000 + 50
-        self.assertAlmostEqual(second["expected_income"], 20)
-        self.assertAlmostEqual(saved["expected_income"], 90)
-        self.assertEqual(saved["fixed_extra_total"], 50)
-        self.assertAlmostEqual(first["daily_income"], 70 / projects.period_days("month"))
-        # правка другого поля аккаунта не сбрасывает доплату, а явный 0/пусто её убирает
-        edited = projects.account_change(self.db, "1", saved["id"], {"rate_percent": 3}, first["id"])
-        self.assertEqual(edited["accounts"][0]["fixed_income"], 50)
-        self.assertAlmostEqual(edited["accounts"][0]["expected_income"], 80)
-        cleared = projects.account_change(self.db, "1", saved["id"], {"fixed_income": ""}, first["id"])
-        self.assertIsNone(cleared["accounts"][0]["fixed_income"])
-        added = projects.account_change(self.db, "1", saved["id"], {"name": "C", "amount": 500, "fixed_income": 12.5})
-        self.assertEqual(added["accounts"][2]["fixed_income"], 12.5)
+            first, second = saved["accounts"]
+            self.assertEqual(first["fixed_income"], 50)
+            self.assertIsNone(second["fixed_income"])
+            self.assertAlmostEqual(first["expected_income"], 70)       # 2% от 1000 + 50
+            self.assertAlmostEqual(second["expected_income"], 20)
+            self.assertAlmostEqual(saved["expected_income"], 90)
+            self.assertEqual(saved["fixed_extra_total"], 50)
+            self.assertAlmostEqual(first["daily_income"], 70 / projects.period_days("month"))
+            # правка другого поля аккаунта не сбрасывает доплату, а явный 0/пусто её убирает
+            edited = projects.account_change(self.db, "1", saved["id"], {"rate_percent": 3}, first["id"])
+            self.assertEqual(edited["accounts"][0]["fixed_income"], 50)
+            self.assertAlmostEqual(edited["accounts"][0]["expected_income"], 80)
+            cleared = projects.account_change(self.db, "1", saved["id"], {"fixed_income": ""}, first["id"])
+            self.assertIsNone(cleared["accounts"][0]["fixed_income"])
+            added = projects.account_change(self.db, "1", saved["id"], {"name": "C", "amount": 500, "fixed_income": 12.5})
+            self.assertEqual(added["accounts"][2]["fixed_income"], 12.5)
 
     async def test_account_fixed_income_validation(self):
         base = {"name": "Bad", "currency": "USD", "rate_percent": 1, "period": "month", "multi": False}

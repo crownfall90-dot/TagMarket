@@ -51,6 +51,8 @@ val firebase: Map<String, String> = run {
 
 // Подпись для Google Play: ключ загрузки из переменных окружения CI (никогда не в репозитории)
 val keystoreFile = System.getenv("PLATFORMER_KEYSTORE")?.let { file(it) }?.takeIf { it.exists() }
+// Постоянный ключ для прямых сборок (direct release): гарантирует самообновление APK
+val directKeyFile = rootProject.file("direct-release.p12").takeIf { it.exists() }
 
 android {
     namespace = "app.platformer.android"
@@ -79,6 +81,15 @@ android {
                 keyPassword = System.getenv("PLATFORMER_KEY_PASSWORD")
             }
         }
+        if (directKeyFile != null) {
+            create("directKey") {
+                storeFile = directKeyFile
+                storePassword = "platformer-direct-key"
+                keyAlias = "platformer"
+                keyPassword = "platformer-direct-key"
+                storeType = "PKCS12"
+            }
+        }
     }
 
     buildTypes {
@@ -86,7 +97,11 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            if (keystoreFile != null) signingConfig = signingConfigs.getByName("upload")
+            if (keystoreFile != null) {
+                signingConfig = signingConfigs.getByName("upload")
+            } else if (directKeyFile != null) {
+                signingConfig = signingConfigs.getByName("directKey")
+            }
         }
     }
 
