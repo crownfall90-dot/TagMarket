@@ -1456,13 +1456,24 @@ function projectsView(){
  const cur=state.displayCurrency;
  if(state.projects===null)return `<div class="project-space fin">${header('Финансы','Банки, проекты и TagMarket')}${state.projectsError?empty('Не удалось загрузить проекты',state.projectsError,button('refresh','Попробовать снова')):'<p class="muted">Загружаем…</p>'}</div>`;
  const portfolio=portfolioTotals();
- let daily=0,known=false;for(const p of activeProjects()){const inc=projectDailyIncome(p),v=inc==null||p.calculation_limited?null:displayAmount(inc,p.currency);if(v!=null){daily+=v;known=true;}}
- if(tagStatsOk()&&portfolio.tag!=null){daily+=portfolio.tag*state.tagStats.average_daily_return;known=true;}
- const pay=incomeMonthly();if(pay.sum>0){daily+=pay.sum*12/365;known=true;}
+ const scope=state.incomeScope||(localStorage.getItem('fin-income-scope')||'projects');
+ state.incomeScope=scope;
+
+ let dailyProj=0,knownProj=false;for(const p of activeProjects()){const inc=projectDailyIncome(p),v=inc==null||p.calculation_limited?null:displayAmount(inc,p.currency);if(v!=null){dailyProj+=v;knownProj=true;}}
+ if(tagStatsOk()&&portfolio.tag!=null){dailyProj+=portfolio.tag*state.tagStats.average_daily_return;knownProj=true;}
+ const pay=incomeMonthly();
+ const dailySal=pay.sum>0?pay.sum*12/365:0,knownSal=pay.sum>0;
+
+ let daily=0,known=false,scopeNote='по проектам';
+ if(scope==='salary'){daily=dailySal;known=knownSal;scopeNote='зарплата';}
+ else if(scope==='all'){daily=dailyProj+dailySal;known=knownProj||knownSal;scopeNote='всё вместе';}
+ else{daily=dailyProj;known=knownProj;scopeNote='по проектам';}
+
  const projSum=activeProjects().reduce((n,p)=>n+(displayAmount(p.current_total??p.total,p.currency)||0),0);
  const parts=[['Банки',portfolio.banks||0,'banks'],['Проекты',projSum,'projects'],['TagMarket',portfolio.tag||0,'tag']].filter(x=>x[1]>0),whole=parts.reduce((n,x)=>n+x[1],0);
  const alloc=whole>0?`<div class="fin-alloc" role="img" aria-label="Из чего состоят активы">${parts.map(([l,v,k],i)=>`<i class="fa-${k}" style="--w:${(v/whole*100).toFixed(1)}%;--d:${i*120}ms"></i>`).join('')}</div><div class="fin-legend">${parts.map(([l,v,k])=>`<span><i class="fa-${k}"></i>${l} <em>${Math.round(v/whole*100)}%</em></span>`).join('')}</div>`:'';
- const hero=`<div class="page-head sec-hero tone-fin fin-hero" data-ui-key="fin-hero"><div class="fin-main"><span class="sec-eyebrow">Все активы</span><b class="fin-total">${portfolio.own==null?'—':countUp(portfolio.own,`money:${cur}`)}</b><p class="fin-sub"><b class="${daily<0?'negative':'positive'}">${known?`≈ ${money(daily,cur,true)}`:'—'}</b> в день · рабочий капитал <b>${portfolio.working==null?'—':money(portfolio.working,cur)}</b></p></div><a class="button secondary forecast-link" href="#forecast">${icon('chart')}<span>Прогноз</span></a></div>${alloc}`;
+ const scopePills=`<div class="segmented compact fin-scope-pills" role="tablist" aria-label="Состав дохода"><button type="button" class="${scope==='projects'?'active':''}" data-action="income-scope" data-value="projects">Проекты</button><button type="button" class="${scope==='salary'?'active':''}" data-action="income-scope" data-value="salary">Зарплата</button><button type="button" class="${scope==='all'?'active':''}" data-action="income-scope" data-value="all">Всё вместе</button></div>`;
+ const hero=`<div class="page-head sec-hero tone-fin fin-hero" data-ui-key="fin-hero"><div class="fin-main"><span class="sec-eyebrow">Все активы</span><b class="fin-total">${portfolio.own==null?'—':countUp(portfolio.own,`money:${cur}`)}</b><p class="fin-sub"><b class="${daily<0?'negative':'positive'}">${known?`≈ ${money(daily,cur,true)}`:'—'}</b> в день (${scopeNote}) · рабочий капитал <b>${portfolio.working==null?'—':money(portfolio.working,cur)}</b></p>${scopePills}</div><a class="button secondary forecast-link" href="#forecast">${icon('chart')}<span>Прогноз</span></a></div>${alloc}`;
  const projects=state.projects.length?`<div class="project-grid">${projectCard({id:'tagmarket-system',name:'TagMarket',total:portfolio.tag,currency:cur,rate_percent:0,period:'month',multi:true,accounts:state.data.accounts,system:true})}${state.projects.map(projectCard).join('')}</div>`:`<div class="project-grid">${projectCard({id:'tagmarket-system',name:'TagMarket',total:portfolio.tag,currency:cur,rate_percent:0,period:'month',multi:true,accounts:state.data.accounts,system:true})}</div><section class="lists-empty fin-empty"><span class="empty-orb">${icon('projects')}</span><b>Добавьте первый проект</b><p>Вклад, инвестиции или любой доход с процентом — Platformer сам посчитает начисления каждый день.</p>${button('project-create','Добавить проект','primary','plus')}</section>`;
  return `<div class="project-space fin">${hero}${state.projectsError?notice('Не удалось обновить проекты. Показаны последние данные.',true):''}${finOnboarding()}${walletSection()}${incomeSection()}${goalsSection()}<section class="fin-projects" data-ui-key="fin-projects"><div class="sec-row"><h2>Проекты</h2>${state.projects.length?`<button type="button" class="text-link head-primary-link" data-action="project-create">${icon('plus')} Проект</button>`:''}</div>${projects}</section>${spendSection()}${projectsDynamics(portfolio)}</div>`;
 }
@@ -2107,6 +2118,7 @@ document.addEventListener('click',async event=>{const el=event.target.closest('[
  else if(action==='revoke-guest'){if(await confirm('Закрыть доступ гостю?','Ваши переданные счета исчезнут у гостя. Его личные счета и доступ к собственному кабинету сохранятся.','Закрыть доступ'))await mutate('/guests/'+el.dataset.guest,{action:'revoke'});}
  else if(action==='take'){if(await confirm('Забрать счёт у гостя?','Остальные счета гостя сохранятся.'))await mutate('/guests/'+el.dataset.guest,{action:'take',login:Number(el.dataset.login)});}
  else if(action==='alerts')await mutate('/actions',{action:'update_alerts',value:!state.data.update_alerts});
+ else if(action==='income-scope'){state.incomeScope=el.dataset.value;try{localStorage.setItem('fin-income-scope',state.incomeScope);}catch{}render(true);}
  else if(action==='perm-fix'){try{androidApp?.fix?.(el.dataset.kind);}catch{}}
  else if(action==='app-logout'){if(await confirm('Выйти на этом телефоне?','Чтобы войти снова, запросите новый код в боте.','Выйти')){try{await api('/device/logout',{method:'POST'});}catch{}try{androidApp?.signOut?.();}catch{}}}
  else if(action==='leave'){if(await confirm('Отключить доступ?','Счета и приглашения в боте будут удалены. Для возвращения понадобится новое приглашение.','Отключить')){await api('/actions',{method:'POST',body:JSON.stringify({action:'leave'})});state.data=null;await refresh();}}

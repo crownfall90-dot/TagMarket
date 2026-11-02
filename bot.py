@@ -1753,30 +1753,30 @@ async def poll_mt5(bot: Bot, db) -> int:
                     functools.partial(_send_id, bot, owner, markup=markup),
                     functools.partial(_edit_notice, bot),
                     ref=f"{acc['login']}:{main['ticket']}")
-                if status == "failed":
-                    break           # курсор стоит — повторим на следующем круге
                 kv_set(db, key, row["ticket"])
+                if status == "failed":
+                    continue
                 if status == "sent":
                     sent += 1
                     await asyncio.sleep(0.05)
                 continue
 
             partner.record_notification(db, owner, feed_key, kind, title, body)
+            telegram_delivered = False
             try:
                 msg = await send(bot, owner, text, markup)
+                telegram_delivered = True
             except Exception as e:
                 log.warning("не доставил уведомление %s: %s", owner, e)
-                break
-            # курсор — только до этой строки, вторую половину пары снимет
-            # skip_ticket. Раньше курсор прыгал сразу за пару и перескакивал
-            # сделку, затесавшуюся между половинами, если на ней отправка
-            # сорвалась. Если сорвётся так, вторая половина придёт следующим
-            # кругом одна — и merge_reinvest_half узнает её по этой записи
+            # Курсор сделок двигаем обязательно: даже если Telegram временно недоступен,
+            # событие уже записано в notifications для приложения и Firebase,
+            # и опрос не должен намертво зависать на одной сделке.
             kv_set(db, key, row["ticket"])
-            if half:
+            if half and telegram_delivered:
                 remember_reinvest_half(db, owner, acc, row, msg.message_id, feed_key)
-            sent += 1
-            await asyncio.sleep(0.05)
+            if telegram_delivered:
+                sent += 1
+                await asyncio.sleep(0.05)
     return sent
 
 
@@ -3070,7 +3070,7 @@ async def main():
             while True:
                 await asyncio.sleep(60)
                 try:
-                    await bot.me()
+                    await asyncio.wait_for(bot.me(), timeout=15)
                     if fails:
                         log.info("связь с Telegram восстановилась")
                     fails = 0
