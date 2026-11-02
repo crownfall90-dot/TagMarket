@@ -65,6 +65,11 @@ def _quiet_run(args, **kw):
     import subprocess
     kw.setdefault("creationflags", 0)
     kw["creationflags"] |= _NO_WINDOW
+    if os.name == "nt":
+        si = kw.get("startupinfo") or subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = 0
+        kw["startupinfo"] = si
     return subprocess.run(args, **kw)
 
 
@@ -72,6 +77,11 @@ def _quiet_popen(args, **kw):
     import subprocess
     kw.setdefault("creationflags", 0)
     kw["creationflags"] |= _NO_WINDOW
+    if os.name == "nt":
+        si = kw.get("startupinfo") or subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = 0
+        kw["startupinfo"] = si
     return subprocess.Popen(args, **kw)
 
 # в фоне консоли нет, поэтому пишем ещё и в файл — его показывает пульт управления.
@@ -115,7 +125,8 @@ def _touch_beat() -> None:
     except Exception as e:
         log.warning("не записал отметку: %s", e)
 
-ROLE = os.getenv("AGENT_ROLE", "primary").strip().lower()
+DEFAULT_ROLE = "primary" if socket.gethostname().lower() == "lancaster" else "standby"
+ROLE = os.getenv("AGENT_ROLE", DEFAULT_ROLE).strip().lower()
 SESSION = uuid.uuid4().hex
 
 

@@ -644,6 +644,19 @@ async def agent_update_status(request):
     return web.json_response({"canary_age_seconds": round(age) if age is not None else None})
 
 
+def _normalize_machine_role(host: str, role: str) -> str:
+    """Определяет роль машины по политике кластера:
+    Компьютер пользователя (lancaster) — ВСЕГДА основная машина (primary).
+    Ноутбук (DESKTOP-K8QLLI2 или любой другой) — ВСЕГДА резервная машина (standby).
+    """
+    h = host.strip().lower()
+    if h == "lancaster":
+        return "primary"
+    if "desktop" in h or h == "desktop-k8qlli2":
+        return "standby"
+    return role if role in ("primary", "standby") else "standby"
+
+
 async def agent_heartbeat(request):
     """Машина в резерве отмечается: жива, ждёт молча — она не шлёт agent_sync
     (терминал не опрашивает), и без этого сервер не знал бы её hostname."""
@@ -654,9 +667,9 @@ async def agent_heartbeat(request):
         return web.json_response({"ok": False}, status=400)
     db = request.app["db"]
     partner.kv_set(db, f"machine_seen:{host}", utcnow().isoformat())
-    role = str(data.get("role") or "").strip().lower()
-    if role in ("primary", "standby"):
-        partner.kv_set(db, f"machine_role:{host}", role)
+    raw_role = str(data.get("role") or "").strip().lower()
+    role = _normalize_machine_role(host, raw_role)
+    partner.kv_set(db, f"machine_role:{host}", role)
     return web.json_response({"ok": True})
 
 
@@ -870,9 +883,9 @@ async def agent_sync(request):
         partner.kv_set(kvdb, "active_machine", host)
         partner.kv_set(kvdb, f"machine_seen:{host}", utcnow().isoformat())
         partner.kv_set(kvdb, f"machine_sync:{host}", utcnow().isoformat())
-        role = str(data.get("role") or "").strip().lower()
-        if role in ("primary", "standby"):
-            partner.kv_set(kvdb, f"machine_role:{host}", role)
+        raw_role = str(data.get("role") or "").strip().lower()
+        role = _normalize_machine_role(host, raw_role)
+        partner.kv_set(kvdb, f"machine_role:{host}", role)
     coordination.renew(request.app["db"], data.get("host"), data.get("session"))
     return web.json_response({"ok": True, "new": new})
 
@@ -929,6 +942,7 @@ async def agent_claim(request):
             raise ValueError("invalid agent identity")
     except (ValueError, TypeError, KeyError):
         raise web.HTTPBadRequest(text="invalid agent identity")
+    role = _normalize_machine_role(host, role)
     result = coordination.claim(request.app["db"], host, session, role)
     # машина, которая умеет просить аренду, — на актуальном коде; по отсутствию
     # этой отметки панель сервиса отличает резерв на старом коде, который

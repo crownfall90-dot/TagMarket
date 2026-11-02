@@ -71,7 +71,22 @@ _base: float = None     # мои деньги на дату привязки (с
 _base_at: datetime = None
 
 
-TERMINAL = os.getenv("MT5_TERMINAL", r"D:\MetaTrader5\terminal64.exe")
+def _find_terminal() -> str:
+    env_path = os.getenv("MT5_TERMINAL")
+    if env_path and os.path.isfile(env_path):
+        return env_path
+    candidates = [
+        r"C:\Program Files\MetaTrader 5\terminal64.exe",
+        r"D:\MetaTrader5\terminal64.exe",
+        r"C:\Program Files (x86)\MetaTrader 5\terminal64.exe",
+        r"D:\MT5-TagMarkets\terminal64.exe",
+    ]
+    for c in candidates:
+        if os.path.isfile(c):
+            return c
+    return env_path or r"D:\MetaTrader5\terminal64.exe"
+
+TERMINAL = _find_terminal()
 CHART_SYMBOL = os.getenv("CHART_SYMBOL", "XAUUSD.f")  # у Tag Markets тикеры с суффиксом .f
 _history_seen: set[str] = set()     # у каких счетов история уже подгружалась
 
@@ -153,6 +168,7 @@ def hide_terminal(pid: int = None) -> int:
     from ctypes import wintypes
 
     user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
     hidden = 0
 
     @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
@@ -164,10 +180,22 @@ def hide_terminal(pid: int = None) -> int:
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
         if pid is not None and owner.value != pid:
             return True
-        # опознаём по классу окна: заголовок у терминала меняется вместе со счётом
+        # опознаём по классу окна: главное окно MT5, диалоги, дочерние окна
         cls = ctypes.create_unicode_buffer(256)
         user32.GetClassNameW(hwnd, cls, 256)
-        if "MetaQuotes::MetaTrader" in cls.value:
+        cls_val = cls.value
+        matches = ("MetaQuotes" in cls_val or "MetaTrader" in cls_val or "Terminal" in cls_val)
+        if not matches and owner.value:
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            h = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, owner.value)
+            if h:
+                buf = ctypes.create_unicode_buffer(512)
+                size = wintypes.DWORD(512)
+                if kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+                    if "terminal64.exe" in buf.value.lower():
+                        matches = True
+                kernel32.CloseHandle(h)
+        if matches:
             user32.ShowWindow(hwnd, 0)      # SW_HIDE
             hidden += 1
         return True
@@ -226,9 +254,11 @@ def use(acc: dict) -> None:
                               password=acc["password"], server=acc["server"], timeout=60000)
 
     ok = start()
+    hide_terminal()
     if not ok:                  # терминал ещё не запущен — поднимаем сами и пробуем снова
         _launch()
         ok = start()
+        hide_terminal()
     if not ok:
         _current = ""
         raise RuntimeError(f"{acc['name']}: не удалось войти в счёт — {mt5.last_error()}")
@@ -236,6 +266,7 @@ def use(acc: dict) -> None:
     # смена счёта в терминале не мгновенна: пока она идёт, account_info отдаёт
     # прежний счёт — без этой проверки отчёт покажет чужие цифры
     for _ in range(20):
+        hide_terminal()
         info = mt5.account_info()
         if info and info.login == int(acc["login"]):
             break
@@ -243,6 +274,7 @@ def use(acc: dict) -> None:
     else:
         _current = ""
         raise RuntimeError(f"{acc['name']}: терминал остался на другом счёте")
+    hide_terminal()
 
     # после смены счёта история подтягивается с сервера не мгновенно, и первый
     # отчёт показал бы «сделок не было» — ждём только при первом входе в счёт
