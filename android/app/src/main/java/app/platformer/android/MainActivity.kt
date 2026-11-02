@@ -437,8 +437,8 @@ class MainActivity : ComponentActivity() {
         /** Страница «нет соединения» в цветах темы приложения: тёмной или светлой. */
         fun offlinePage(light: Boolean): String {
             val (bg, card, line, text, muted) =
-                if (light) listOf("#f6f5fb", "#ffffff", "#15122b12", "#15122b", "#6c6789")
-                else listOf("#0c0a18", "#18142e", "#ffffff14", "#f5f3ff", "#a9a3c9")
+                if (light) listOf("#f7f7f8", "#ffffff", "#10101012", "#101010", "#666666")
+                else listOf("#101010", "#161616", "#ffffff14", "#fafafa", "#a0a0a0")
             return OFFLINE_PAGE.replace("{bg}", bg).replace("{card}", card).replace("{line}", line)
                 .replace("{text}", text).replace("{muted}", muted).replace("{ink}", bg)
         }

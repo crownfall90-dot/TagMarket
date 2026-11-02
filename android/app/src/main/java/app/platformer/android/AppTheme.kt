@@ -50,5 +50,5 @@ object AppTheme {
     }
 
     /** Фон до загрузки страницы — как у веб-части, чтобы не мигало. */
-    fun background(context: Context): Int = if (light(context)) 0xFFF6F5FB.toInt() else 0xFF0C0A18.toInt()
+    fun background(context: Context): Int = if (light(context)) 0xFFF7F7F8.toInt() else 0xFF101010.toInt()
 }

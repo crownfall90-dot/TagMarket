@@ -1,19 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Светлая тема Platformer (белая с фиолетовыми акцентами); тёмная — в values-night. Какая открыта, решает выбор
-         в настройках приложения (AppTheme задаёт экрану ночной режим сам). -->
-    <color name="bg">#F6F5FB</color>
+    <!-- Тема Vesper (светлый вариант): минималистичная бумага, графит и янтарные акценты -->
+    <color name="bg">#F7F7F8</color>
     <color name="panel">#FFFFFF</color>
-    <color name="line">#E6E3F3</color>
-    <color name="text">#15122B</color>
-    <color name="muted">#6C6789</color>
-    <color name="accent">#5B45E6</color>
+    <color name="line">#E4E4E7</color>
+    <color name="text">#101010</color>
+    <color name="muted">#666666</color>
+    <color name="accent">#D45512</color>
     <color name="on_accent">#FFFFFF</color>
-    <color name="negative">#E0445A</color>
-    <color name="negative_fill">#14E0445A</color>
-    <!-- заливки поверх фона: ячейки кода, кружки шагов -->
-    <color name="fill">#0D15122B</color>
-    <color name="fill_strong">#1A15122B</color>
-    <!-- цвет значка в шторке уведомлений: нейтральный серый, читается на светлой и тёмной -->
-    <color name="notification">#5C5C64</color>
+    <color name="negative">#D9383A</color>
+    <color name="negative_fill">#14D9383A</color>
+    <color name="fill">#0D101010</color>
+    <color name="fill_strong">#1A101010</color>
+    <color name="notification">#666666</color>
 </resources>

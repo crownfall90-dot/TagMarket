@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- значок приложения — фиолетовая плитка с белым знаком, как Aura -->
+<!-- Фон иконки приложения в тёплом стиле Vesper: глубокий угольный с янтарным градиентом -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android">
-    <gradient android:angle="315" android:startColor="#1A1238" android:endColor="#6A4FE0" />
+    <gradient android:angle="315" android:startColor="#101010" android:endColor="#FF8037" />
 </shape>
