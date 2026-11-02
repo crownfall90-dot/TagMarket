@@ -427,10 +427,9 @@ def station_sections(page, nav):
     assert page.locator('.home-chip').count() == 0, "быстрых кнопок на главной больше нет"
     assert page.locator('.home-circle .circle-seg').count() == 4   # финансы, дела, планы, мечты
     assert page.locator('.greet-stat').count() == 3 and page.locator('.greet-day i').count() == 1
-    # «Ваша активность»: шаги, пульс и сон карточками с мини-графиками
-    assert page.locator('.home-activity .ac-card').count() == 3 and page.locator('.home-activity .live-tag').count() == 1
-    assert page.locator('.ac-steps .ac-bars line').count() == 7 and page.locator('.ac-pulse .ac-spikes').count() == 1 and page.locator('.ac-sleep .ac-curve').count() == 1
-    assert page.locator('.home-activity').inner_text().lower().count('трениров') == 0 and 'вес' not in page.locator('.home-activity').inner_text().lower()
+# Предстоящие списания: ближайшие траты прямо на главной
+    assert page.locator('.home-spend .sp-home-item').count() >= 1 and page.locator('.home-spend .live-tag').count() == 1
+    assert 'трениров' not in page.locator('.home-spend').inner_text().lower() and 'вес' not in page.locator('.home-spend').inner_text().lower()
     assert page.locator('.home-circle .insight').count() >= 3
     assert page.locator('.page-head [data-action="onboard-open"]').count() == 0, "на главной не навязываем счёт"
     fits(page)
@@ -445,25 +444,12 @@ def station_sections(page, nav):
     assert page.locator(f'{nav} a[href="#overview"].active').count() == 1
     assert page.locator('.circle-core b').inner_text().strip().isdigit()
     fits(page)
-    page.locator(f'{nav} a[href="#activity"]').click()
-    page.locator('.steps-hero').wait_for()
+    page.locator(f'{nav} a[href="#spend"]').click()
+    page.locator('.spend-head').wait_for()
     glider_on_active(page, nav)
-    # только шаги: живое кольцо и график; ни веса, ни тренировок, ни ручного ввода, ни инструкций
-    assert page.locator('.steps-hero .ring').count() == 1 and page.locator('.steps-hero .live-tag').count() == 1
-    assert page.locator('[data-ui-key="act-chart-steps"] .act-bars .bar').count() == 30
-    assert page.locator('.act-card, .act-entry, [data-action="activity-add"], [data-action="activity-settings"]').count() == 0
-    text = page.locator('#main').inner_text().lower()
-    assert 'трениров' not in text and 'вес' not in text and 'инструкц' not in text
-    page.locator('.act-days [data-value="7"]').click()
-    page.wait_for_function("document.querySelectorAll('[data-ui-key=\"act-chart-steps\"] .act-bars .bar').length === 7")
-    # «Здоровье»: под шагами — сон за ночь и пульс
-    assert page.locator('.hl-sleep').count() == 1 and page.locator('.hl-pulse').count() == 1
+    assert page.locator('.sp-up').count() >= 3 and page.locator('.sp-up.soon').count() >= 1
+    assert page.locator('.spend-list[data-ui-key="spend-recurring"] .sp-row').count() == 6
     fits(page)
-    # нет данных с телефона — одно сообщение, что на устройстве не обновляются
-    page.evaluate("state.activity.summary.steps={today:null,series:[]};state.activity.summary.sleep=null;state.activity.summary.pulse=null;state.activity.summary.hr_avg=null;state.activity.sync={connected:false};render()")
-    page.locator('.steps-empty').wait_for()
-    assert 'не обновляются' in page.locator('.steps-empty').inner_text()
-    page.evaluate("state.activity=null;render()")
     page.locator(f'{nav} a[href="#plans"]').click()
     page.locator('.task-quick').wait_for()
     # «Планы» — мобильное приложение: «+» внизу экрана на телефоне, кнопка в шапке — на широком экране

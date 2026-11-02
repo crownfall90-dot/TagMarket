@@ -152,6 +152,11 @@ async def deliver(db) -> int:
     База — в потоке сервера (соединение SQLite общее), в отдельный поток уходит
     только сетевой запрос к Google."""
     import partner
+    try:
+        import spend
+        spend.check_upcoming_reminders(db)
+    except Exception:
+        pass
     acc = account()
     newest = db.execute("SELECT COALESCE(MAX(id),0) FROM notifications").fetchone()[0]
     raw = partner.kv_get(db, KEY_LAST)
@@ -191,6 +196,11 @@ async def announce_release(db) -> int:
     """Вышла новая версия приложения — «Мы обновились» на все телефоны. Возвращает, сколько ушло.
     Первый запуск только запоминает текущую версию, чтобы не рассылать старый релиз."""
     import partner
+    try:
+        import spend
+        spend.check_upcoming_reminders(db)
+    except Exception:
+        pass
     acc = account()
     release = await asyncio.to_thread(fetch_release)
     if release is None:

@@ -206,7 +206,7 @@ class MainActivity : ComponentActivity() {
     private var healthAccess = "unavailable"
 
     private fun permissionsJson(): String =
-        org.json.JSONObject().put("steps", stepsAccess).put("health", healthAccess).put("notifications", Alerts.allowed(this)).toString()
+        org.json.JSONObject().put("notifications", Alerts.allowed(this)).toString()
 
     /** Перечитать доступы и сказать странице — она перерисует строки в настройках. */
     private fun refreshPermissions() {
@@ -325,40 +325,11 @@ class MainActivity : ComponentActivity() {
      * Каждое разрешение спрашиваем один раз; отказ уважаем — включить можно в «Доступах телефона».
      */
     private fun offerSteps() {
-        lifecycleScope.launch {
-            if (StepRecorder.ready(this@MainActivity)) {
-                StepRecorder.subscribe(this@MainActivity)
-                Steps.schedule(this@MainActivity)
-            }
-            val prefs = getSharedPreferences("perm_fix", MODE_PRIVATE)
-            if (StepRecorder.available(this@MainActivity) && !StepRecorder.permitted(this@MainActivity) &&
-                !prefs.getBoolean("activity_asked", false)
-            ) {
-                prefs.edit().putBoolean("activity_asked", true).apply()
-                askActivity.launch(StepRecorder.PERMISSION)     // Health Connect спросим после ответа
-                return@launch
-            }
-            offerHealth()
-        }
+        // Health tracking removed
     }
 
-    /**
-     * Health Connect: шаги, сон и пульс. Спрашиваем один раз; тем, кто раньше разрешил только
-     * шаги, — ещё один раз, уже про сон и пульс. Дальше включить можно в «Доступах телефона».
-     */
     private fun offerHealth() {
-        if (!Steps.available(this)) return
-        lifecycleScope.launch {
-            val granted = Steps.grantedSet(this@MainActivity)
-            if (granted.isNotEmpty()) Steps.schedule(this@MainActivity)
-            val missing = Steps.permissions(this@MainActivity) - granted - Steps.BACKGROUND
-            val prefs = getSharedPreferences("perm_fix", MODE_PRIVATE)
-            if (missing.isNotEmpty() && !prefs.getBoolean("health_asked", false)) {
-                prefs.edit().putBoolean("health_asked", true).apply()
-                store.askedHealth = true
-                askHealth.launch(Steps.permissions(this@MainActivity))
-            }
-        }
+        // Health tracking removed
     }
 
     /** Светлая тема страницы — тёмные значки статус-бара и жестов, тёмная — светлые. */

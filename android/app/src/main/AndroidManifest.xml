@@ -4,18 +4,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- уведомления о событиях (Android 13+ спрашивает разрешение) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- Шаги из Health Connect: только чтение шагов, в фоне — чтобы обновлялись без открытия приложения -->
-    <uses-permission android:name="android.permission.health.READ_STEPS" />
-    <uses-permission android:name="android.permission.health.READ_SLEEP" />
-    <uses-permission android:name="android.permission.health.READ_HEART_RATE" />
-    <uses-permission android:name="android.permission.health.READ_RESTING_HEART_RATE" />
-    <!-- счётчик шагов телефона (Recording API сервисов Google Play) -->
-    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
-    <uses-permission android:name="android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND" />
 
-    <queries>
-        <package android:name="com.google.android.apps.healthdata" />
-    </queries>
 
     <application
         android:name=".PlatformerApp"
@@ -62,23 +51,6 @@
             android:name="com.google.firebase.messaging.default_notification_channel_id"
             android:value="events" />
 
-        <!-- Health Connect показывает это окно, когда человек спрашивает, зачем приложению шаги -->
-        <activity
-            android:name=".HealthRationaleActivity"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
-            </intent-filter>
-        </activity>
-        <activity-alias
-            android:name="ViewPermissionUsageActivity"
-            android:exported="true"
-            android:permission="android.permission.START_VIEW_PERMISSION_USAGE"
-            android:targetActivity=".HealthRationaleActivity">
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW_PERMISSION_USAGE" />
-                <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
-            </intent-filter>
-        </activity-alias>
+
     </application>
 </manifest>

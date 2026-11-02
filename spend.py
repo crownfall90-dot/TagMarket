@@ -239,6 +239,10 @@ def overview(db, owner, on=None, span="month"):
             upcoming.append({"id": r[0], "title": r[1], "amount": cents / 100, "currency": cur,
                              "category": category, "date": nxt.isoformat(), "in_days": (nxt - on).days})
     upcoming.sort(key=lambda u: (u["date"], u["title"]))
+    try:
+        check_upcoming_reminders(db)
+    except Exception:
+        pass
     money = lambda d: {cur: round(v / 100, 2) for cur, v in sorted(d.items())}
     return {
         "items": items,
@@ -253,3 +257,44 @@ def overview(db, owner, on=None, span="month"):
         "month": on.isoformat()[:7],
         "span": span,
     }
+
+
+def check_upcoming_reminders(db, target_days: int = 5) -> list:
+    """Проверяет предстоящие регулярные траты: за 5 дней до списания шлёт уведомление (бот + пуш)."""
+    import partner
+    on = today()
+    target_date = on + timedelta(days=target_days)
+    rows = db.execute(f"SELECT {COLUMNS},owner_id FROM spend_items WHERE kind='recurring' AND active=1").fetchall()
+    reminded = []
+    for r in rows:
+        anchor = date.fromisoformat(r[7])
+        period = r[6]
+        nxt = next_charge(anchor, period, on)
+        if nxt == target_date:
+            item_id = r[0]
+            title = r[1]
+            cents = r[2]
+            currency = r[3]
+            owner_id = r[12]
+            event_key = f"spend:remind5:{item_id}:{nxt.isoformat()}"
+            amount_val = cents / 100
+            amount_str = f"{amount_val:.2f}".rstrip("0").rstrip(".")
+            period_lbl = PERIODS.get(period, "")
+            date_str = nxt.strftime("%d.%m.%Y")
+
+            notif_title = f"Через 5 дней списание: {title}"
+            notif_body = f"Сумма {amount_str} {currency} ({period_lbl}), дата: {date_str}"
+
+            created = partner.record_notification(db, owner_id, event_key, "spend", notif_title, notif_body)
+            if created:
+                tg_text = (
+                    f"🔔 <b>Предстоящая трата через 5 дней</b>\n\n"
+                    f"💳 <b>{title}</b>\n"
+                    f"💵 Сумма: <b>{amount_str} {currency}</b>\n"
+                    f"⏳ Период: {period_lbl}\n"
+                    f"📅 Дата списания: <b>{date_str}</b>"
+                )
+                partner.enqueue_webhook_delivery(db, event_key, {"type": "text", "text": tg_text})
+                reminded.append({"id": item_id, "title": title, "date": nxt.isoformat()})
+    return reminded
+
