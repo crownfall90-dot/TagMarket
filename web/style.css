@@ -2277,22 +2277,38 @@ h3{font-weight:600;letter-spacing:-.015em}
 a,button{-webkit-tap-highlight-color:transparent}
 :focus-visible{outline:2px solid rgb(var(--accent-rgb) / .7);outline-offset:3px}
 :root{--focus:0 0 0 2px var(--bg),0 0 0 4px rgb(var(--accent-rgb) / .6);--hover-line:rgb(var(--accent-rgb) / .35);--r-card:24px;--r-ctl:14px}
-/* ── шапка, кнопки-значки, валюта ── */
-.topbar{border-bottom:1px solid var(--line-soft);background:rgb(var(--bg-rgb) / .55);box-shadow:none}
-.brand-wordmark strong{color:var(--text);text-shadow:none;letter-spacing:.02em}
-.brand-wordmark small,.mobile-brand small{color:var(--muted)}
-.breadcrumb b{color:var(--text)}
-.icon-btn{border:1px solid var(--line-soft);background:rgb(var(--fg-rgb) / .06);color:var(--text);border-radius:50%}
-.icon-btn:hover{background:rgb(var(--accent-rgb) / .14);color:var(--text);border-color:rgb(var(--accent-rgb) / .3)}
-.currency-btn{border:1px solid var(--line-soft);background:rgb(var(--fg-rgb) / .06);color:var(--text)}
-.currency-btn .cur-sym{background:var(--accent);color:var(--on-accent)}
+/* ── шапка, кнопки-значки, валюта: парящая капсула в стиле Vesper ── */
+.topbar{position:sticky;top:calc(8px + var(--tg-content-safe-area-inset-top,0px));z-index:30;height:62px;margin:calc(8px + var(--tg-content-safe-area-inset-top,0px)) 0 16px;padding:0 16px 0 18px;border:1px solid rgb(var(--fg-rgb) / .09);border-radius:24px;background:rgb(var(--panel-rgb) / .84);box-shadow:0 16px 36px -12px rgb(0 0 0 / calc(.55 * var(--shade))),0 2px 6px rgb(0 0 0 / calc(.2 * var(--shade))),inset 0 1px 0 rgb(255 255 255 / .08);backdrop-filter:blur(22px) saturate(180%);-webkit-backdrop-filter:blur(22px) saturate(180%);transition:box-shadow .25s ease,background .25s ease,transform .2s ease}
+body.is-scrolled .topbar{box-shadow:0 20px 44px -10px rgb(0 0 0 / calc(.7 * var(--shade))),0 4px 12px rgb(0 0 0 / calc(.3 * var(--shade))),inset 0 1px 0 rgb(255 255 255 / .08);background:rgb(var(--panel-rgb) / .92)}
+.brand-wordmark strong{color:var(--text);font-size:15px;font-weight:750;letter-spacing:.08em;text-shadow:none;display:inline-flex;align-items:center;gap:7px}
+.brand-wordmark strong:before{content:"";width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent);flex-shrink:0}
+.brand-wordmark small,.mobile-brand small{color:var(--muted);font-size:8px;font-weight:600;letter-spacing:.24em}
+.breadcrumb{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:500;color:var(--muted)}
+.breadcrumb span{color:rgb(var(--fg-rgb) / .22);margin:0 2px}
+.breadcrumb b{color:var(--text);font-weight:650;font-size:13.5px}
+.top-actions{display:flex;align-items:center;gap:8px}
+.icon-btn{width:36px;height:36px;border:1px solid rgb(var(--fg-rgb) / .08);background:rgb(var(--fg-rgb) / .05);color:var(--text);border-radius:12px;box-shadow:inset 0 1px 0 rgb(255 255 255 / .05);display:grid;place-items:center;transition:all .18s cubic-bezier(.16,1,.3,1)}
+.icon-btn:hover{background:rgb(var(--accent-rgb) / .12);color:var(--accent);border-color:rgb(var(--accent-rgb) / .35);transform:translateY(-1.5px);box-shadow:0 4px 12px rgb(var(--glow-rgb) / .25)}
+.icon-btn:active{transform:scale(.94)}
+.notification-btn{position:relative}
+.notification-btn.has-unread:after{content:"";position:absolute;top:6px;right:6px;width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 10px var(--accent),0 0 0 2px var(--panel);animation:notifyPulse 2.2s ease-in-out infinite}
+.currency-btn{height:36px;padding:0 10px 0 5px;gap:7px;border-radius:999px;border:1px solid rgb(var(--fg-rgb) / .08);background:rgb(var(--fg-rgb) / .05);color:var(--text);box-shadow:inset 0 1px 0 rgb(255 255 255 / .05);transition:all .18s cubic-bezier(.16,1,.3,1)}
+.currency-btn:hover,.currency-btn[aria-expanded=true]{border-color:rgb(var(--accent-rgb) / .38);background:rgb(var(--accent-rgb) / .08);transform:translateY(-1.5px)}
+.currency-btn:active{transform:scale(.95)}
+.currency-btn .cur-sym,.cur-sym{min-width:26px;height:26px;padding:0;border-radius:999px;background:var(--accent);color:var(--on-accent);font-size:11.5px;font-weight:750;display:grid;place-items:center;box-shadow:0 0 10px rgb(var(--accent-rgb) / .35)}
 .cur-sym{color:var(--on-accent)}
-.avatar{background:linear-gradient(140deg,var(--hl-a),var(--hl-b));color:var(--hl-ink)}
+.avatar{width:36px;height:36px;min-width:36px;border-radius:12px;background:linear-gradient(135deg,var(--hl-a),var(--hl-b));color:var(--hl-ink);font-size:13.5px;font-weight:750;display:grid;place-items:center;box-shadow:0 4px 14px rgb(var(--glow-rgb) / .35),inset 0 1px 0 rgb(255 255 255 / .3);border:1px solid rgb(255 255 255 / .15);transition:transform .18s var(--ease)}
+.avatar:hover{transform:scale(1.06)}
 @media(max-width:740px){
- html.native .topbar{background:rgb(var(--bg-rgb) / .72);border-bottom:0;-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px)}
- html.native.scrolled .topbar{box-shadow:0 1px 0 var(--line-soft)}
- html.native .top-actions .icon-btn,html.native .currency-btn{background:rgb(var(--fg-rgb) / .06);border:1px solid var(--line-soft);border-radius:50%}
- html.native .currency-btn{border-radius:999px}
+ .topbar{height:56px;padding:0 10px 0 14px;border-radius:20px;margin-top:calc(8px + var(--tg-content-safe-area-inset-top,0px))}
+ .top-actions{gap:6px}
+ .currency-btn{height:34px;padding:0 8px 0 4px;gap:5px}
+ .cur-sym{min-width:24px;height:24px;font-size:11px}
+ .top-actions .icon-btn{width:34px;height:34px;border-radius:11px}
+ .top-actions .avatar{width:34px;height:34px;border-radius:11px}
+ html.native .topbar{background:rgb(var(--panel-rgb) / .88);border-bottom:0;-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px)}
+ html.native.scrolled .topbar{box-shadow:0 16px 36px -10px rgb(0 0 0 / calc(.6 * var(--shade)))}
+ html.native .top-actions .icon-btn,html.native .currency-btn{background:rgb(var(--fg-rgb) / .05);border:1px solid rgb(var(--fg-rgb) / .08)}
 }
 /* ── заголовок раздела: крупный, лёгкий, как «Training Program» в референсе ── */
 .page-head h1,.sec-hero h1,.project-space>.page-head h1{font-size:36px;line-height:1.06;font-weight:520;letter-spacing:-.04em;color:var(--text)}
