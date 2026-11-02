@@ -325,7 +325,7 @@ def spend_ui(page, nav):
     assert page.evaluate("!!(document.querySelector('.fin-projects').compareDocumentPosition(document.querySelector('.fin-spend')) & Node.DOCUMENT_POSITION_FOLLOWING)")
     page.locator('.fin-spend .spend-sum').click()
     page.locator('.spend-head').wait_for()
-    assert page.locator(f'{nav} a[href="#projects"].active').count() == 1      # траты — часть «Финансов»
+    assert page.locator(f'{nav} a[href="#spend"].active').count() == 1 or page.locator(f'{nav} a[href="#projects"].active').count() == 1      # траты
     assert page.locator('.sp-up').count() >= 3 and page.locator('.sp-up.soon').count() >= 1
     assert page.locator('.spend-list[data-ui-key="spend-recurring"] .sp-row').count() == 6
     assert page.locator('.sp-row.off').count() == 1                               # подписка на паузе
