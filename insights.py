@@ -59,7 +59,7 @@ def analyze(data, today, hour=12):
     salary = fin.get("salary") or 0
     if projects or tag or bank is not None or salary:
         score = 0
-        daily = sum(p["daily_income"] or 0 for p in projects if not p.get("paused"))
+        daily = sum(p["daily_income"] or 0 for p in projects if not p.get("paused") and not p.get("hidden"))
         if salary > 0:
             score += 20
             out.append((38, "finance", "good", f"Зарплата: {money(salary, cur)} в месяц", "#income"))

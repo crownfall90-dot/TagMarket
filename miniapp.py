@@ -1323,7 +1323,10 @@ async def project_api(request):
     data = await json_object(request) if request.method in {"POST", "PATCH"} else {}
     try:
         if request.path.endswith("/pause") and request.method == "POST":
-            result = projects.set_paused(db, uid, project_id, data.get("paused"), account_id)
+            if "mode" in data:      # active | hidden | frozen; старый {"paused": bool} работает как раньше
+                result = projects.set_mode(db, uid, project_id, data.get("mode"), account_id)
+            else:
+                result = projects.set_paused(db, uid, project_id, data.get("paused"), account_id)
         elif request.path.endswith("/accounts/reorder") and request.method == "POST":
             result = projects.reorder_account(db, uid, project_id, data.get("account_id"), data.get("position"))
         elif "/accounts" in request.path:
@@ -1770,7 +1773,7 @@ def insights_for(db, uid, display="USD", rates=None, tag=None):
         projects = []
         for p in projects_list(db, uid):
             daily = p["daily_income"] if not p["calculation_limited"] else None
-            projects.append({"name": p["name"], "paused": p["paused"], "income_starts": p["income_starts"],
+            projects.append({"name": p["name"], "paused": p["paused"], "hidden": p["hidden"], "income_starts": p["income_starts"],
                              "daily_income": conv(daily, p["currency"]) if daily is not None else None})
         if tag is not None:
             _tag_cache[str(uid)] = tag

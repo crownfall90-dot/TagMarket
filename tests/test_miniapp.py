@@ -1553,6 +1553,61 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(api["paused"])
         self.assertEqual((await self.call("POST", f"/api/projects/{pid}/pause", json={"paused": "1"})).status, 400)
 
+    async def test_hidden_account_keeps_accruing_but_leaves_totals(self):
+        def at(day, fn, *args, **kwargs):
+            with patch.object(projects, "today", return_value=day):
+                return fn(*args, **kwargs)
+        d = lambda n: date(2026, 10, n)  # noqa: E731
+        p = at(d(1), projects.save, self.db, "1", {"name":"Hide", "currency":"USD", "rate_percent":1,
+               "period":"day", "multi":True, "capitalization":True, "capitalization_from":"2026-10-01",
+               "accounts":[{"amount":1000}, {"amount":1000}]})
+        pid, first = p["id"], p["accounts"][0]["id"]
+        hidden = at(d(3), projects.set_mode, self.db, "1", pid, "hidden", first)
+        self.assertTrue(hidden["accounts"][0]["hidden"])
+        self.assertFalse(hidden["accounts"][0]["paused"])
+        self.assertEqual(hidden["hidden_accounts"], 1)
+        self.assertAlmostEqual(hidden["current_total"], 1020.1)    # в итогах только второй аккаунт
+        self.assertAlmostEqual(hidden["hidden_total"], 1020.1)
+        self.assertAlmostEqual(hidden["total"], 1000)
+        self.assertAlmostEqual(hidden["expected_income"], 10.201)
+        self.assertEqual(len(at(d(3), projects.forecast, self.db, "1", pid, "2026-10-04", False)["accounts"]), 1)
+        # доход идёт: на 10-е 9 периодов без вычета дней простоя, paused_days не копится
+        later = at(d(10), projects.get, self.db, "1", pid)
+        self.assertAlmostEqual(later["accounts"][0]["current_amount"], 1000 * 1.01 ** 9, places=2)
+        self.assertGreater(later["accounts"][0]["expected_income"], 0)
+        self.assertEqual(later["accounts"][0]["paused_days"], 0)
+        # правка проекта не сбрасывает скрытие
+        saved = at(d(10), projects.save, self.db, "1", {"name":"Hide 2"}, pid)
+        self.assertTrue(saved["accounts"][0]["hidden"])
+        # скрытый → заморожен: скрытие снимается, начисления встают
+        frozen = at(d(11), projects.set_mode, self.db, "1", pid, "frozen", first)
+        self.assertFalse(frozen["accounts"][0]["hidden"])
+        self.assertTrue(frozen["accounts"][0]["paused"])
+        # заморожен → скрыт: пауза снимается, её дни ложатся в paused_days
+        back = at(d(13), projects.set_mode, self.db, "1", pid, "hidden", first)
+        self.assertTrue(back["accounts"][0]["hidden"])
+        self.assertFalse(back["accounts"][0]["paused"])
+        self.assertEqual(back["accounts"][0]["paused_days"], 2)
+        active = at(d(13), projects.set_mode, self.db, "1", pid, "active", first)
+        self.assertFalse(active["accounts"][0]["hidden"])
+        self.assertEqual(active["hidden_accounts"], 0)
+        # проект целиком
+        whole = at(d(13), projects.set_mode, self.db, "1", pid, "hidden")
+        self.assertTrue(whole["hidden"])
+        self.assertFalse(whole["paused"])
+        self.assertGreater(whole["expected_income"], 0)      # доход проекта идёт
+        with self.assertRaises(ValueError):
+            projects.set_mode(self.db, "1", pid, "sleep")
+        with self.assertRaises(LookupError):
+            projects.set_mode(self.db, "2", pid, "hidden")
+        with self.assertRaises(LookupError):
+            projects.set_mode(self.db, "1", pid, "hidden", "nope")
+        api = await (await self.call("POST", f"/api/projects/{pid}/accounts/{first}/pause", json={"mode": "hidden"})).json()
+        self.assertTrue(api["accounts"][0]["hidden"])
+        listed = await (await self.call("GET", "/api/projects")).json()
+        self.assertTrue(listed["projects"][0]["accounts"][0]["hidden"])
+        self.assertEqual((await self.call("POST", f"/api/projects/{pid}/pause", json={"mode": "sleep"})).status, 400)
+
     async def test_activity_daily_values_replace_and_workouts_add_up(self):
         day = activity.today().isoformat()
         first = await self.call("POST", "/api/activity", json={"kind": "steps", "value": 4000})

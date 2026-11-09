@@ -1141,6 +1141,7 @@ dialog::backdrop{background:#000a;backdrop-filter:blur(6px);-webkit-backdrop-fil
 @media(max-width:740px){.fc-values{grid-template-columns:1fr auto 1fr}}
 /* пауза и дата начала начислений в проектах */
 .pa-tags i.paused{color:var(--tone3);background:rgb(var(--tone3-rgb) / 0.07);border-color:rgb(var(--tone3-rgb) / 0.20)}
+.pa-tags i.hid{color:var(--muted);background:rgb(var(--accent-rgb) / .04);border-color:var(--line,rgb(var(--accent-rgb) / .14))}
 .pa-tags i.starts{color:var(--accent);background:rgb(var(--accent-rgb) / .06);border-color:rgb(var(--accent-rgb) / .18)}
 .project-status{margin:0 0 10px}
 .project-card.is-paused,.project-account.is-paused{opacity:.62}
