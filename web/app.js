@@ -2143,7 +2143,7 @@ document.addEventListener('click',async event=>{const el=event.target.closest('[
  else if(action==='perm-fix'){try{androidApp?.fix?.(el.dataset.kind);}catch{}}
  else if(action==='app-logout'){if(await confirm('Выйти на этом телефоне?','Чтобы войти снова, запросите новый код в боте.','Выйти')){try{await api('/device/logout',{method:'POST'});}catch{}try{androidApp?.signOut?.();}catch{}}}
  else if(action==='leave'){if(await confirm('Отключить доступ?','Счета и приглашения в боте будут удалены. Для возвращения понадобится новое приглашение.','Отключить')){await api('/actions',{method:'POST',body:JSON.stringify({action:'leave'})});state.data=null;await refresh();}}
- else if(/^machine-(primary|disable|enable)$/.test(action)){
+ else if(action.startsWith('machine-')){
   const host=el.dataset.host,verb=action.slice(8),name=host;
   const ask={primary:[`Сделать «${name}» приоритетной?`,'Она заберёт опрос терминала у текущей основной, как только та освободит аренду. Прежняя станет резервной.','Назначить'],disable:[`Выключить «${name}»?`,'Машина перестанет опрашивать терминал и слать данные. Включить её можно здесь же.','Выключить'],enable:[`Включить «${name}»?`,'Машина снова станет резервом и подхватит опрос, если основная замолчит.','Включить']}[verb];
   if(await confirm(...ask)){state.admin=await api('/admin/machine',{method:'POST',body:JSON.stringify({host,action:verb})});toast(verb==='primary'?'Приоритетная машина изменена':verb==='disable'?'Машина выключена':'Машина включена');render(true);}
