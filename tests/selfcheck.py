@@ -271,6 +271,8 @@ assert "вт, 11.08.2026" in note, note       # день недели рядом
 assert "Капитал" not in note and "до комиссии" not in note, "лишнего в уведомлении нет"
 assert "За день" in note and "+1.05" in note, "профит за все сделки дня (1.5 × 0.7)"
 assert "3 сделки" in note, "количество сделок за день"
+day_line = next(l for l in note.splitlines() if "За день" in l)
+assert "%" in day_line, "у строки «За день» есть процент к капиталу: " + day_line
 # отдельного профита нет: результат сделки сразу в балансе счёта, было → стало
 assert "Накоплено" not in note, note
 assert "Баланс счёта: 110.00" in note and "→ <b>142.63" in note, note

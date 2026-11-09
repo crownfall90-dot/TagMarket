@@ -1727,6 +1727,11 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
         log.warning("капитал на момент сделки не посчитан, беру текущий: %s", e)
         cap_then = cap
     pct_base = cap_then if cap_then else cap
+    around = strategy_around(row)
+    # капитал мог оказаться нулём (нет опорной суммы, вывод до нуля) — тогда процент
+    # считаем к балансу счёта до сделки, а не молча теряем его из уведомления
+    if not pct_base:
+        pct_base = around["was"] or around["became"] - profit
     nth, total = ordinal_today(row)
 
     # коротко: когда, итог, результат, за день, что накоплено и сколько на стратегии
@@ -1736,14 +1741,15 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
            f"<b>{money(profit)}{sign(cur)}</b>"
            + (f"  <i>{pct(profit / pct_base * 100)}</i>" if pct_base else "")]
 
-    # профит за все сделки дня
+    # профит за все сделки дня и его процент к капиталу — показываем всегда,
+    # а не только когда сделок больше одной
     day_profit = net_of_fee(mine(day_net)) if day_net is not None else profit
     n = day_count if day_count is not None else 1
-    if n > 1:
-        out.append(f"💵 За день: <b>{money(day_profit)}{sign(cur)}</b> <i>({n} {plural(n, 'сделка', 'сделки', 'сделок')})</i>")
+    day_pct = f" · <b>{pct(day_profit / pct_base * 100)}</b>" if pct_base else ""
+    out.append(f"💵 За день: <b>{money(day_profit)}{sign(cur)}</b>{day_pct} "
+               f"<i>({n} {plural(n, 'сделка', 'сделки', 'сделок')})</i>")
 
     # результат сделки сразу в балансе счёта: отдельного «накопленного профита» нет
-    around = strategy_around(row)
     if around["became"] or around["was"]:
         out.append(balance_line(around, cur))
     out.append(late_note(row))
