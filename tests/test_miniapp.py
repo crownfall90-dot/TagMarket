@@ -459,6 +459,35 @@ class MachineStateTests(unittest.TestCase):
         stale = {m["host"]: m for m in miniapp.machine_states(db, now)}
         self.assertEqual(stale["old"]["blocked"], "")
 
+    def test_owner_moves_priority_and_switches_a_standby_off(self):
+        from datetime import timezone
+        db = partner.open_db(":memory:")
+        now = 1_000_000.0
+        iso = lambda ago: datetime.fromtimestamp(now - ago, timezone.utc).replace(tzinfo=None).isoformat()
+        coordination.claim(db, "lancaster", "l" * 16, "primary", now - 10)
+        for host in ("lancaster", "DESKTOP-K8QLLI2"):
+            partner.kv_set(db, f"machine_claim:{host}", iso(3))
+        # неприоритетную можно выключить, приоритетную — нет
+        with self.assertRaises(ValueError):
+            coordination.set_disabled(db, "lancaster", True)
+        coordination.set_disabled(db, "DESKTOP-K8QLLI2", True)
+        got = {m["host"]: m for m in miniapp.machine_states(db, now)}
+        self.assertEqual(got["DESKTOP-K8QLLI2"]["state"], "disabled")
+        self.assertTrue(got["DESKTOP-K8QLLI2"]["disabled"])
+        self.assertEqual(got["lancaster"]["state"], "polling")
+        coordination.set_disabled(db, "DESKTOP-K8QLLI2", False)
+        # хозяин назначает ноутбук приоритетным: роли меняются, держатель разжалован
+        coordination.set_primary(db, "DESKTOP-K8QLLI2")
+        self.assertEqual(coordination.effective_role(db, "DESKTOP-K8QLLI2", "standby"), "primary")
+        self.assertEqual(coordination.effective_role(db, "lancaster", "primary"), "standby")
+        self.assertEqual(coordination.read(db)["role"], "standby")
+        self.assertTrue(coordination.claim(db, "DESKTOP-K8QLLI2", "d" * 16, "primary", now)["granted"])
+        # прежняя основная теперь выключается, а при выключении теряет аренду, если держала её
+        coordination.set_disabled(db, "lancaster", True)
+        self.assertTrue(coordination.is_disabled(db, "lancaster"))
+        coordination.set_primary(db, "lancaster")      # назначение заодно включает машину
+        self.assertFalse(coordination.is_disabled(db, "lancaster"))
+
 
 class FormattingTests(unittest.TestCase):
     def test_russian_plural_forms(self):
@@ -3809,6 +3838,29 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         accounts.update("SONIC",1,enabled=False)
         r = await self.client.get("/agent/accounts",headers={"X-Token":"agent-test"})
         self.assertEqual(len(await r.json()),0)
+
+    async def test_owner_controls_agent_machines_from_service_panel(self):
+        partner.kv_set(self.db, "machine_seen:lancaster", trades.clock().isoformat())
+        partner.kv_set(self.db, "machine_seen:laptop", trades.clock().isoformat())
+        post = lambda body, uid=1: self.call("POST", "/api/admin/machine", uid=uid, json=body)  # noqa: E731
+        r = await post({"host": "laptop", "action": "disable"})
+        self.assertEqual(r.status, 200, await r.text())
+        panel = {m["host"]: m for m in (await r.json())["machines"]}
+        self.assertTrue(panel["laptop"]["disabled"])
+        # выключенная машина не получает список счетов
+        r = await self.client.get("/agent/accounts", headers={"X-Token": "agent-test", "X-Agent-Host": "laptop"})
+        self.assertEqual(await r.json(), [])
+        r = await post({"host": "laptop", "action": "primary"})
+        data = await r.json()
+        self.assertEqual(data["primary_host"], "laptop")
+        panel = {m["host"]: m for m in data["machines"]}
+        self.assertEqual((panel["laptop"]["role"], panel["lancaster"]["role"]), ("primary", "standby"))
+        self.assertFalse(panel["laptop"]["disabled"])
+        # приоритетную выключить нельзя, чужая машина и мусор — ошибки, не-основатель — 403
+        self.assertEqual((await post({"host": "laptop", "action": "disable"})).status, 400)
+        self.assertEqual((await post({"host": "nope", "action": "enable"})).status, 404)
+        self.assertEqual((await post({"host": "lancaster", "action": "boom"})).status, 400)
+        self.assertEqual((await post({"host": "lancaster", "action": "enable"}, uid=2)).status, 403)
 
     async def test_onboarding_later_is_remembered(self):
         # «Зарегистрируюсь позже» хранится на сервере — выбор не сбрасывается

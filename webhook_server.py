@@ -483,6 +483,8 @@ async def agent_accounts(request):
     """Список счетов, которые агенту надо опрашивать (с паролями)."""
     check_token(request)
     session = request.headers.get("X-Agent-Session")
+    if coordination.is_disabled(request.app["db"], request.headers.get("X-Agent-Host")):
+        return web.json_response([])        # машина выключена хозяином
     allowed = (coordination.permits(request.app["db"], request.headers.get("X-Agent-Host"), session)
                if session else coordination.may_poll_anonymously(request.app["db"]))
     if not allowed:
@@ -644,11 +646,14 @@ async def agent_update_status(request):
     return web.json_response({"canary_age_seconds": round(age) if age is not None else None})
 
 
-def _normalize_machine_role(host: str, role: str) -> str:
+def _normalize_machine_role(host: str, role: str, db=None) -> str:
     """Определяет роль машины по политике кластера:
     Компьютер пользователя (lancaster) — ВСЕГДА основная машина (primary).
     Ноутбук (DESKTOP-K8QLLI2 или любой другой) — ВСЕГДА резервная машина (standby).
+    Если хозяин назначил приоритетную машину в панели «Сервис» (db передан), его выбор важнее.
     """
+    if db is not None:
+        return coordination.effective_role(db, host, role)
     h = host.strip().lower()
     if h == "lancaster":
         return "primary"
@@ -668,9 +673,9 @@ async def agent_heartbeat(request):
     db = request.app["db"]
     partner.kv_set(db, f"machine_seen:{host}", utcnow().isoformat())
     raw_role = str(data.get("role") or "").strip().lower()
-    role = _normalize_machine_role(host, raw_role)
+    role = _normalize_machine_role(host, raw_role, db)
     partner.kv_set(db, f"machine_role:{host}", role)
-    return web.json_response({"ok": True})
+    return web.json_response({"ok": True, "disabled": coordination.is_disabled(db, host)})
 
 
 async def agent_machines_status(request):
@@ -806,6 +811,8 @@ async def agent_sync(request):
     if (not isinstance(host, str) or not 1 <= len(host) <= 128
             or (session is not None and (not isinstance(session, str) or not 16 <= len(session) <= 128))):
         raise web.HTTPBadRequest(text="invalid agent identity")
+    if coordination.is_disabled(request.app["db"], host):
+        raise web.HTTPConflict(text="machine disabled by owner")
     if not coordination.authorize(request.app["db"], host, session):
         raise web.HTTPConflict(text="polling lease lost")
     try:
@@ -884,7 +891,7 @@ async def agent_sync(request):
         partner.kv_set(kvdb, f"machine_seen:{host}", utcnow().isoformat())
         partner.kv_set(kvdb, f"machine_sync:{host}", utcnow().isoformat())
         raw_role = str(data.get("role") or "").strip().lower()
-        role = _normalize_machine_role(host, raw_role)
+        role = _normalize_machine_role(host, raw_role, kvdb)
         partner.kv_set(kvdb, f"machine_role:{host}", role)
     coordination.renew(request.app["db"], data.get("host"), data.get("session"))
     return web.json_response({"ok": True, "new": new})
@@ -942,7 +949,12 @@ async def agent_claim(request):
             raise ValueError("invalid agent identity")
     except (ValueError, TypeError, KeyError):
         raise web.HTTPBadRequest(text="invalid agent identity")
-    role = _normalize_machine_role(host, role)
+    if coordination.is_disabled(request.app["db"], host):
+        # хозяин выключил машину: аренду она не получит, пока её не включат
+        partner.kv_set(request.app["db"], f"machine_seen:{host}", utcnow().isoformat())
+        return web.json_response({"granted": False, "owner": None, "ttl": coordination.TTL,
+                                  "retry_after": 60, "disabled": True})
+    role = _normalize_machine_role(host, role, request.app["db"])
     result = coordination.claim(request.app["db"], host, session, role)
     # машина, которая умеет просить аренду, — на актуальном коде; по отсутствию
     # этой отметки панель сервиса отличает резерв на старом коде, который

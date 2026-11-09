@@ -113,3 +113,83 @@ def authorize(db, host, session, now=None):
     if session:
         return permits(db, host, session, now)
     return claim(db, host, LEGACY, "legacy", now)["granted"]
+
+
+# ── выбор хозяина ─────────────────────────────────────────────────────────
+# Хозяин из панели «Сервис» может назначить приоритетную машину и выключить
+# любую другую целиком. Выбор лежит в kv и важнее политики по имени машины.
+PRIMARY_KEY = "primary_machine"
+
+
+def _kv_get(db, key):
+    row = db.execute("SELECT value FROM kv WHERE key=?", (key,)).fetchone()
+    return row[0] if row else None
+
+
+def _kv_set(db, key, value):
+    db.execute("INSERT OR REPLACE INTO kv(key,value) VALUES (?,?)", (key, value))
+
+
+def primary_override(db):
+    """Машина, которую хозяин назначил приоритетной; None — работает политика по имени."""
+    return (_kv_get(db, PRIMARY_KEY) or "").strip() or None
+
+
+def effective_role(db, host, requested=None):
+    """Роль машины: выбор хозяина, иначе политика по имени, иначе то, что она просит."""
+    h = (host or "").strip().lower()
+    chosen = primary_override(db)
+    if chosen:
+        return "primary" if h == chosen.lower() else "standby"
+    if h == "lancaster":
+        return "primary"
+    if "desktop" in h:
+        return "standby"
+    return requested if requested in ("primary", "standby") else "standby"
+
+
+def is_disabled(db, host):
+    return _kv_get(db, f"machine_disabled:{(host or '').strip()}") == "1"
+
+
+def set_primary(db, host):
+    """Назначает приоритетную машину. Включает её, если она была выключена, и
+    разжалует действующего держателя аренды в резерв — иначе новая основная не
+    смогла бы перехватить: primary перехватывает только у не-primary."""
+    host = (host or "").strip()
+    if not host:
+        raise ValueError("Укажите машину")
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        _kv_set(db, PRIMARY_KEY, host)
+        _kv_set(db, f"machine_disabled:{host}", "0")
+        lease = read(db)
+        if lease:
+            lease["role"] = "primary" if lease["host"].lower() == host.lower() else "standby"
+            _kv_set(db, KEY, json.dumps(lease))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+
+def set_disabled(db, host, disabled):
+    """Выключает машину целиком (она не опрашивает терминал и не шлёт данные) или включает.
+
+    Приоритетную выключить нельзя: сначала назначьте основной другую. У
+    выключаемой машины забираем аренду, чтобы резерв подхватил сразу."""
+    host = (host or "").strip()
+    if not host:
+        raise ValueError("Укажите машину")
+    if disabled and effective_role(db, host) == "primary":
+        raise ValueError("Приоритетную машину выключить нельзя — сначала назначьте основной другую")
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        _kv_set(db, f"machine_disabled:{host}", "1" if disabled else "0")
+        lease = read(db)
+        if disabled and lease and lease["host"].lower() == host.lower():
+            db.execute("DELETE FROM kv WHERE key=?", (KEY,))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise

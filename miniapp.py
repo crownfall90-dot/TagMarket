@@ -1094,7 +1094,11 @@ def machine_states(db, now):
             state = "legacy"
         blocked_at, _, blocked_why = (partner.kv_get(db, f"machine_blocked:{host}") or "").partition("|")
         age = _seconds_since(blocked_at, now)
-        out.append({"host": host, "role": partner.kv_get(db, f"machine_role:{host}"),
+        disabled = coordination.is_disabled(db, host)
+        if disabled and host != holder:
+            state = "disabled"
+        out.append({"host": host, "disabled": disabled,
+                    "role": coordination.effective_role(db, host, partner.kv_get(db, f"machine_role:{host}")),
                     "state": state, "idle": None if idle is None else round(idle),
                     # причина показывается, пока свежа: проверка обновлений идёт
                     # раз в 15 минут, а после успешного обновления запись стареет сама
@@ -1111,6 +1115,28 @@ def machine_states(db, now):
     return out
 
 
+async def admin_machine(request):
+    """Хозяин меняет приоритетную машину или выключает/включает неприоритетную."""
+    uid, _ = authorize(request)
+    if not logic.is_founder(uid):
+        raise web.HTTPForbidden(text="Только для основателя")
+    data = await json_object(request)
+    db = request.app["db"]
+    host, action = data.get("host"), data.get("action")
+    if host not in {m["host"] for m in machine_states(db, time.time())}:
+        raise web.HTTPNotFound(text="Машина не найдена")
+    try:
+        if action == "primary":
+            coordination.set_primary(db, host)
+        elif action in ("disable", "enable"):
+            coordination.set_disabled(db, host, action == "disable")
+        else:
+            raise ValueError("Действие: primary, disable или enable")
+    except ValueError as exc:
+        raise web.HTTPBadRequest(text=str(exc))
+    return await admin(request)
+
+
 async def admin(request):
     uid, _ = authorize(request)
     if not logic.is_founder(uid):
@@ -1118,6 +1144,7 @@ async def admin(request):
     db = request.app["db"]
     return web.json_response({"machines": machine_states(db, time.time()),
         "active": partner.kv_get(db, "active_machine"),
+        "primary_host": coordination.primary_override(db),
         "users": [{"id": u, "name": n} for u, n in logic.all_guests(db)],
         "network": [{"day": k.split(":", 1)[1], "income": float(partner.kv_get(db, k) or 0),
                      "trades": int(partner.kv_get(db, k.replace("net_income:", "net_trades:")) or 0)}
@@ -2008,4 +2035,5 @@ def setup(app):
     app.router.add_get("/api/guests/{guest}", guest_detail)
     app.router.add_post("/api/actions", action)
     app.router.add_get("/api/admin", admin)
+    app.router.add_post("/api/admin/machine", admin_machine)
     app.router.add_post("/api/broadcast", broadcast)
