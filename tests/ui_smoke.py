@@ -419,7 +419,7 @@ def friends_ui(page, nav):
     page.locator('.sh-debt').first.click()
     page.locator('#dialog input[name="amount"]').wait_for()
     close_dialog(page)
-    page.evaluate("spendEditor()")              # на телефоне кнопка в шапке скрыта — там «+» внизу
+    page.evaluate("void spendEditor()")              # на телефоне кнопка в шапке скрыта — там «+» внизу
     page.locator('#dialog input[name="kind"][value="shared"]').wait_for(state='attached')
     page.locator('#dialog .sp-kind label', has_text='Общая').click()
     page.locator('#dialog select[name="payer"]').wait_for()
