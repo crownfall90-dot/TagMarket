@@ -6,12 +6,18 @@ Platformer не показывает.
 
 Общие траты — кто за что платил и между кем делим. Из всех записей
 считается, кто кому сколько должен; «вернул долг» — такая же запись.
+
+Публичный профиль — человек сам решает, видят ли друзья его профиль и какие
+разделы в нём открыты. По умолчанию профиль закрыт и всё в нём скрыто.
 """
 from datetime import datetime, timezone
 import json
 import uuid
 
+import goals
 import partner
+import projects
+import spend
 from spend import CURRENCIES, _cents, _date, _text, today
 
 MAX_SPLIT = 1000
@@ -178,5 +184,90 @@ def overview(db, viewer):
     for f, bal in owed.items():
         if f not in friends and bal:
             people.append({"id": f, "name": name(db, f), "balance": bal, "former": True})
+    for person in people:
+        person["public"] = bool(not person.get("former") and profile(db, person["id"])["public"])
     return {"me": viewer, "friends": people, "split": [_split_row(db, r, viewer) for r in rows[:100]],
             "currencies": list(CURRENCIES)}
+
+
+# ── публичный профиль ────────────────────────────────────────────────────
+
+PROFILE_SECTIONS = {
+    "projects": ("Проекты", "Названия и суммы проектов, которые входят в ваш баланс"),
+    "goals": ("Цели накоплений", "На что копите и сколько уже отложено"),
+    "spend": ("Траты", "Регулярные траты в месяц и расходы этого месяца"),
+}
+ABOUT_LIMIT = 140
+
+
+def _profile_raw(db, uid):
+    try:
+        data = json.loads(partner.kv_get(db, f"profile:{uid}") or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def profile(db, uid):
+    """Настройки публичного профиля пользователя: открыт ли он и какие разделы видны друзьям."""
+    raw = _profile_raw(db, uid)
+    opened = raw.get("sections") if isinstance(raw.get("sections"), dict) else {}
+    return {"public": raw.get("public") is True, "about": str(raw.get("about") or "")[:ABOUT_LIMIT],
+            "sections": {key: opened.get(key) is True for key in PROFILE_SECTIONS},
+            "available": [{"id": key, "label": label, "note": note} for key, (label, note) in PROFILE_SECTIONS.items()]}
+
+
+def save_profile(db, uid, data):
+    """Частичное обновление: public, about, sections {раздел: bool}. Лишнего не принимаем."""
+    if not isinstance(data, dict):
+        raise ValueError("Ожидается JSON-объект")
+    current = profile(db, uid)
+    if "public" in data:
+        if type(data["public"]) is not bool:
+            raise ValueError("Профиль открыт или закрыт")
+        current["public"] = data["public"]
+    if "about" in data:
+        about = data["about"]
+        if about is not None and not isinstance(about, str):
+            raise ValueError("Описание — текст")
+        about = " ".join((about or "").split())
+        if len(about) > ABOUT_LIMIT:
+            raise ValueError(f"Описание: не длиннее {ABOUT_LIMIT} символов")
+        current["about"] = about
+    if "sections" in data:
+        sections = data["sections"]
+        if not isinstance(sections, dict) or set(sections) - set(PROFILE_SECTIONS)                 or any(type(v) is not bool for v in sections.values()):
+            raise ValueError("Разделы профиля: " + ", ".join(PROFILE_SECTIONS))
+        current["sections"].update(sections)
+    partner.kv_set(db, f"profile:{uid}", json.dumps(
+        {"public": current["public"], "about": current["about"], "sections": current["sections"]}, ensure_ascii=False))
+    return profile(db, uid)
+
+
+def public_profile(db, viewer, friend):
+    """Профиль друга глазами viewer. Только друзья, только если профиль открыт,
+    и только те разделы, которые друг разрешил."""
+    friend = str(friend)
+    if not is_friend(db, viewer, friend):
+        raise LookupError("Друг не найден")
+    prof = profile(db, friend)
+    if not prof["public"]:
+        raise PermissionError("Профиль закрыт")
+    out = {"id": friend, "name": name(db, friend), "about": prof["about"], "sections": {}, "shown": []}
+    for key in PROFILE_SECTIONS:
+        if not prof["sections"][key]:
+            continue
+        out["shown"].append(key)
+        if key == "projects":
+            # приостановленные и скрытые из баланса проекты в профиль не попадают
+            out["sections"][key] = [{"name": p["name"], "currency": p["currency"],
+                                     "amount": p["current_total"], "rate_percent": p["rate_percent"], "period": p["period"]}
+                                    for p in projects.list_for(db, friend) if not p["paused"] and not p["hidden"]]
+        elif key == "goals":
+            out["sections"][key] = [{"title": g["title"], "emoji": g["emoji"], "saved": g["saved"], "target": g["target"],
+                                     "currency": g["currency"], "progress": g["progress"], "done": g["done"]}
+                                    for g in goals.overview(db, friend)["items"]]
+        elif key == "spend":
+            data = spend.overview(db, friend)
+            out["sections"][key] = {"monthly": data["monthly"], "this_month": data["this_month"]}
+    return out

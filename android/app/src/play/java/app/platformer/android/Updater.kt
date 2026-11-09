@@ -73,6 +73,23 @@ class Updater(private val activity: ComponentActivity, @Suppress("UNUSED_PARAMET
         }
     }
 
+    /** Кнопка «Проверить обновления»: спрашиваем Play сразу; есть версия — открываем его окно обновления. */
+    fun checkNow(report: (String) -> Unit) {
+        manager.appUpdateInfo
+            .addOnSuccessListener { info ->
+                val fresh = info.updateAvailability() == UpdateAvailability.UPDATE_AVAILABLE &&
+                    info.isUpdateTypeAllowed(AppUpdateType.IMMEDIATE)
+                if (fresh) {
+                    dialog?.dismiss()
+                    start(info, mustUpdate = false)
+                    report("available")
+                } else {
+                    report("latest")
+                }
+            }
+            .addOnFailureListener { report("error") }
+    }
+
     /** Приложение открыто: вышла новая версия — окно с «Обновить» и «Обновить позже». */
     private fun poll() {
         if (dialog?.isShowing == true) return

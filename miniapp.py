@@ -1659,6 +1659,28 @@ async def friends_api(request):
     return web.json_response(friends.overview(db, uid), status=201 if method == "POST" else 200)
 
 
+async def profile_api(request):
+    """Мой публичный профиль: GET — настройки, PATCH — открыть/закрыть, описание и разделы."""
+    uid, _ = authorize(request)
+    db = request.app["db"]
+    if request.method == "GET":
+        return web.json_response(friends.profile(db, uid))
+    data = await json_object(request)
+    return web.json_response(_section_call(lambda: friends.save_profile(db, uid, data)))
+
+
+async def friend_profile_api(request):
+    """Профиль друга: 404 — не друг, 403 — профиль закрыт; в ответе только открытые разделы."""
+    uid, _ = authorize(request)
+    db = request.app["db"]
+    try:
+        return web.json_response(friends.public_profile(db, uid, request.match_info["friend_id"]))
+    except LookupError as exc:
+        raise web.HTTPNotFound(text=str(exc))
+    except PermissionError as exc:
+        raise web.HTTPForbidden(text=str(exc))
+
+
 async def income_api(request):
     """Зарплата: GET — зачисления и сводка, POST — новое, PATCH/DELETE /{id}."""
     uid, _ = authorize(request)
@@ -1977,6 +1999,9 @@ def setup(app):
     app.router.add_delete("/api/goals/{goal_id}", goals_api)
     app.router.add_post("/api/goals/{goal_id}/add", goals_api)
     app.router.add_get("/api/friends", friends_api)
+    app.router.add_get("/api/profile", profile_api)
+    app.router.add_patch("/api/profile", profile_api)
+    app.router.add_get("/api/friends/{friend_id}/profile", friend_profile_api)
     app.router.add_post("/api/friends/split", friends_api)
     app.router.add_delete("/api/friends/split/{split_id}", friends_api)
     app.router.add_get("/api/income", income_api)

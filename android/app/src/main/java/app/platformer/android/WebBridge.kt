@@ -16,6 +16,7 @@ class WebBridge(
     private val onFix: (String) -> Unit = {},
     private val onShare: (String) -> Unit = {},
     private val onCopy: (String) -> Unit = {},
+    private val onCheckUpdate: () -> Unit = {},
 ) {
     @JavascriptInterface
     fun token(): String = store.token.orEmpty()
@@ -49,6 +50,10 @@ class WebBridge(
         val value = text.orEmpty()
         if (value.isNotEmpty() && value.length <= 4000) onCopy(value)
     }
+
+    /** Проверить обновление по кнопке в настройках; итог придёт в window.onPlatformerUpdate(status). */
+    @JavascriptInterface
+    fun checkUpdate() = onCheckUpdate()
 
     /** select · impact · success · warning · error */
     @JavascriptInterface

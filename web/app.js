@@ -13,7 +13,7 @@ const haptics=androidApp?{impactOccurred:()=>buzz('impact'),notificationOccurred
 const state = {data:null, people:null, admin:null, report:null, reportError:'', priceChart:null, notifications:{items:[],unread:0}, view:'overview', login:null, period:'today', kind:'trades', offset:0, from:'', to:'', filters:{tagmarket:{period:'today',from:'',to:''},account:{period:'today',from:'',to:''}}, busy:false, currency:null};
 try{state.displayCurrency=localStorage.getItem('tag-display-currency')||'USD';}catch{state.displayCurrency='USD';}
 let generation = 0, refreshTimer, toastTimer, notificationsStarted = false, lastNotificationId = 0;
-state.projects=null;state.projectsError='';state.banks=null;state.banksError='';state.spend=null;state.spendError='';state.spendSpan='month';state.income=null;state.incomeError='';state.goals=null;state.friends=null;state.friendsError='';state.projectId=null;try{state.assetMode=localStorage.getItem('tag-asset-mode')||'tag';}catch{state.assetMode='tag';}state.forecast={horizon:'1m',until:'',bonus:true,selected:null,result:null,tag:null};
+state.projects=null;state.projectsError='';state.profile=null;state.friendProfile=null;state.friendProfileError='';state.friendId='';state.banks=null;state.banksError='';state.spend=null;state.spendError='';state.spendSpan='month';state.income=null;state.incomeError='';state.goals=null;state.friends=null;state.friendsError='';state.projectId=null;try{state.assetMode=localStorage.getItem('tag-asset-mode')||'tag';}catch{state.assetMode='tag';}state.forecast={horizon:'1m',until:'',bonus:true,selected:null,result:null,tag:null};
 const paths = {overview:'M3 10l9-7 9 7v10H3z M9 20v-7h6v7',accounts:'M3 7h18v14H3z M3 7V4h14v3 M16 12h5v5h-5z',deals:'M4 5h16 M4 12h16 M4 19h16 M8 2v6 M16 9v6 M9 16v6',people:'M16 21v-3a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v3 M9 10a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M17 3a4 4 0 0 1 0 8 M22 21v-3a4 4 0 0 0-3-4',settings:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M12 2v3 M12 19v3 M2 12h3 M19 12h3 M5 5l2 2 M17 17l2 2 M5 19l2-2 M17 7l2-2',plus:'M12 5v14 M5 12h14',arrow:'M5 12h14 M14 7l5 5-5 5',up:'M7 17 17 7 M7 7h10v10',down:'M7 7l10 10 M7 17h10V7',refresh:'M20 7A8 8 0 0 0 6 5L3 8 M3 3v5h5 M4 17a8 8 0 0 0 14 2l3-3 M21 21v-5h-5',sun:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M12 1v2 M12 21v2 M1 12h2 M21 12h2 M4 4l2 2 M18 18l2 2 M4 20l2-2 M18 6l2-2',chevron:'M9 5l7 7-7 7',chart:'M3 19h18 M4 15l5-5 5 3 6-9',check:'m5 12 4 4L19 6',clock:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 7v5l3 2',link:'M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-2 2 M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l2-2',back:'M19 12H5 M10 7l-5 5 5 5',shield:'M12 2l9 4v6c0 5-9 10-9 10S3 17 3 12V6z M8 12l3 3 5-6',copy:'M8 8h13v13H8z M16 8V3H3v13h5'};
 paths.bell='M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9 M10 21h4';paths.exit='M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4 M16 17l5-5-5-5 M21 12H9';paths.palette='M12 3a9 9 0 1 0 0 18c1.4 0 2-.9 2-1.8 0-1.4-1.2-1.6-1.2-2.8 0-.9.7-1.4 1.6-1.4H17a4 4 0 0 0 4-4c0-4.4-4-8-9-8z';
 Object.assign(paths,{
@@ -119,7 +119,7 @@ const NAV_ROOTS=['#desktop-nav','#mobile-nav'];
 function reducedMotion(){return !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;}
 function nav(){
  document.body.classList.toggle('onboarding-only',onboardingOnly());
- const active=['account','accounts','project','forecast','tagmarket','onboarding','banks','income'].includes(state.view)?'projects':['faq','circle'].includes(state.view)?'overview':state.view;
+ const active=['account','accounts','project','forecast','tagmarket','onboarding','banks','income'].includes(state.view)?'projects':['faq','circle'].includes(state.view)?'overview':state.view==='friend'?'people':state.view;
  for(const selector of NAV_ROOTS){
   const root=$(selector);
   if(!root.dataset.ready){
@@ -137,7 +137,7 @@ function nav(){
   root.querySelectorAll('a[data-tab]').forEach(link=>{const on=link.dataset.tab===active;link.classList.toggle('active',on);if(on)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');});
   moveGlider(root);
  }
- const crumb=$('#crumb'),title={project:'Финансы / Проект',account:'Финансы / Счёт',accounts:'Финансы / Счета',tagmarket:'Финансы / TagMarket',forecast:'Финансы / Прогноз',faq:'Вопросы и ответы',onboarding:'Как добавить свой счёт',settings:'Настройки',circle:'Главная / Баланс жизни',banks:'Финансы / Банки'}[state.view]||tabs.find(([id])=>id===state.view)?.[1]||'Главная';
+ const crumb=$('#crumb'),title={project:'Финансы / Проект',account:'Финансы / Счёт',accounts:'Финансы / Счета',tagmarket:'Финансы / TagMarket',forecast:'Финансы / Прогноз',faq:'Вопросы и ответы',onboarding:'Как добавить свой счёт',settings:'Настройки',circle:'Главная / Баланс жизни',banks:'Финансы / Банки',friend:'Профиль друга'}[state.view]||tabs.find(([id])=>id===state.view)?.[1]||'Главная';
  // анимируем только настоящую смену: render() идёт и на фоновом обновлении,
  // где заголовок тот же и мигать ему незачем
  if(crumb.textContent!==title){
@@ -168,7 +168,7 @@ function moveGlider(root,instant=false){
 }
 // Порядок разделов для направления перехода: вглубь и вправо по панели —
 // новый экран въезжает справа, назад — слева
-const VIEW_ORDER={banks:1.1,income:1.05,spend:1.08,overview:0,faq:.5,projects:1,tagmarket:1.2,onboarding:1.25,accounts:1.3,account:1.5,project:1.6,activity:1.08,spend:1.08,plans:4,circle:.2,forecast:1.7,people:5,settings:6};
+const VIEW_ORDER={banks:1.1,income:1.05,spend:1.08,overview:0,faq:.5,projects:1,tagmarket:1.2,onboarding:1.25,accounts:1.3,account:1.5,project:1.6,activity:1.08,spend:1.08,plans:4,circle:.2,forecast:1.7,people:5,friend:5.1,settings:6};
 // Въезд — CSS-классом, который снимается по окончании: после WAAPI-анимации
 // transform Chromium держал устаревшую карту попаданий, и первое нажатие в
 // новом разделе уходило «мимо» кнопки, пока стиль #main не изменится
@@ -612,7 +612,6 @@ function guestCard(g,p){
  return `<details class="panel people-card guest-card" data-ui-key="guest-${esc(g.id)}" style="${toneStyle(g.name)}"><summary class="person-head"><span class="avatar guest-avatar">${esc(g.name.slice(0,1).toUpperCase())}</span><span class="person-copy"><b>${esc(g.name)}</b><small class="guest-sub">${esc(sub)}</small></span>${icon('chevron')}</summary><div class="faq-body">${g.accounts.map(a=>`<div class="guest-account ${a.shared?'is-shared':''}"><span class="ga-ico">${icon(a.shared?'link':'chart')}</span><div><b>${esc(a.name)}</b><small>${a.shared?'Ваш счёт у гостя':'Личный · только просмотр'}</small></div>${a.shared?button('take','Забрать','secondary small','',`data-guest="${esc(g.id)}" data-login="${esc(a.login)}"`):''}</div>`).join('')||'<p class="guest-empty">Счетов пока нет — откройте гостю один из своих.</p>'}<div class="actions guest-actions">${canShare.length?button('share-accounts','Открыть счета','secondary small','plus',`data-guest="${esc(g.id)}"`):''}${button('guest-detail','Подробнее','secondary small','',`data-guest="${esc(g.id)}"`)}${button('revoke-guest','Убрать доступ','danger small','',`data-guest="${esc(g.id)}"`)}</div></div></details>`;
 }
 
-function peopleView(){const p=state.people;if(!p)return secHero('people','Друзья')+skeleton('list',2);const n=(state.friends?.friends||[]).filter(f=>!f.former).length;return secHero('people','Друзья',n?`${esc(countLabel(n,['друг','друга','друзей']))} в вашем круге`:'Пригласите по ссылке — у каждого свой Platformer')+friendsSection()+inviteCard(p);}
 function toggle(label,note,action,on,attrs=''){return `<div class="settings-row"><div><p>${esc(label)}</p>${note?`<small>${esc(note)}</small>`:''}</div><button class="switch" role="switch" aria-label="${esc(label)}" aria-checked="${!!on}" data-action="${action}" ${attrs}></button></div>`;}
 const MACHINE_STATE={disabled:['Выключена','muted'],polling:['Опрашивает','ok'],waiting:['Готова','ok'],legacy:['Старый код','warning'],offline:['Офлайн','muted']};
 function nextCheck(sec){if(sec==null)return '';const at=new Intl.DateTimeFormat('ru-RU',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Moscow'}).format(new Date(Date.now()+sec*1000));const wait=sec<60?'меньше минуты':`${Math.ceil(sec/60)} мин`;return ` Следующая проверка через ${wait}, в ${at} МСК.`;}
@@ -636,7 +635,50 @@ window.onPlatformerPermissions=()=>{
  if(healthAccess&&healthAccess!=='granted'&&now==='granted'&&!preview)setTimeout(async()=>{try{state.activity=await api('/activity?days='+(state.activityDays||7));if(state.view==='activity')render(true);}catch{}},5000);
  healthAccess=now;
  if(state.data&&(state.view==='settings'||state.view==='activity'))render(true);};
-function settingsView(){const personal=state.data.accounts;return secHero('set','Настройки','Тема и счета')+`<div class="two-column"><section class="panel"><div class="panel-head"><h2>Оформление</h2></div>${themePicker()}${inAndroidApp()?'':`<button class="shortcut-card" type="button" data-action="shortcut"><span class="shortcut-tile">${icon('overview')}</span><span class="shortcut-copy"><b>Ярлык на экран</b><small>Открывать Platformer в один тап</small></span><span class="pill">Добавить</span></button>`}</section><section class="panel"><div class="panel-head"><h2>Мои счета</h2><span class="badge">${personal.length}</span></div>${personal.map(a=>`<button type="button" class="settings-row settings-account-row compact-row" data-ui-key="account-${esc(a.login)}" data-action="account-settings" data-login="${esc(a.login)}"><span class="settings-account-info"><b>${esc(a.strategy||a.name)}</b><small>${esc(a.cabinet||'Без кабинета')}${a.holder?` · ${esc(a.holder)}`:''}</small></span><span class="settings-balance">${a.totals?money(a.totals.now,a.totals.cur):'—'}</span>${icon('chevron')}</button>`).join('')||'<p class="muted mt">Счетов пока нет.</p>'}</section></div>${appToken()?permissionsPanel():''}${appToken()?`<section class="panel leave-card"><div><b>Это устройство</b><small>Выйти из Platformer на этом телефоне</small></div><button type="button" class="leave-btn" data-action="app-logout">${icon('exit')}<span>Выйти</span></button></section>`:''}${state.data.founder?servicePanel():`<section class="panel leave-card"><div><b>Доступ</b><small>Счета и данные будут удалены</small></div><button type="button" class="leave-btn" data-action="leave">${icon('exit')}<span>Отключить мой доступ</span></button></section>`}`+appVersionLine();}
+function profilePanel(){
+ const pr=state.profile;
+ const head=`<div class="set-head"><span class="set-ico">${icon('people')}</span><div><h2>Публичный профиль</h2><p>Решайте, что увидят ваши друзья</p></div></div>`;
+ if(!pr)return `<section class="panel set-card set-profile" data-ui-key="set-profile">${head}${skeleton('list',2)}</section>`;
+ const sections=pr.available.map(x=>toggle(x.label,x.note,'profile-section',pr.sections[x.id],`data-section="${esc(x.id)}"`)).join('');
+ return `<section class="panel set-card set-profile" data-ui-key="set-profile">${head}${toggle('Профиль открыт для друзей',pr.public?'Друзья откроют его из списка «Мои друзья»':'Сейчас профиль закрыт — друзья видят только ваше имя','profile-public',pr.public)}${pr.public?`<label class="field set-about">О себе (необязательно)<textarea name="profile-about" data-profile-about rows="2" maxlength="140" placeholder="Пара слов для друзей">${esc(pr.about)}</textarea><small>До 140 символов</small></label><div class="set-sub"><span class="eyebrow">Что видят друзья</span>${sections}</div><p class="set-note">Скрытые из баланса и замороженные проекты в профиль не попадают. Банковские карты и счета TagMarket не публикуются никогда.</p>`:''}</section>`;
+}
+async function profileAction(action,el){
+ const pr=state.profile;if(!pr)return;
+ let body;
+ if(action==='profile-public')body={public:!pr.public};
+ else if(action==='profile-section')body={sections:{[el.dataset.section]:!pr.sections[el.dataset.section]}};
+ else return;
+ if(preview){state.profile={...pr,...(body.public!==undefined?{public:body.public}:{}),sections:{...pr.sections,...(body.sections||{})}};render(true);return;}
+ try{state.profile=await api('/profile',{method:'PATCH',body:JSON.stringify(body)});render(true);}catch(error){toast(error.message);}
+}
+document.addEventListener('change',async event=>{
+ const area=event.target.closest?.('[data-profile-about]');if(!area||!state.profile)return;
+ const about=area.value.trim();if(about===state.profile.about)return;
+ if(preview){state.profile={...state.profile,about};return;}
+ try{state.profile=await api('/profile',{method:'PATCH',body:JSON.stringify({about})});toast('Сохранено');}catch(error){toast(error.message);}
+});
+const UPDATE_STATUS={checking:'Проверяем…',latest:'У вас последняя версия',available:'Есть новая версия — откройте окно обновления',offline:'Нет интернета — проверьте подключение',error:'Не удалось проверить, попробуйте позже',unavailable:'Эта сборка обновляется через магазин приложений'};
+function updateStatusText(){return UPDATE_STATUS[state.updateCheck]||'Новые версии ставятся сами при входе в приложение';}
+window.onPlatformerUpdate=status=>{clearTimeout(updateTimer);state.updateCheck=status;if(status==='latest')toast('У вас последняя версия');if(state.view==='settings')render(true);};
+let updateTimer=0;
+function checkAppUpdate(){
+ if(typeof androidApp?.checkUpdate!=='function')return;
+ state.updateCheck='checking';render(true);
+ // ответ приходит из приложения; если его нет полминуты — не держим кнопку в «Проверяем…»
+ clearTimeout(updateTimer);updateTimer=setTimeout(()=>window.onPlatformerUpdate('error'),30000);
+ try{androidApp.checkUpdate();}catch{window.onPlatformerUpdate('error');}
+}
+function settingsView(){
+ const personal=state.data.accounts;
+ const look=`<section class="panel set-card" data-ui-key="set-look"><div class="set-head"><span class="set-ico">${icon('palette')}</span><div><h2>Оформление</h2><p>Тема приложения</p></div></div>${themePicker()}${inAndroidApp()?'':`<button class="shortcut-card" type="button" data-action="shortcut"><span class="shortcut-tile">${icon('overview')}</span><span class="shortcut-copy"><b>Ярлык на экран</b><small>Открывать Platformer в один тап</small></span><span class="pill">Добавить</span></button>`}</section>`;
+ const rows=personal.map(a=>`<button type="button" class="settings-row settings-account-row compact-row" data-ui-key="account-${esc(a.login)}" data-action="account-settings" data-login="${esc(a.login)}"><span class="settings-account-info"><b>${esc(a.strategy||a.name)}</b><small>${esc(a.cabinet||'Без кабинета')}${a.holder?` · ${esc(a.holder)}`:''}</small></span><span class="settings-balance">${a.totals?money(a.totals.now,a.totals.cur):'—'}</span>${icon('chevron')}</button>`).join('');
+ const accounts=`<section class="panel set-card" data-ui-key="set-accounts"><div class="set-head"><span class="set-ico">${icon('accounts')}</span><div><h2>Мои счета</h2><p>Параметры и уведомления</p></div><span class="badge">${personal.length}</span></div>${rows||'<p class="muted mt">Счетов пока нет.</p>'}</section>`;
+ const device=appToken()?`<section class="panel leave-card"><div><b>Это устройство</b><small>Выйти из Platformer на этом телефоне</small></div><button type="button" class="leave-btn" data-action="app-logout">${icon('exit')}<span>Выйти</span></button></section>`:'';
+ const access=state.data.founder?'':`<section class="panel leave-card"><div><b>Доступ</b><small>Счета и данные будут удалены</small></div><button type="button" class="leave-btn" data-action="leave">${icon('exit')}<span>Отключить мой доступ</span></button></section>`;
+ const appVer=(navigator.userAgent.match(/PlatformerAndroid\/([\w.]+)/)||[])[1];
+ const update=typeof androidApp?.checkUpdate==='function'?`<section class="panel set-card set-update" data-ui-key="set-update"><div class="set-head"><span class="set-ico">${icon('refresh')}</span><div><h2>Обновления</h2><p>${appVer?`Установлена версия ${esc(appVer)}`:'Приложение для Android'}</p></div></div><div class="update-row"><small class="update-status" aria-live="polite">${esc(updateStatusText())}</small>${button('app-update-check',state.updateCheck==='checking'?'Проверяем…':'Проверить обновления','secondary small','refresh',state.updateCheck==='checking'?'disabled':'')}</div></section>`:'';
+ return secHero('set','Настройки','Профиль, тема и счета')+`<div class="set-grid"><div class="set-col">${profilePanel()}${look}</div><div class="set-col">${accounts}${update}${appToken()?permissionsPanel():''}${device}${access}</div></div>${state.data.founder?servicePanel():''}`+appVersionLine();
+}
 // Внизу настроек — какая версия открыта: у приложения для Android — номер из сборки
 // (он же в окне обновления), у веб-части — дата выкладки интерфейса
 function appVersionLine(){
@@ -648,7 +690,7 @@ function appVersionLine(){
 // отпечаток всего, из чего строится экран; server_time меняется на каждом
 // запросе и на вид не влияет — без него одинаковые данные дают одинаковый ключ
 let paintedKey='';
-function paintKey(){const {server_time,...data}=state.data||{};return JSON.stringify([state.view,state.login,state.projectId,state.projects,state.projectsError,state.tagStats,state.period,state.from,state.to,state.currency,state.displayCurrency,state.assetMode,state.forecast,state.kind,state.offset,data,state.report,state.reportError,state.priceChart,state.people,state.admin,state.banks,state.spend,state.spendSpan,state.income,state.goals,state.friends,state.activity,state.lists,state.events,state.circle,state.listsTab,state.calDay,state.calMonth,state.activityDays]);}
+function paintKey(){const {server_time,...data}=state.data||{};return JSON.stringify([state.view,state.login,state.projectId,state.projects,state.projectsError,state.tagStats,state.period,state.from,state.to,state.currency,state.displayCurrency,state.assetMode,state.forecast,state.kind,state.offset,data,state.report,state.reportError,state.priceChart,state.people,state.admin,state.banks,state.spend,state.spendSpan,state.income,state.goals,state.friends,state.profile,state.friendProfile,state.friendProfileError,state.activity,state.lists,state.events,state.circle,state.listsTab,state.calDay,state.calMonth,state.activityDays]);}
 function captureUiState(){
  const nodes=[...document.querySelectorAll('#main [data-ui-key]')];
  const anchor=nodes.filter(el=>{const r=el.getBoundingClientRect();return r.bottom>90&&r.top<innerHeight;}).sort((a,b)=>Math.abs(a.getBoundingClientRect().top-100)-Math.abs(b.getBoundingClientRect().top-100))[0];
@@ -715,7 +757,7 @@ function render(preserve=false){const snapshot=preserve?captureUiState():null;$(
   const fingerprint=[...strip.querySelectorAll('button')].map(b=>b.dataset.value||b.textContent).join('|');
   prevThumbs.set(fingerprint, {left:active.offsetLeft, width:active.offsetWidth});
  });
- const views={overview,tagmarket:tagmarketView,activity:spendView,spend:spendView,plans:listsView,circle:circleView,banks:banksView,accounts:accountsView,account:accountView,projects:projectsView,spend:spendView,income:incomeView,project:projectView,forecast:forecastView,people:peopleView,settings:settingsView,faq:faqView,onboarding:welcomeView};$('#main').innerHTML=(preview?'<div class="preview-label">Демо-режим · вымышленные данные. Отправка сообщений и управление счетами работают только при запуске из <a href="https://t.me/tagmarketgold_bot" target="_blank" rel="noopener">бота в Telegram</a>.</div>':'')+(views[state.view]||overview)()+(state.view==='settings'&&state.admin?.network?.length?networkView():'');$('#avatar').textContent=state.data.user.name.slice(0,1).toUpperCase();
+ const views={overview,tagmarket:tagmarketView,activity:spendView,spend:spendView,plans:listsView,friend:friendView,circle:circleView,banks:banksView,accounts:accountsView,account:accountView,projects:projectsView,spend:spendView,income:incomeView,project:projectView,forecast:forecastView,people:peopleView,settings:settingsView,faq:faqView,onboarding:welcomeView};$('#main').innerHTML=(preview?'<div class="preview-label">Демо-режим · вымышленные данные. Отправка сообщений и управление счетами работают только при запуске из <a href="https://t.me/tagmarketgold_bot" target="_blank" rel="noopener">бота в Telegram</a>.</div>':'')+(views[state.view]||overview)()+(state.view==='settings'&&state.admin?.network?.length?networkView():'');$('#avatar').textContent=state.data.user.name.slice(0,1).toUpperCase();
  // сначала все замеры, потом все записи: чередование чтения и записи в одном
  // цикле заставляет браузер пересчитывать вёрстку на каждой полосе
  const centering=[];
@@ -903,13 +945,15 @@ async function viewParts(){
  if(['people','tagmarket'].includes(state.view))jobs.push((async()=>{out.people=await api('/people');})());
  if(['projects','spend','income'].includes(state.view))jobs.push((async()=>{try{out.spend=preview?{...previewSpend(),span:state.view==='spend'?state.spendSpan:'month'}:await api('/spend'+(state.view==='spend'&&state.spendSpan==='year'?'?span=year':''));out.spendError='';}catch(error){out.spend=state.spend;out.spendError=error.message;}})());
  if(state.view==='projects')jobs.push((async()=>{try{out.goals=preview?previewGoals():await api('/goals');}catch(error){out.goals=state.goals;}})());
- if(state.view==='people')jobs.push((async()=>{try{out.friends=preview?previewFriends():await api('/friends');out.friendsError='';}catch(error){out.friends=state.friends;out.friendsError=error.message;}})());
+ if(['people','spend'].includes(state.view))jobs.push((async()=>{try{out.friends=preview?previewFriends():await api('/friends');out.friendsError='';}catch(error){out.friends=state.friends;out.friendsError=error.message;}})());
  if(['projects','income'].includes(state.view))jobs.push((async()=>{try{out.income=preview?previewIncome():await api('/income');out.incomeError='';}catch(error){out.income=state.income;out.incomeError=error.message;}})());
  if(['overview','projects','banks','income'].includes(state.view))jobs.push((async()=>{try{out.banks=preview?previewBanks():await api('/banks');out.banksError='';}catch(error){out.banks=state.banks;out.banksError=error.message;}})());
  if(['overview','activity'].includes(state.view))jobs.push((async()=>{try{out.activity=preview?previewActivity(state.activityDays):await api(`/activity?days=${state.view==='overview'?7:state.activityDays}`);out.activityError='';}catch(error){out.activity=state.activity;out.activityError=error.message;}})());
  if(['overview','plans'].includes(state.view))jobs.push((async()=>{try{const [from,to]=monthBounds(state.calMonth);const [lists,events]=await Promise.all([preview?previewLists():api('/lists'),state.view==='plans'?(preview?previewLists():api(`/events?from=${from}&to=${to}`)):Promise.resolve(state.events)]);out.lists=lists;out.events=events;out.listsError='';}catch(error){out.lists=state.lists;out.listsError=error.message;}})());
  if(state.view==='projects')jobs.push((async()=>{const tag=await fetchTagForecast();if(!tag.error)out.tagStats=tag;})());
  if(['projects','project','overview','forecast'].includes(state.view))jobs.push((async()=>{try{out.projects=(await api('/projects')).projects;out.projectsError='';if(state.view==='forecast'){const [result,tag]=await Promise.all([fetchForecast(out.projects),fetchTagForecast()]);out.forecast={...state.forecast,result,tag,...await fetchForecastStart()};}}catch(error){out.projects=state.projects;out.projectsError=error.message;}})());
+ if(['settings','people'].includes(state.view))jobs.push((async()=>{try{out.profile=preview?previewProfile():await api('/profile');}catch(error){out.profile=state.profile;}})());
+ if(state.view==='friend')jobs.push((async()=>{try{out.friendProfile=preview?previewFriendProfile():await api('/friends/'+encodeURIComponent(state.friendId)+'/profile');out.friendProfileError='';}catch(error){out.friendProfile=null;out.friendProfileError=error.message;}})());
  if(state.view==='settings'&&state.data.founder)jobs.push((async()=>{out.admin=await api('/admin');})());
  await Promise.all(jobs);
  return out;
@@ -919,10 +963,10 @@ async function viewParts(){
 // данные и перерисовывал экран, и раздел заметно «обновлялся» на глазах.
 // Свежесть держит фоновое обновление; старше его интервала — грузим заново
 const viewCache=new Map();
-function viewKey(){return [state.view,state.login,state.projectId,state.period,state.from,state.to,state.currency,state.kind,state.offset,state.view==='activity'?state.activityDays:'',state.view==='plans'?state.calMonth:'',state.view==='spend'?state.spendSpan:''].join('|');}
+function viewKey(){return [state.view,state.login,state.projectId,state.period,state.from,state.to,state.currency,state.kind,state.offset,state.view==='activity'?state.activityDays:'',state.view==='plans'?state.calMonth:'',state.view==='spend'?state.spendSpan:'',state.view==='friend'?state.friendId:''].join('|');}
 function remember(){viewCache.set(viewKey(),{report:state.report,reportError:state.reportError,priceChart:state.priceChart,projects:state.projects,projectsError:state.projectsError,banks:state.banks,spend:state.spend,income:state.income,goals:state.goals,friends:state.friends,activity:state.activity,lists:state.lists,events:state.events,at:Date.now()});}
 function refreshEvery(){return Math.max(30,Number(state.data?.refresh_seconds)||60)*1000;}
-const VIEW_NEEDS_DATA=view=>['overview','tagmarket','activity','plans','circle','banks','spend','income','account','people','projects','project','forecast'].includes(view)||(view==='settings'&&!!state.data?.founder);
+const VIEW_NEEDS_DATA=view=>['overview','tagmarket','activity','plans','circle','banks','spend','income','account','people','projects','project','forecast','friend','settings'].includes(view);
 // Смена периода, вкладки истории, страницы, валюты: то же, что переход —
 // из памяти, если свежее, иначе догружаем только отчёт раздела. Раньше каждое
 // такое нажатие перегружало всё (4 запроса), и частые переключения упирались
@@ -1013,16 +1057,16 @@ async function navigate(){
  let [view,login]=location.hash.slice(1).split('/');
  if(view==='lists'){view='plans';login='notes';}   // прежняя ссылка на списки
  if(view==='plans'){if(['tasks','calendar','notes'].includes(login))state.listsTab=login;login=undefined;}
- const next=['overview','tagmarket','activity','plans','circle','banks','spend','income','accounts','account','projects','project','forecast','people','settings','faq'].includes(view)?view:'overview';
+ const next=['overview','tagmarket','activity','plans','circle','banks','spend','income','accounts','account','projects','project','forecast','people','friend','settings','faq'].includes(view)?view:'overview';
  const direction=Math.sign((VIEW_ORDER[next]??0)-(VIEW_ORDER[state.view]??0));
- const moved=next!==state.view||(!!login&&(next==='project'?login!==state.projectId:Number(login)!==state.login));
+ const moved=next!==state.view||(!!login&&(next==='project'?login!==state.projectId:next==='friend'?login!==state.friendId:Number(login)!==state.login));
  // тот же раздел (повторное событие hashchange) — экран уже верный
  if(state.data&&!moved)return;
  clearTimeout(choiceTimer);if(state.data)cancelLoads();
  if(state.filters[state.view])state.filters[state.view]={period:state.period,from:state.from,to:state.to};
  if(next!==state.view&&state.filters[next])Object.assign(state,state.filters[next]);
  state.view=next;state.faqDeep=next==='faq'&&login==='connect';   // «Как подключить» открывает регистрацию, обычный вход в раздел — нет
- if(login){if(next==='project')state.projectId=login;else if(next!=='faq')state.login=Number(login);}
+ if(login){if(next==='project')state.projectId=login;else if(next==='friend'){if(state.friendId!==login){state.friendProfile=null;state.friendProfileError='';}state.friendId=login;}else if(next!=='faq')state.login=Number(login);}
  state.offset=0;state.kind='trades';
  const cached=state.data&&viewCache.get(viewKey());
  const fresh=!!state.data&&(!VIEW_NEEDS_DATA(next)||(!!cached&&Date.now()-cached.at<refreshEvery()));
@@ -1031,7 +1075,7 @@ async function navigate(){
  if(cached&&['projects','project','forecast','overview'].includes(next)){state.projects=cached.projects;state.projectsError=cached.projectsError||'';}
  if(cached&&['projects','income'].includes(next))state.income=cached.income??state.income;
  if(cached&&next==='projects')state.goals=cached.goals??state.goals;
- if(cached&&next==='people')state.friends=cached.friends??state.friends;
+ if(cached&&['people','spend'].includes(next))state.friends=cached.friends??state.friends;
  if(cached&&['overview','projects','banks','income'].includes(next))state.banks=cached.banks??state.banks;
  if(cached&&['projects','spend'].includes(next))state.spend=cached.spend??state.spend;
  if(cached&&['overview','activity','plans'].includes(next)){state.activity=cached.activity??state.activity;state.lists=cached.lists??state.lists;state.events=cached.events??state.events;}
@@ -1214,7 +1258,7 @@ function spendView(){
  const spans=`<div class="segmented spend-span" role="tablist" aria-label="Период">${[['month','Месяц'],['year','Год']].map(([id,l])=>`<button type="button" role="tab" class="${state.spendSpan===id?'active':''}" aria-selected="${state.spendSpan===id}" data-action="spend-span" data-span="${id}">${l}</button>`).join('')}</div>`;
  const hero=`<div class="project-space">${back}</div><div class="page-head sec-hero tone-spend spend-head"><div><span class="sec-eyebrow">Регулярно в месяц</span><b class="spend-total">${!d?'…':countUp(m.sum,`money:${cur}`)}</b><p>${d?`${year?'В этом году':'В этом месяце'} всего ${esc(money(t.sum,cur))}${m.partial||t.partial?' · часть без курса валют':''} · 🔔 Напоминание за 5 дней ботом и пушом`:'Подписки, платежи и покупки'}</p></div><div class="head-actions">${button('spend-add','Трата','primary head-primary','plus')}</div></div>${!d||d.items.length?spans:''}`;
  if(!d)return hero+(state.spendError?sectionError(state.spendError,'spend-reload'):skeleton('list'));
- if(!d.items.length)return hero+`<section class="lists-empty spend-empty"><span class="empty-orb">${icon('spend')}</span><b>Запишите первую трату</b><p>Подписки и регулярные платежи — Platformer сам напомнит за 5 дней в Telegram и пушем, и покажет график расходов.</p>${button('spend-add','Добавить трату','primary','plus')}</section>`;
+ if(!d.items.length)return hero+`<section class="lists-empty spend-empty"><span class="empty-orb">${icon('spend')}</span><b>Запишите первую трату</b><p>Подписки и регулярные платежи — Platformer сам напомнит за 5 дней в Telegram и пушем, и покажет график расходов.</p>${button('spend-add','Добавить трату','primary','plus')}</section>`+sharedSpendSection();
  const cats=d.by_category.map(c=>({...c,v:sumIn(c.totals).sum})).filter(c=>c.v>0),whole=cats.reduce((n,c)=>n+c.v,0),[yy,mm]=d.month.split('-').map(Number);
  const catBlock=whole?`<section class="spend-cats" data-ui-key="spend-cats"><div class="sec-row"><h2>Куда уходит</h2><small class="muted">${year?`${yy} год`:MONTH_NAMES[mm-1]}</small></div><div class="fin-alloc">${cats.map((c,i)=>`<i class="cat-${esc(c.category)}" style="--w:${(c.v/whole*100).toFixed(1)}%;--d:${i*110}ms"></i>`).join('')}</div><div class="fin-legend">${cats.map(c=>`<span><i class="cat-${esc(c.category)}"></i>${esc(c.label)} <em>${money(c.v,cur)}</em></span>`).join('')}</div></section>`:'';
  const up=d.upcoming.length?`<section class="spend-upcoming" data-ui-key="spend-upcoming"><div class="sec-row"><h2>Ближайшие списания</h2>${next5Count?`<span class="badge fresh">🔔 ${next5Count} в течение 5 дней</span>`:''}</div><div class="sp-timeline">${d.upcoming.map((u,i)=>{const [,um,ud]=u.date.split('-').map(Number);const soon=u.in_days<=1,soon5=u.in_days<=5;const note=soon?'Завтра / Сегодня':soon5?`через ${u.in_days} дн · 🔔 напомним`:esc(spendWhen(u));return `<button type="button" class="sp-up${soon?' soon':soon5?' soon5':''}" style="--i:${i}" data-action="spend-edit" data-id="${esc(u.id)}"><span class="sp-when"><b>${ud}</b><small>${MONTH_NAMES[um-1].slice(0,3).toLowerCase()}</small></span>${spendLogo(u.title)}<span class="sp-body"><b>${esc(u.title)}</b><small class="${soon5?'positive':''}">${note}</small></span><b class="sp-amount">${esc(bankMoney(u.amount,u.currency))}</b></button>`;}).join('')}</div></section>`:'';
@@ -1224,24 +1268,40 @@ function spendView(){
  const once=d.items.filter(i=>i.kind==='once'),inSpan=i=>year?i.day.slice(0,4)===d.month.slice(0,4):i.day.slice(0,7)===d.month,now=once.filter(inSpan),older=once.filter(i=>!inSpan(i));
  const buy=i=>`<button type="button" class="sp-row" data-action="spend-edit" data-id="${esc(i.id)}">${spendLogo(i.title)}<span class="sp-body"><b>${esc(i.title)}</b><small>${esc(shortDay(i.day))} · ${esc(i.category_label)}</small></span><span class="sp-right"><b>${esc(bankMoney(i.amount,i.currency))}</b></span></button>`;
  const buys=now.length||older.length?`<section class="spend-list" data-ui-key="spend-once"><div class="sec-row"><h2>Покупки</h2><small class="muted">${year?`${yy} год`:`${MONTH_NAMES[mm-1].toLowerCase()} ${yy}`}</small></div>${now.map(buy).join('')||`<p class="muted sp-none">${year?'В этом году':'В этом месяце'} покупок нет.</p>`}${older.length?`<details class="sp-older"><summary>Ранее · ${older.length}</summary>${older.slice(0,60).map(buy).join('')}</details>`:''}</section>`:'';
- return hero+up+catBlock+recList+buys;
+ return hero+up+catBlock+recList+buys+sharedSpendSection();
 }
 async function spendEditor(item=null){
+ if(!item&&!state.friends){if(preview)state.friends=previewFriends();else{try{state.friends=await api('/friends');}catch{}}}
  const cats=state.spend?.categories||SPEND_CATS,periods=state.spend?.periods||SPEND_PERIODS,currencies=state.spend?.currencies||['USD','EUR','RUB','BYN'];
  let error='',draft=item?{...item}:{kind:'recurring',title:'',amount:'',currency:currencies.includes(state.displayCurrency)?state.displayCurrency:'USD',category:'subs',period:'month',day:projectToday(),note:'',active:true};
  while(true){
-  const rec=draft.kind==='recurring';
-  const body=`${error?notice(error,true):''}<div class="sp-kind segmented" role="radiogroup" aria-label="Тип траты">${[['recurring','Регулярно'],['once','Покупка']].map(([id,l])=>`<label class="${draft.kind===id?'active':''}"><input type="radio" name="kind" value="${id}" ${draft.kind===id?'checked':''} data-spend-kind>${l}</label>`).join('')}</div>${field('Название','title','text',draft.title,'required maxlength="80" placeholder="Netflix, телефон, кроссовки…" autocomplete="off"')}<div class="field-row">${field('Сумма','amount','text',draft.amount===''?'':String(draft.amount).replace('.',','),'required inputmode="decimal" placeholder="0,00" autocomplete="off"')}<label class="field">Валюта<select name="currency">${currencies.map(c=>`<option ${c===draft.currency?'selected':''}>${c}</option>`).join('')}</select></label></div><div class="field-row"><label class="field sp-only-rec" ${rec?'':'hidden'}>Как часто<select name="period">${Object.entries(periods).map(([id,l])=>`<option value="${id}" ${id===(draft.period||'month')?'selected':''}>${esc(l)}</option>`).join('')}</select></label><label class="field"><span data-spend-day>${rec?'Ближайшее списание':'Дата покупки'}</span><input type="date" name="day" value="${esc(draft.day||projectToday())}" required></label></div><label class="field">Категория<select name="category">${Object.entries(cats).map(([id,l])=>`<option value="${id}" ${id===draft.category?'selected':''}>${esc(l)}</option>`).join('')}</select></label>${field('Заметка (необязательно)','note','text',draft.note||'','maxlength="300"')}${item&&rec?`<label class="check sp-only-rec"><input type="checkbox" name="active" ${draft.active?'checked':''}>Подписка активна — учитывать в тратах</label>`:''}${item?`<div class="guest-danger">${button('spend-delete','Удалить трату','danger small','',`data-id="${esc(item.id)}"`)}</div>`:''}`;
+  const rec=draft.kind==='recurring',shared=draft.kind==='shared';
+  const fl=(state.friends?.friends||[]).filter(f=>!f.former),me=state.friends?.me;
+  const sharedBlock=item?'':`<div class="sp-only-shared" ${shared?'':'hidden'}>${fl.length?`<label class="field">Кто платил<select name="payer"><option value="${esc(me)}" ${(draft.payer||me)===me?'selected':''}>Вы</option>${fl.map(f=>`<option value="${esc(f.id)}" ${draft.payer===f.id?'selected':''}>${esc(f.name)}</option>`).join('')}</select></label><span class="eyebrow">Делим поровну с</span><div class="split-members">${fl.map(f=>`<label class="split-member"><input type="checkbox" name="m_${esc(f.id)}" ${(draft.members||[]).includes(f.id)?'checked':''}><span class="fc-avatar" style="${toneStyle(f.name)}">${friendInitial(f.name)}</span>${esc(f.name)}</label>`).join('')}</div>`:'<p class="muted">Пока нет друзей. Пригласите их в разделе «Друзья» — и делите траты поровну.</p>'}</div>`;
+  const body=`${error?notice(error,true):''}<div class="sp-kind segmented" role="radiogroup" aria-label="Тип траты">${[['recurring','Регулярно'],['once','Покупка'],...(item?[]:[['shared','Общая']])].map(([id,l])=>`<label class="${draft.kind===id?'active':''}"><input type="radio" name="kind" value="${id}" ${draft.kind===id?'checked':''} data-spend-kind>${l}</label>`).join('')}</div>${field('Название','title','text',draft.title,'required maxlength="80" placeholder="Netflix, телефон, кроссовки…" autocomplete="off"')}<div class="field-row">${field('Сумма','amount','text',draft.amount===''?'':String(draft.amount).replace('.',','),'required inputmode="decimal" placeholder="0,00" autocomplete="off"')}<label class="field">Валюта<select name="currency">${currencies.map(c=>`<option ${c===draft.currency?'selected':''}>${c}</option>`).join('')}</select></label></div><div class="field-row"><label class="field sp-only-rec" ${rec?'':'hidden'}>Как часто<select name="period">${Object.entries(periods).map(([id,l])=>`<option value="${id}" ${id===(draft.period||'month')?'selected':''}>${esc(l)}</option>`).join('')}</select></label><label class="field"><span data-spend-day>${rec?'Ближайшее списание':shared?'Дата':'Дата покупки'}</span><input type="date" name="day" value="${esc(draft.day||projectToday())}" required></label></div><div class="sp-hide-shared" ${shared?'hidden':''}><label class="field">Категория<select name="category">${Object.entries(cats).map(([id,l])=>`<option value="${id}" ${id===draft.category?'selected':''}>${esc(l)}</option>`).join('')}</select></label>${field('Заметка (необязательно)','note','text',draft.note||'','maxlength="300"')}</div>${sharedBlock}${item&&rec?`<label class="check sp-only-rec"><input type="checkbox" name="active" ${draft.active?'checked':''}>Подписка активна — учитывать в тратах</label>`:''}${item?`<div class="guest-danger">${button('spend-delete','Удалить трату','danger small','',`data-id="${esc(item.id)}"`)}</div>`:''}`;
   const values=await dialog(item?(rec?'Регулярная трата':'Покупка'):'Новая трата',body);if(!values)return;
-  const kind=values.kind==='once'?'once':'recurring';
+  const kind=values.kind==='shared'&&!item?'shared':values.kind==='once'?'once':'recurring';
   draft={...draft,kind,title:values.title,amount:values.amount,currency:values.currency,category:values.category,period:values.period||'month',day:values.day,note:values.note||'',active:item&&kind==='recurring'?values.active==='on':true};
+  if(kind==='shared'){
+   draft.payer=values.payer;draft.members=fl.filter(f=>values['m_'+f.id]==='on').map(f=>f.id);
+   if(!me){error='Не удалось загрузить друзей. Попробуйте ещё раз';continue;}
+   if(preview){toast('В демо-режиме траты не сохраняются');return;}
+   try{state.friends=await api('/friends/split',{method:'POST',body:JSON.stringify({title:draft.title,amount:String(draft.amount).replace(/\s/g,'').replace(',','.'),currency:draft.currency,payer:values.payer||me,members:[me,...draft.members],day:draft.day})});haptics?.notificationOccurred('success');toast('Общая трата записана');await sectionReload();return;}catch(exc){error=exc.message;continue;}
+  }
   const payload={title:draft.title,amount:String(draft.amount).replace(/\s/g,'').replace(',','.'),currency:draft.currency,category:draft.category,kind,day:draft.day,note:draft.note,active:draft.active};if(kind==='recurring')payload.period=draft.period;
   if(preview){toast('В демо-режиме траты не сохраняются');return;}
   try{await api('/spend'+(item?'/'+item.id:''),{method:item?'PATCH':'POST',body:JSON.stringify(payload)});haptics?.notificationOccurred('success');toast('Сохранено');await sectionReload();return;}catch(exc){error=exc.message;}
  }
 }
 // переключатель «Регулярно / Покупка» в окне траты: период нужен только регулярной
-document.addEventListener('change',event=>{const r=event.target.closest?.('[data-spend-kind]');if(!r)return;const d=$('#dialog'),rec=r.value==='recurring';d.querySelectorAll('.sp-only-rec').forEach(x=>x.hidden=!rec);const label=d.querySelector('[data-spend-day]');if(label)label.textContent=rec?'Ближайшее списание':'Дата покупки';d.querySelectorAll('.sp-kind label').forEach(l=>l.classList.toggle('active',l.contains(r)));});
+document.addEventListener('change',event=>{const r=event.target.closest?.('[data-spend-kind]');if(!r)return;const d=$('#dialog'),kind=r.value;d.querySelectorAll('.sp-only-rec').forEach(x=>x.hidden=kind!=='recurring');d.querySelectorAll('.sp-only-shared').forEach(x=>x.hidden=kind!=='shared');d.querySelectorAll('.sp-hide-shared').forEach(x=>x.hidden=kind==='shared');const label=d.querySelector('[data-spend-day]');if(label)label.textContent=kind==='recurring'?'Ближайшее списание':kind==='shared'?'Дата':'Дата покупки';d.querySelectorAll('.sp-kind label').forEach(l=>l.classList.toggle('active',l.contains(r)));});
+function sharedSpendSection(){
+ const d=state.friends;if(!d)return '';
+ const owing=(d.friends||[]).filter(f=>Object.keys(f.balance||{}).length);
+ if(!d.split.length&&!owing.length)return '';
+ const debts=owing.length?`<div class="sh-debts">${owing.map(f=>{const plus=Object.values(f.balance).some(v=>v>0);return `<button type="button" class="sh-debt ${plus?'plus':'minus'}" data-action="friend-settle" data-id="${esc(f.id)}"><span class="fc-avatar" style="${toneStyle(f.name)}">${friendInitial(f.name)}</span><span class="sp-body"><b>${esc(f.name)}</b><small>${esc(debtText(f.balance))}</small></span><span class="sh-pay">Рассчитаться</span></button>`;}).join('')}</div>`:'';
+ return `<section class="split-block spend-list" data-ui-key="split"><div class="sec-row"><h2>Общие траты</h2>${d.split.length?`<span class="badge">${d.split.length}</span>`:''}</div>${debts}${d.split.map(splitRow).join('')}</section>`;
+}
 async function spendAction(action,el){
  if(action==='spend-add')return spendEditor();
  if(action==='spend-reload')return sectionReload();
@@ -1376,38 +1436,50 @@ function previewGoals(){const t=projectToday(),y=Number(t.slice(0,4));return {it
 // ── Друзья: общие траты и кто кому должен ──
 function debtText(bal){const e=Object.entries(bal||{});if(!e.length)return '';return e.map(([c,v])=>`${v>0?'должен вам':'вы должны'} ${bankMoney(Math.abs(v),c)}`).join(' · ');}
 function friendInitial(n){return esc(String(n||'?').trim().slice(0,1).toUpperCase());}
-function friendCard(f,i){
- const bal=Object.entries(f.balance||{}),owes=bal.some(([,v])=>v>0),owe=bal.some(([,v])=>v<0);
- const debt=bal.length?`<button type="button" class="fc-debt ${owes?'plus':owe?'minus':''}" data-action="friend-settle" data-id="${esc(f.id)}" aria-label="Рассчитаться: ${esc(debtText(f.balance))}"><span>${esc(debtText(f.balance))}</span>${icon('chevron')}</button>`:`<small class="muted">${f.former?'больше не в кругу':'долгов нет'}</small>`;
- return `<section class="friend-card${f.former?' former':''}" style="--i:${i};${toneStyle(f.name)}" data-ui-key="friend-${esc(f.id)}"><span class="fc-avatar">${friendInitial(f.name)}</span><div class="fc-info"><b>${esc(f.name)}</b>${debt}</div></section>`;
-}
 function splitRow(x){
  const cur=x.currency;
  return `<div class="split-row${x.kind==='settle'?' settle':''}"><span class="sp-when"><b>${Number(x.day.slice(8))}</b><small>${MONTH_NAMES[Number(x.day.slice(5,7))-1].slice(0,3).toLowerCase()}</small></span><span class="sp-body"><b>${esc(x.kind==='settle'?`${x.payer_name} → ${x.members[0]?.name}`:x.title)}</b><small>${x.kind==='settle'?'возврат долга':`платил${x.payer_name==='Вы'?'и вы':` ${esc(x.payer_name)}`} · ${esc(x.members.map(m=>m.name).join(', '))} · по ${esc(bankMoney(x.share,cur))}`}</small></span><b class="sp-amount">${esc(bankMoney(x.amount,cur))}</b>${x.mine?`<button type="button" class="icon-btn small" data-action="split-delete" data-id="${esc(x.id)}" aria-label="Удалить запись">×</button>`:''}</div>`;
 }
-function friendsSection(){
- const d=state.friends;
- if(!d)return state.friendsError?notice(state.friendsError,true):'';
- if(!d.friends.length)return `<section class="friends-empty" data-ui-key="friends-empty"><span class="empty-orb">${icon('people')}</span><b>Ваш круг друзей</b><p>Пригласите близких или коллег — у каждого свой личный Platformer, а общие счета, путешествия и рестораны делятся поровну в один клик без неловких расчетов.</p></section>`;
- const totals={};for(const f of d.friends)for(const [c,v] of Object.entries(f.balance||{}))totals[c]=(totals[c]||0)+v;
- const t=sumIn(totals),cur=state.displayCurrency;
- const hasBal=Object.keys(totals).length>0&&Math.abs(t.sum)>0.001;
- const sum=hasBal?`<div class="debt-sum ${t.sum>=0?'plus':'minus'}"><div><span class="eyebrow">${t.sum>=0?'Вам должны вернуть':'Вы должны вернуть'}</span><b>${money(Math.abs(t.sum),cur)}</b><small>${t.sum>=0?'Суммарно со всех друзей в вашу пользу':'Суммарный долг перед друзьями'}</small></div><span class="badge ${t.sum>=0?'fresh':'warning'}">${t.sum>=0?'В плюсе':'К возврату'}</span></div>`
-  :`<div class="debt-sum settled"><div><span class="eyebrow">Баланс круга</span><b>${money(0,cur)}</b><small>Все взаимные траты рассчитаны</small></div><span class="badge fresh">В расчёте</span></div>`;
- return `<section class="friends-block" data-ui-key="friends">${sum}<button type="button" class="split-cta" data-action="split-add"><span class="split-cta-icon">${icon('split')}</span><span class="split-cta-text"><b>Общая трата</b><small>Поделить счёт поровну с друзьями в один тап</small></span>${icon('plus')}</button><div class="sec-row"><h2>Ваш круг</h2><span class="badge">${d.friends.filter(f=>!f.former).length}</span></div><div class="friend-list">${d.friends.map(friendCard).join('')}</div></section><section class="split-block spend-list" data-ui-key="split"><div class="sec-row"><h2>Общие траты</h2>${d.split.length?`<span class="badge">${d.split.length}</span>`:''}</div>${d.split.length?d.split.map(splitRow).join(''):'<p class="muted">Записали, кто за что платил, — Platformer сам рассчитает долю каждого.</p>'}</section>`;
+function friendRow(f,i){
+ const open=f.public&&!f.former;
+ const tag=f.former?'<small class="fr-tag">больше не в вашем круге</small>':open?'<small class="fr-tag open">Профиль открыт</small>':'<small class="fr-tag">Профиль закрыт</small>';
+ const inner=`<span class="fc-avatar" style="${toneStyle(f.name)}">${friendInitial(f.name)}</span><span class="fr-info"><b>${esc(f.name)}</b>${tag}</span>${open?icon('chevron'):''}`;
+ return open?`<a class="friend-row" style="--i:${i}" href="#friend/${esc(f.id)}" data-ui-key="friend-${esc(f.id)}">${inner}</a>`:`<div class="friend-row is-closed" style="--i:${i}" data-ui-key="friend-${esc(f.id)}">${inner}</div>`;
 }
-async function splitEditor(){
- const d=state.friends;if(!d?.friends.length){toast('Сначала пригласите друзей');return;}
- const people=[{id:d.me,name:'Вы'},...d.friends.filter(f=>!f.former).map(f=>({id:f.id,name:f.name}))],currencies=d.currencies||['USD','EUR','RUB','BYN'];
- let error='',draft={title:'',amount:'',currency:currencies.includes(state.displayCurrency)?state.displayCurrency:'USD',payer:d.me,members:people.map(p=>p.id),day:projectToday()};
- while(true){
-  const body=`${error?notice(error,true):''}${field('За что','title','text',draft.title,'required maxlength="80" placeholder="Пицца, такси, дача…" autocomplete="off"')}<div class="field-row">${field('Сумма','amount','text',draft.amount,'required inputmode="decimal" placeholder="0,00" autocomplete="off"')}<label class="field">Валюта<select name="currency">${currencies.map(c=>`<option ${c===draft.currency?'selected':''}>${c}</option>`).join('')}</select></label></div><div class="field-row"><label class="field">Кто платил<select name="payer">${people.map(p=>`<option value="${esc(p.id)}" ${p.id===draft.payer?'selected':''}>${esc(p.name)}</option>`).join('')}</select></label>${field('Когда','day','date',draft.day)}</div><span class="eyebrow">Делим поровну между</span><div class="split-members">${people.map(p=>`<label class="split-member"><input type="checkbox" name="m_${esc(p.id)}" ${draft.members.includes(p.id)?'checked':''}><span class="fc-avatar" style="${toneStyle(p.name)}">${friendInitial(p.name)}</span>${esc(p.name)}</label>`).join('')}</div>`;
-  const values=await dialog('Общая трата',body,'Записать');if(!values)return;
-  draft={...draft,title:values.title,amount:values.amount,currency:values.currency,payer:values.payer,day:values.day,members:people.filter(p=>values['m_'+p.id]==='on').map(p=>p.id)};
-  if(preview){toast('В демо-режиме траты не сохраняются');return;}
-  try{state.friends=await api('/friends/split',{method:'POST',body:JSON.stringify({title:draft.title,amount:String(draft.amount).replace(/\s/g,'').replace(',','.'),currency:draft.currency,payer:draft.payer,members:draft.members,day:draft.day})});haptics?.notificationOccurred('success');toast('Записано');render(true);return;}catch(exc){error=exc.message;}
+function myProfileCard(){
+ const pr=state.profile,on=!!pr?.public,n=pr?Object.values(pr.sections).filter(Boolean).length:0;
+ const note=!pr?'Загружаем…':on?(n?`Друзья видят ${countLabel(n,['раздел','раздела','разделов'])}`:'Разделы не выбраны — виден только ваш профиль'):'Друзья ничего не видят';
+ return `<a class="panel my-profile" href="#settings" data-ui-key="my-profile"><span class="mp-ico">${icon('shield')}</span><span class="mp-text"><b>Мой публичный профиль</b><small>${note}</small></span><i class="mp-state${on?' on':''}">${on?'Открыт':'Закрыт'}</i>${icon('chevron')}</a>`;
+}
+function peopleView(){
+ const p=state.people,d=state.friends,list=(d?.friends||[]).filter(f=>!f.former);
+ const hero=secHero('people','Мои друзья',list.length?esc(countLabel(list.length,['друг','друга','друзей'])):'Пригласите по ссылке — у каждого свой Platformer');
+ if(!p)return hero+skeleton('list',2);
+ let body;
+ if(!d)body=state.friendsError?notice(state.friendsError,true):skeleton('list',2);
+ else if(!d.friends.length)body=`<section class="friends-empty" data-ui-key="friends-empty"><span class="empty-orb">${icon('people')}</span><b>Здесь будут ваши друзья</b><p>Пригласите близких или коллег — у каждого свой личный Platformer. Общие траты можно делить поровну прямо при добавлении траты.</p></section>`;
+ else body=`<section class="friends-block" data-ui-key="friends"><div class="friend-list">${d.friends.map(friendRow).join('')}</div></section>`;
+ return hero+myProfileCard()+body+inviteCard(p);
+}
+function friendProjectRow(x){return `<div class="fp-row"><span class="fp-body"><b>${esc(x.name)}</b><small>${x.rate_percent?`${esc(number(x.rate_percent))}% за ${esc(PROJECT_PERIODS[x.period]||'период')}`:'доход фиксированной суммой'}</small></span><b>${esc(projectMoney(x.amount,x.currency))}</b></div>`;}
+function friendGoalRow(g){const pc=Math.round((g.progress||0)*100);return `<div class="fp-goal"><div class="fp-goal-top"><span>${esc(g.emoji||'🎯')} <b>${esc(g.title)}</b></span><small>${g.done?'Готово':pc+'%'}</small></div><div class="fp-bar"><i style="--w:${pc}%"></i></div><small class="muted">${esc(bankMoney(g.saved,g.currency))} из ${esc(bankMoney(g.target,g.currency))}</small></div>`;}
+function friendView(){
+ const back='<div class="project-space"><a href="#people" class="button secondary small back">← Мои друзья</a></div>',f=state.friendProfile;
+ if(!f){
+  if(!state.friendProfileError)return back+skeleton('list',3);
+  const closed=/закрыт/i.test(state.friendProfileError);
+  return back+`<section class="lists-empty"><span class="empty-orb">${icon('shield')}</span><b>${closed?'Профиль закрыт':'Профиль недоступен'}</b><p>${closed?'Друг не открыл свой профиль. Он может сделать это в настройках.':esc(state.friendProfileError)}</p></section>`;
  }
+ const s=f.sections||{},cur=state.displayCurrency;
+ const hero=`<section class="panel fp-hero" style="${toneStyle(f.name)}"><span class="fc-avatar fp-avatar">${friendInitial(f.name)}</span><div><h1>${esc(f.name)}</h1>${f.about?`<p>${esc(f.about)}</p>`:'<p class="muted">Профиль открыт для друзей</p>'}</div></section>`;
+ const cards=[];
+ if(s.projects)cards.push(`<section class="panel fp-card" data-ui-key="fp-projects"><div class="fp-card-head"><h2>Проекты</h2><span class="badge">${s.projects.length}</span></div>${s.projects.map(friendProjectRow).join('')||'<p class="muted">Проектов пока нет.</p>'}</section>`);
+ if(s.goals)cards.push(`<section class="panel fp-card" data-ui-key="fp-goals"><div class="fp-card-head"><h2>Цели накоплений</h2><span class="badge">${s.goals.length}</span></div>${s.goals.map(friendGoalRow).join('')||'<p class="muted">Целей пока нет.</p>'}</section>`);
+ if(s.spend){const m=sumIn(s.spend.monthly),t=sumIn(s.spend.this_month);cards.push(`<section class="panel fp-card" data-ui-key="fp-spend"><div class="fp-card-head"><h2>Траты</h2></div><div class="fp-tiles"><div class="fp-tile"><small>Регулярно в месяц</small><b>${money(m.sum,cur)}</b></div><div class="fp-tile"><small>В этом месяце</small><b>${money(t.sum,cur)}</b></div></div></section>`);}
+ return back+hero+(cards.join('')||`<section class="lists-empty"><span class="empty-orb">${icon('shield')}</span><b>Друг пока ничего не показывает</b><p>Профиль открыт, но разделы не выбраны.</p></section>`);
 }
+function previewProfile(){return {public:true,about:'Коплю на отпуск',sections:{projects:true,goals:true,spend:false},available:[{id:'projects',label:'Проекты',note:'Названия и суммы проектов, которые входят в ваш баланс'},{id:'goals',label:'Цели накоплений',note:'На что копите и сколько уже отложено'},{id:'spend',label:'Траты',note:'Регулярные траты в месяц и расходы этого месяца'}]};}
+function previewFriendProfile(){return {id:'2',name:'Лена',about:'Коплю на отпуск',shown:['projects','goals'],sections:{projects:[{name:'Вклад',currency:'USD',amount:1250,rate_percent:1,period:'month'}],goals:[{title:'Отпуск',emoji:'🌴',saved:400,target:1000,currency:'USD',progress:.4,done:false}]}};}
 async function settleEditor(friend){
  if(!friend)return;
  const entries=Object.entries(friend.balance||{});if(!entries.length)return;
@@ -1423,16 +1495,15 @@ async function settleEditor(friend){
  }
 }
 async function friendAction(action,el){
- if(action==='split-add')return splitEditor();
  if(action==='friend-settle')return settleEditor(state.friends?.friends.find(f=>f.id===el.dataset.id));
  if(action==='split-delete'){if(await confirm('Удалить запись?','Долги пересчитаются без неё.','Удалить')){if(preview)return;state.friends=await api('/friends/split/'+el.dataset.id,{method:'DELETE'});render(true);}return;}
 }
 function previewFriends(){
  const t=projectToday();
  return {me:'1',currencies:['USD','EUR','RUB','BYN'],friends:[
-  {id:'2',name:'Лена',balance:{BYN:24.5}},
-  {id:'3',name:'Максим',balance:{BYN:-12}},
-  {id:'4',name:'Ира',balance:{}}],
+  {id:'2',name:'Лена',balance:{BYN:24.5},public:true},
+  {id:'3',name:'Максим',balance:{BYN:-12},public:true},
+  {id:'4',name:'Ира',balance:{},public:false}],
   split:[{id:'s1',kind:'expense',title:'Пицца',amount:73.5,currency:'BYN',payer:'1',payer_name:'Вы',members:[{id:'1',name:'Вы'},{id:'2',name:'Лена'},{id:'3',name:'Максим'}],share:24.5,day:t,mine:true},{id:'s2',kind:'expense',title:'Такси',amount:24,currency:'BYN',payer:'3',payer_name:'Максим',members:[{id:'1',name:'Вы'},{id:'3',name:'Максим'}],share:12,day:addDaysIso(t,-2),mine:false}]};
 }
 // Карты банков, логотипы трат и аватары — нейтральные «материалы» темы (оникс,
@@ -1707,7 +1778,13 @@ function listsView(){
  const line=!L?'':[dueNow?`${countLabel(dueNow,['дело','дела','дел'])} на сегодня`:'На сегодня дел нет',eventsNow?countLabel(eventsNow,['событие','события','событий']):''].filter(Boolean).join(' · ');
  const [addAction,addLabel]=PLAN_ADD[tab]||PLAN_ADD.tasks;
  const actions=`<div class="head-actions">${tab==='notes'?button('note-import','Импорт','secondary','upload','aria-label="Импортировать заметки с телефона"'):''}${button(addAction,addLabel,'primary head-primary','plus')}</div>`;
- const hero=`<div class="page-head plans-hero" data-ui-key="plans-hero"><div><span class="plans-date">${esc(day.charAt(0).toUpperCase()+day.slice(1))}</span><h1>Планы</h1>${line?`<p>${esc(line)}</p>`:''}</div>${actions}</div>`;
+ const allTasks=L?.tasks||[],soonEnd=addDaysIso(today,7);
+ const lateN=open.filter(t=>t.due&&t.due<today).length,todayOpen=open.filter(t=>t.due===today).length,weekN=open.filter(t=>t.due&&t.due>today&&t.due<=soonEnd).length;
+ const doneToday=allTasks.filter(t=>t.done&&String(t.done_at||'').slice(0,10)===today).length,todayAll=todayOpen+doneToday,pct=todayAll?doneToday/todayAll:0,R=30,C=2*Math.PI*R;
+ const ring=L?`<div class="ph-ring" role="img" aria-label="${todayAll?`Сегодня выполнено ${doneToday} из ${todayAll}`:'На сегодня задач нет'}"><svg viewBox="0 0 72 72" aria-hidden="true"><circle class="ph-track" cx="36" cy="36" r="${R}"/>${pct>0?`<circle class="ph-fill" cx="36" cy="36" r="${R}" stroke-dasharray="${(C*pct).toFixed(1)} ${C.toFixed(1)}"/>`:''}</svg><b>${todayAll?Math.round(pct*100)+'%':'—'}</b><small>${todayAll?`${doneToday} из ${todayAll}`:'сегодня'}</small></div>`:'';
+ const stat=(label,value,cls='')=>`<div class="ph-stat ${cls}"><b>${value}</b><small>${label}</small></div>`;
+ const stats=L?`<div class="ph-stats">${stat('На сегодня',todayOpen)}${stat('Просрочено',lateN,lateN?'late':'')}${stat('На неделе',weekN)}${stat('События сегодня',eventsNow)}</div>`:'';
+ const hero=`<section class="plans-hero2" data-ui-key="plans-hero"><div class="ph-top"><div class="ph-title"><span class="plans-date">${esc(day.charAt(0).toUpperCase()+day.slice(1))}</span><h1>Планы</h1>${line?`<p>${esc(line)}</p>`:''}</div>${ring}</div>${stats}<div class="ph-actions">${actions}</div></section>`;
  const tabs=`<div class="plan-tabs lists-tabs" role="tablist" aria-label="Разделы планов">${PLAN_TABS.map(([id,label,ico])=>`<button type="button" role="tab" aria-selected="${tab===id}" data-action="lists-tab" data-value="${id}" class="${tab===id?'active':''}"><span class="pt-icon">${icon(ico)}</span><span class="pt-label">${label}</span>${L&&counts[id]?`<i class="pt-count">${counts[id]}</i>`:''}</button>`).join('')}</div>`;
  if(!L)return `<div class="plans">${hero}${tabs}${state.listsError?sectionError(state.listsError,'lists-reload'):skeleton('list')}</div>`;
  return `<div class="plans plans-${tab}">${hero}${tabs}<div class="lists-pane fade-swap">${tab==='notes'?notesTab():tab==='calendar'?calendarTab():tasksTab()}</div></div>`;
@@ -1721,10 +1798,7 @@ function tasksTab(){
  const groups=[['Просрочено',open.filter(t=>t.due&&t.due<today),'late'],['Сегодня',open.filter(t=>t.due===today),'today'],['На этой неделе',open.filter(t=>t.due&&t.due>today&&t.due<=soonEnd),'week'],['Позже',open.filter(t=>t.due&&t.due>soonEnd),'later'],['Без срока',open.filter(t=>!t.due),'nodue']].filter(g=>g[1].length);
  const quick=`<form class="task-quick" data-task-quick><span class="tq-icon" aria-hidden="true">${icon('plus')}</span><input name="title" maxlength="200" placeholder="Добавить задачу…" aria-label="Новая задача" autocomplete="off" enterkeyhint="done"><button type="submit" class="tq-send" aria-label="Добавить задачу">${icon('arrow')}</button></form>`;
  if(!tasks.length)return quick+`<section class="lists-empty"><span class="empty-orb">${icon('plans')}</span><b>Дел пока нет</b><p>Напишите первую задачу выше. Срок и сферу можно добавить потом.</p></section>`;
- const late=open.filter(t=>t.due&&t.due<today).length,doneToday=done.filter(t=>String(t.done_at||'').slice(0,10)===today).length,todayOpen=open.filter(t=>t.due===today).length,todayAll=todayOpen+doneToday;
- const pct=todayAll?doneToday/todayAll:0,R=26,C=2*Math.PI*R;
- const summary=`<div class="task-summary" data-ui-key="task-summary"><span class="ts-ring" aria-hidden="true"><svg viewBox="0 0 64 64"><circle class="ts-track" cx="32" cy="32" r="${R}"/>${pct>0?`<circle class="ts-fill" cx="32" cy="32" r="${R}" stroke-dasharray="${(C*pct).toFixed(1)} ${C.toFixed(1)}" style="--c:${C.toFixed(1)}"/>`:''}</svg><b>${todayAll?Math.round(pct*100)+'%':'—'}</b></span><span class="ts-text"><b>${todayAll?`Сегодня ${doneToday} из ${todayAll}`:'Сегодня без сроков'}</b><small>${countLabel(open.length,['открытое дело','открытых дела','открытых дел'])}${late?` · <em class="late">${late} просрочено</em>`:''}</small></span></div>`;
- return quick+summary+groups.map(([title,list,cls])=>`<section class="task-group ${cls}" data-ui-key="tasks-${esc(title)}"><h2 class="tg-head"><i class="tg-dot" aria-hidden="true"></i>${title}<span class="tg-count">${list.length}</span></h2><ul class="task-list">${list.map(t=>taskRow(t,areas)).join('')}</ul></section>`).join('')+(done.length?`<details class="task-group done-group" data-ui-key="tasks-done"><summary class="tg-head"><i class="tg-dot" aria-hidden="true"></i>Выполнено<span class="tg-count">${done.length}</span>${icon('chevron','tg-chevron')}</summary><ul class="task-list">${done.map(t=>taskRow(t,areas)).join('')}</ul></details>`:'');
+ return quick+groups.map(([title,list,cls])=>`<section class="task-group ${cls}" data-ui-key="tasks-${esc(title)}"><h2 class="tg-head"><i class="tg-dot" aria-hidden="true"></i>${title}<span class="tg-count">${list.length}</span></h2><ul class="task-list">${list.map(t=>taskRow(t,areas)).join('')}</ul></section>`).join('')+(done.length?`<details class="task-group done-group" data-ui-key="tasks-done"><summary class="tg-head"><i class="tg-dot" aria-hidden="true"></i>Выполнено<span class="tg-count">${done.length}</span>${icon('chevron','tg-chevron')}</summary><ul class="task-list">${done.map(t=>taskRow(t,areas)).join('')}</ul></details>`:'');
 }
 async function taskEditor(task=null){
  const areas=state.lists?.areas||{personal:'Личное',work:'Работа',home:'Дом',study:'Учёба'};
@@ -2107,6 +2181,7 @@ document.addEventListener('click',async event=>{const el=event.target.closest('[
  else if(action.startsWith('income-'))await incomeAction(action,el);
  else if(action.startsWith('goal-'))await goalAction(action,el);
  else if(/^(friend|split)-/.test(action))await friendAction(action,el);
+ else if(action.startsWith('profile-'))await profileAction(action,el);
  else if(action==='onboard-hide'){try{localStorage.setItem('fin-onboard-hidden','1');}catch{}render(true);}
  else if(action==='fab-toggle')fabToggle();
  else if(action==='refresh')await refresh();
@@ -2140,6 +2215,7 @@ document.addEventListener('click',async event=>{const el=event.target.closest('[
  else if(action==='take'){if(await confirm('Забрать счёт у гостя?','Остальные счета гостя сохранятся.'))await mutate('/guests/'+el.dataset.guest,{action:'take',login:Number(el.dataset.login)});}
  else if(action==='alerts')await mutate('/actions',{action:'update_alerts',value:!state.data.update_alerts});
  else if(action==='income-scope'){state.incomeScope=el.dataset.value;try{localStorage.setItem('fin-income-scope',state.incomeScope);}catch{}render(true);}
+ else if(action==='app-update-check')checkAppUpdate();
  else if(action==='perm-fix'){try{androidApp?.fix?.(el.dataset.kind);}catch{}}
  else if(action==='app-logout'){if(await confirm('Выйти на этом телефоне?','Чтобы войти снова, запросите новый код в боте.','Выйти')){try{await api('/device/logout',{method:'POST'});}catch{}try{androidApp?.signOut?.();}catch{}}}
  else if(action==='leave'){if(await confirm('Отключить доступ?','Счета и приглашения в боте будут удалены. Для возвращения понадобится новое приглашение.','Отключить')){await api('/actions',{method:'POST',body:JSON.stringify({action:'leave'})});state.data=null;await refresh();}}
@@ -2189,7 +2265,7 @@ document.addEventListener('click',async event=>{const el=event.target.closest('[
 document.addEventListener('click',event=>{const tool=event.target.closest('#dialog [data-format]');if(!tool)return;event.preventDefault();const area=$('#dialog textarea[name="text"]');if(!area)return;const start=area.selectionStart,end=area.selectionEnd,selected=area.value.slice(start,end);const tags={bold:['<b>','</b>'],italic:['<i>','</i>'],mono:['<code>','</code>'],quote:['<blockquote>','</blockquote>']}[tool.dataset.format];if(!tags)return;area.setRangeText(tags[0]+selected+tags[1],start,end,'end');area.focus();area.setSelectionRange(start+tags[0].length,start+tags[0].length+selected.length);area.dispatchEvent(new Event('input',{bubbles:true}));});
 document.addEventListener('input',event=>{if(event.target.matches('#dialog textarea[name="text"]')){const area=event.target,preview=$('#compose-live'),count=$('#compose-count');if(preview)preview.innerHTML=area.value?broadcastPreview(area.value):'<span class="muted">Сообщение появится здесь</span>';const length=broadcastLength(area.value);if(count){count.textContent=`${length} / 4096`;count.classList.toggle('over',length>4096);}const meter=$('#compose-meter');if(meter){meter.style.width=`${Math.min(100,length/4096*100).toFixed(1)}%`;meter.classList.toggle('warn',length>3600);}const clear=$('[data-cmp-clear]');if(clear)clear.hidden=!area.value;}});
  document.addEventListener('change',async event=>{try{if(event.target.matches('#dialog input[name="media"]')){const info=$('#compose-file-name');if(info)info.textContent=event.target.files?.[0]?`${event.target.files[0].name} · ${fileSize(event.target.files[0].size)}`:'JPG/PNG до 10 МБ · MP4 до 20 МБ';}if(event.target.id==='add-cabinet-choice'){const fresh=$('#add-new-cabinet');fresh.hidden=event.target.value!=='new';fresh.querySelector('input').disabled=fresh.hidden;}if(event.target.id==='account-select'){state.login=Number(event.target.value);state.offset=0;if(state.view==='account'){location.hash='account/'+state.login;}else await refresh();}if(event.target.id==='currency'){state.currency=event.target.value;await showCached();}}catch(error){toast(error.message);}});
-$('#notifications').innerHTML=icon('bell');$('#settings-link').innerHTML=icon('settings');$('#refresh').innerHTML=icon('refresh');$('#refresh').addEventListener('click',()=>refresh());
+$('#notifications').innerHTML=icon('bell');$('#refresh').innerHTML=icon('refresh');$('#refresh').addEventListener('click',()=>refresh());
 let savedTheme;try{savedTheme=localStorage.getItem('tag-theme');localStorage.removeItem('tag-scheme');}catch{}
 // прежние цветовые гаммы (Лайм, Сапфир, Золото) становятся тёмной темой
 setTheme(savedTheme==='light'?'light':'dark',false);

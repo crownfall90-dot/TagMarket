@@ -398,23 +398,34 @@ def goals_ui(page, nav):
 
 
 def friends_ui(page, nav):
-    """Друзья: круг с долгами, одна кнопка «Общая трата», расчёт — касанием долга; без подарков и без второй кнопки."""
+    """Друзья: «Мои друзья» без долгов, свой профиль, профиль друга; общая трата и расчёт — в «Тратах»."""
     page.locator(f'{nav} a[href="#people"]').click()
-    page.locator('.friends-block .friend-card').first.wait_for()
-    assert page.locator('.friend-card').count() == 3
-    assert page.locator('[data-action="split-add"]').count() == 1, "общая трата — одна кнопка"
+    page.locator('.friends-block .friend-row').first.wait_for()
+    assert page.locator('.friend-row').count() == 3
+    assert page.locator('.my-profile').count() == 1
+    assert page.locator('.fc-debt, .debt-sum, .split-cta, [data-action="split-add"]').count() == 0, "долгов в списке друзей нет"
+    assert page.locator('a.friend-row').count() == 2 and page.locator('.friend-row.is-closed').count() == 1
     assert page.locator('.fab').count() == 0 or not page.locator('#fab-root .fab').is_visible()
-    assert page.locator('.fw-gift, .fw-list, [data-action="friend-reserve"]').count() == 0
-    assert page.locator('.fc-debt').count() == 2 and page.locator('[data-action="friend-settle"]').count() == 2
+    fits(page)
+    page.locator('a.friend-row').first.click()
+    page.locator('.fp-hero').wait_for()
+    assert page.locator('.fp-card').count() == 2                                     # проекты и цели
+    fits(page)
+    # общая трата — в «Тратах»: тип «Общая» и выбор друга
+    page.locator(f'{nav} a[href="#spend"]').click()
+    page.locator('.split-block .split-row').first.wait_for()
     assert page.locator('.split-block .split-row').count() == 2
-    fits(page)
-    page.locator('.split-cta').click()
-    page.locator('#dialog select[name="payer"]').wait_for()
-    assert page.locator('#dialog .split-member').count() == 4                       # вы и трое друзей в кругу
-    fits(page)
-    close_dialog(page)
-    page.locator('.fc-debt').first.click()
+    assert page.locator('.sh-debt').count() == 2
+    page.locator('.sh-debt').first.click()
     page.locator('#dialog input[name="amount"]').wait_for()
+    close_dialog(page)
+    page.evaluate("spendEditor()")              # на телефоне кнопка в шапке скрыта — там «+» внизу
+    page.locator('#dialog input[name="kind"][value="shared"]').wait_for(state='attached')
+    page.locator('#dialog .sp-kind label', has_text='Общая').click()
+    page.locator('#dialog select[name="payer"]').wait_for()
+    assert page.locator('#dialog .split-member').count() == 3                       # трое друзей
+    assert page.locator('#dialog .sp-hide-shared').is_hidden()
+    fits(page)
     close_dialog(page)
 
 
@@ -455,7 +466,7 @@ def station_sections(page, nav):
     # «Планы» — мобильное приложение: «+» внизу экрана на телефоне, кнопка в шапке — на широком экране
     phone = page.viewport_size['width'] <= 740
     assert page.locator('.fab').is_visible() == phone
-    assert page.locator('.plans-hero .head-primary').is_visible() == (not phone)
+    assert page.locator('.plans-hero2 .head-primary').is_visible() == (not phone)
     assert page.locator('.plan-tabs [role="tab"]').count() == 3        # задачи, календарь, заметки
     assert 'enter' not in page.locator('.task-quick input').get_attribute('placeholder').lower()
     assert 'enter' not in page.locator('#main').inner_text().lower(), "компьютерных подсказок быть не должно"
@@ -476,7 +487,7 @@ def station_sections(page, nav):
     page.locator('#dialog textarea[name="body"]').wait_for()
     close_dialog(page)
     # импорт заметок с телефона: вставленный текст делится по ---
-    page.locator('.page-head [data-action="note-import"]').click()
+    page.locator('.plans-hero2 [data-action="note-import"]').click()
     page.locator('#dialog .note-drop').wait_for()
     page.locator('#dialog textarea[name="text"]').fill('Звонок\nмаме в 7\n---\nВторая')
     page.wait_for_function("document.querySelector('[data-note-count]').textContent.includes('2')")
@@ -495,14 +506,14 @@ def station_sections(page, nav):
     assert page.locator('.cal-day-panel h2').inner_text() == 'Сегодня'
     fits(page)
     # «Настройки»: тема, ярлык и счета; блока «Platformer» с настройками разделов больше нет
-    page.locator('#settings-link').click()
+    page.locator('#avatar').click()
     page.locator('.theme-picker').wait_for()
     assert page.locator('.theme-opt').count() == 2, "тем ровно две: тёмная и светлая"
     assert page.locator('.scheme-picker, .scheme').count() == 0, "цветовых гамм больше нет"
     # внизу настроек — какая версия открыта (в браузере — дата выкладки интерфейса)
     assert re.search(r'интерфейс от \d\d\.\d\d\.\d{4}', page.locator('.app-version').inner_text())
     assert page.locator('.station-settings, .station-row').count() == 0
-    assert 'platformer' not in page.locator('.two-column').inner_text().lower().replace('открывать platformer в один тап', '')
+    assert 'platformer' not in page.locator('.set-grid').inner_text().lower().replace('открывать platformer в один тап', '')
     fits(page)
 
 
@@ -1220,7 +1231,7 @@ def main():
                         shot = screenshots / "tagmarkets-mobile-account-smoke.png"
                         page.screenshot(path=str(shot), full_page=True)
                         print("Mobile account screenshot:", shot)
-                    page.locator('#settings-link').click()      # настройки — кнопкой в шапке
+                    page.locator('#avatar').click()      # настройки — кнопкой в шапке
                     page.locator('[data-action="broadcast"]').wait_for()
                     page.locator('.machine-row').first.wait_for()     # /admin подгружается следом
                     assert page.locator('.machine-row').count() == 2
@@ -1349,7 +1360,7 @@ def main():
                     # тема: тёмная по умолчанию, светлая — в Настройках; выбор переживает перезапуск
                     # (theme.js ставит его до первой отрисовки), фон страницы меняется сразу
                     assert page.locator('html').get_attribute('data-theme') == 'dark'
-                    page.locator('#settings-link').click()
+                    page.locator('#avatar').click()
                     page.locator('.theme-picker').wait_for()
                     page.locator('.theme-opt[data-value="light"]').click()
                     page.wait_for_function("document.documentElement.dataset.theme === 'light'")

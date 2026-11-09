@@ -128,6 +128,14 @@ class MainActivity : ComponentActivity() {
                     onFix = { kind -> runOnUiThread { fixPermission(kind) } },
                     onShare = { text -> runOnUiThread { shareText(text) } },
                     onCopy = { text -> runOnUiThread { copyText(text) } },
+                    onCheckUpdate = {
+                        runOnUiThread {
+                            val report: (String) -> Unit = { status ->
+                                web.evaluateJavascript("window.onPlatformerUpdate&&window.onPlatformerUpdate('$status')", null)
+                            }
+                            updater?.checkNow(report) ?: report("unavailable")
+                        }
+                    },
                 ),
                 "PlatformerAndroid",
             )

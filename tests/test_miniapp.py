@@ -2089,6 +2089,46 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(year["this_month"], {"EUR": 120.0, "USD": 90.0})       # весь год: 12 списаний Netflix
         self.assertEqual((await self.call("GET", "/api/spend?span=week")).status, 400)
 
+    async def test_public_profile_shows_only_what_the_friend_opened(self):
+        for g in ("2", "3"):
+            partner.kv_set(self.db, f"guest:{g}", "1")
+            partner.kv_set(self.db, f"guest_by:{g}", "1")
+        partner.kv_set(self.db, "guest:4", "1")
+        partner.kv_set(self.db, "guest_by:4", "99")
+        partner.kv_set(self.db, "user_name:2", "Лена")
+        goals.save(self.db, 2, {"title": "Отпуск", "target": 1000, "saved": 250, "currency": "USD"})
+        spend.save(self.db, 2, {"title": "Netflix", "amount": 10, "currency": "USD", "kind": "recurring",
+                                "period": "month", "category": "subs", "day": "2026-01-05"})
+        # по умолчанию профиль закрыт: друг его не видит и в списке отмечен закрытым
+        self.assertEqual((await self.call("GET", "/api/friends/2/profile")).status, 403)
+        lena = lambda d: next(f for f in d["friends"] if f["id"] == "2")
+        self.assertFalse(lena(await (await self.call("GET", "/api/friends")).json())["public"])
+        own = await (await self.call("GET", "/api/profile", uid=2)).json()
+        self.assertEqual((own["public"], own["sections"]), (False, {"projects": False, "goals": False, "spend": False}))
+        # открыт, но разделов нет: видно имя и описание, данных нет
+        r = await self.call("PATCH", "/api/profile", uid=2, json={"public": True, "about": "  Коплю   на отпуск "})
+        self.assertEqual(r.status, 200, await r.text())
+        card = await (await self.call("GET", "/api/friends/2/profile")).json()
+        self.assertEqual((card["name"], card["about"], card["sections"], card["shown"]), ("Лена", "Коплю на отпуск", {}, []))
+        self.assertTrue(lena(await (await self.call("GET", "/api/friends")).json())["public"])
+        # открыт один раздел — остальные не утекают
+        await self.call("PATCH", "/api/profile", uid=2, json={"sections": {"goals": True}})
+        card = await (await self.call("GET", "/api/friends/2/profile")).json()
+        self.assertEqual(card["shown"], ["goals"])
+        self.assertEqual(card["sections"]["goals"][0]["title"], "Отпуск")
+        self.assertAlmostEqual(card["sections"]["goals"][0]["progress"], 0.25)
+        self.assertNotIn("spend", card["sections"])
+        await self.call("PATCH", "/api/profile", uid=2, json={"sections": {"spend": True}})
+        card = await (await self.call("GET", "/api/friends/2/profile")).json()
+        self.assertEqual(card["sections"]["spend"]["monthly"], {"USD": 10.0})
+        # не друг — 404; закрытие профиля снова прячет всё; плохие значения — 400
+        self.assertEqual((await self.call("GET", "/api/friends/2/profile", uid=4)).status, 404)
+        self.assertEqual((await self.call("PATCH", "/api/profile", uid=2, json={"sections": {"bank": True}})).status, 400)
+        self.assertEqual((await self.call("PATCH", "/api/profile", uid=2, json={"public": "yes"})).status, 400)
+        self.assertEqual((await self.call("PATCH", "/api/profile", uid=2, json={"about": "я" * 141})).status, 400)
+        await self.call("PATCH", "/api/profile", uid=2, json={"public": False})
+        self.assertEqual((await self.call("GET", "/api/friends/2/profile")).status, 403)
+
     async def test_friends_split_expenses(self):
         # 1 пригласил 2 и 3; 4 — чужой
         for g in ("2", "3"):

@@ -138,6 +138,34 @@ class Updater(private val activity: ComponentActivity, private val host: FrameLa
         }
     }
 
+    /**
+     * Кнопка «Проверить обновления» в настройках: проверка сразу, без ожидания минуты.
+     * Нашлась новая версия — то же окно с «Обновить» (даже если раньше нажали «Позже»).
+     * report: latest · available · checking · offline · error · unavailable.
+     */
+    fun checkNow(report: (String) -> Unit) {
+        if (BuildConfig.UPDATE_URL.isBlank()) { report("unavailable"); return }
+        if (overlay != null || waiting != null) { report("available"); return }
+        if (job?.isActive == true) { report("checking"); return }
+        job = activity.lifecycleScope.launch {
+            try {
+                val release = withContext(Dispatchers.IO) { fetch() }
+                prefs.edit().putLong("checked", System.currentTimeMillis()).apply()
+                if (release.code > BuildConfig.VERSION_CODE) {
+                    deferred = 0L
+                    offer(release, required = false)
+                    report("available")
+                } else {
+                    report("latest")
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                report(if (offline(e)) "offline" else "error")
+            }
+        }
+    }
+
     /** Приложение открыто: вышла новая версия — сразу окно с «Обновить» и «Обновить позже». */
     private fun poll() {
         if (job?.isActive == true || overlay != null || waiting != null) return
