@@ -1,0 +1,22 @@
+{
+  "item.watheextraitems.tmotl": "Убийство на поле для гольфа",
+  "item.watheextraitems.trhm": "Тайна Красного дома",
+  "item.watheextraitems.asis": "Этюд в багровых тонах",
+  "item.watheextraitems.tmrm": "Убийства на улице Морг",
+  "item.watheextraitems.tm": "Лунный камень",
+  "item.watheextraitems.tmotyr": "Тайна жёлтой комнаты",
+  "item.watheextraitems.cigar": "Сигара",
+  "item.watheextraitems.cigarette": "Сигарета",
+  "item.watheextraitems.cigarette.lore": "Дешёвый, но действенный никотин.",
+  "item.watheextraitems.cigarette.lore.2": "Этот табак на вкус отвратителен.",
+  "item.watheextraitems.highball": "Хайбол",
+  "item.watheextraitems.coal_coke": "Каменноугольный кокс",
+  "item.watheextraitems.flow_dust": "Пыль потока",
+  "item.watheextraitems.charge_dust": "Пыль заряда",
+  "block.watheextraitems.radio": "Радио",
+  "item.watheextraitems.pocket_watch": "Карманные часы",
+  "item.watheextraitems.pocket_watch.local_time": "§6Местное время: §f%1$s",
+  "itemGroup.watheextramisc": "Wathe Extra Items: Разное",
+  "itemGroup.watheextrabooks": "Wathe Extra Items: Книги",
+  "itemGroup.watheextraconsumables": "Wathe Extra Items: Расходники"
+}
