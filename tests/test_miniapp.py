@@ -1484,6 +1484,39 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(projects.announce_contract_term(self.db), ["1"])       # анонс — один раз на владельца
             self.assertEqual(projects.announce_contract_term(self.db), [])
 
+    async def test_project_term_is_inherited_by_accounts_without_their_own(self):
+        base = {"name": "Term", "currency": "USD", "rate_percent": 1, "period": "day", "multi": True,
+                "capitalization": True, "capitalization_from": "2026-10-01", "income_to": "2026-10-21"}
+        with patch.object(projects, "today", return_value=date(2026, 10, 11)):
+            saved = projects.save(self.db, "1", {**base, "accounts": [
+                {"name": "A", "amount": 1000}, {"name": "B", "amount": 1000, "income_to": "2026-11-10"}]})
+            a, b = saved["accounts"]
+            self.assertEqual(saved["income_to"], "2026-10-21")
+            self.assertEqual((a["term_end"], a["term_inherited"], a["income_to"]), ("2026-10-21", True, None))
+            self.assertEqual((b["term_end"], b["term_inherited"]), ("2026-11-10", False))     # свой срок главнее
+            self.assertEqual((a["contract_status"], a["days_left"]), ("active", 10))
+            self.assertAlmostEqual(a["contract_final"], 1000 * 1.01 ** 20, places=2)
+            self.assertEqual(b["days_left"], 30)
+            # срок проекта поменяли — аккаунт без своего срока едет за ним, редактирование формы не «прилипает»
+            moved = projects.save(self.db, "1", {"income_to": "2026-10-31"}, saved["id"])
+            self.assertEqual(moved["accounts"][0]["term_end"], "2026-10-31")
+            self.assertIsNone(moved["accounts"][0]["income_to"])
+            # проверки: срок не раньше начала начислений
+            with self.assertRaises(ValueError):
+                projects.save(self.db, "1", {"income_from": "2026-10-10", "income_to": "2026-10-10"}, saved["id"])
+            with self.assertRaises(ValueError):
+                projects.save(self.db, "1", {"accounts": [{"name": "A", "amount": 1, "income_from": "2026-11-01"}]}, saved["id"])
+            # напоминания приходят и аккаунтам, которые наследуют срок проекта
+        with patch.object(projects, "today", return_value=date(2026, 10, 24)):
+            self.assertEqual(len(projects.check_contract_terms(self.db)), 2)   # A: 7 дней (наследует), B: 17 дней → порог 30
+        # срок проекта убрали: аккаунт без своего срока снова бессрочный, свой срок остался
+        with patch.object(projects, "today", return_value=date(2026, 10, 11)):
+            cleared = projects.save(self.db, "1", {"income_to": None}, saved["id"])
+            a2, b2 = cleared["accounts"]
+            self.assertIsNone(a2["term_end"])
+            self.assertIsNone(a2["contract_status"])
+            self.assertEqual(b2["term_end"], "2026-11-10")
+
     async def test_account_fixed_income_is_paid_on_top_of_the_percent_rate(self):
         with patch.object(projects, "today", return_value=date(2026, 10, 2)):
             saved = projects.save(self.db, "1", {"name": "Mixed", "currency": "USD", "rate_percent": 2,
