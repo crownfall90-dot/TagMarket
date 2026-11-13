@@ -2998,3 +2998,4 @@ h1,.page-head h1{font-weight:650;letter-spacing:-.04em}
 .pa-cmp .cmp-row em{font-style:normal;font-size:11px;padding:1px 7px;margin-left:6px;border-radius:999px;color:var(--accent);background:rgb(var(--accent-rgb) / .12)}
 .pa-cmp .cmp-row.diff{color:var(--muted)}
 .pa-cmp .cmp-row.diff b{color:var(--accent)}
+.pa-cmp .cmp-row b small{margin-left:8px;font-size:12px;font-weight:550;color:var(--muted)}
