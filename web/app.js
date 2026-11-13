@@ -2640,56 +2640,86 @@ document.addEventListener('focusin',event=>{const cube=event.target.closest?.('.
 (()=>{
  const main=document.getElementById('main');
  if(!main)return;
- const ORDER=tabs.map(t=>t[0]),still=()=>reducedMotion(),spring='cubic-bezier(.22,1,.36,1)';
+ const ORDER=tabs.map(t=>t[0]),still=()=>reducedMotion(),ease='cubic-bezier(.2,.85,.25,1)',SLOP=10;
  const current=()=>{const v=state.view;return ['account','accounts','project','forecast','tagmarket','onboarding','banks','income'].includes(v)?'projects':['faq','circle'].includes(v)?'overview':v==='friend'?'people':v;};
  const blocked=el=>{for(let n=el;n&&n!==main;n=n.parentElement){if(n.matches?.('input,textarea,select,[contenteditable],.chart-wrap,.price-chart-wrap,.table-wrap,.segmented,.seg-pick,.pa-grip,[draggable=true],[data-noswipe]'))return true;if(n.scrollWidth>n.clientWidth+2&&/(auto|scroll)/.test(getComputedStyle(n).overflowX))return true;}return false;};
- let g=null,peek=null,peekFor=null,busy=false;
+ // Соседи собираются заранее, в простое, и ждут вне страницы (не мешают поиску элементов): во время свайпа палец только двигает
+ // готовые слои (transform), без сборки страницы — поэтому первый кадр жеста не дёргается
+ const ready=new Map();   // имя раздела → готовый скрытый слой
+ const build=name=>{
+  let el=ready.get(name);
+  if(!el){el=document.createElement('main');el.className='main-peek';el.setAttribute('aria-hidden','true');ready.set(name,el);}
+  let html='';try{html=asView(name,()=>(viewMap()[name]||overview)());}catch{html='';}
+  el.style.width=`${main.offsetWidth}px`;el.style.left=`${main.offsetLeft}px`;
+  el.innerHTML=html;el.querySelectorAll('[id]').forEach(n=>n.removeAttribute('id'));   // без двойников id
+  return el;
+ };
+ const idle=fn=>(window.requestIdleCallback||(f=>setTimeout(f,120)))(fn,{timeout:800});
+ const neighbours=()=>{const i=ORDER.indexOf(current());return i<0?[]:[ORDER[i-1],ORDER[i+1]].filter(Boolean);};
+ const prepare=()=>{if(g)return;const want=new Set(neighbours());for(const n of [...ready.keys()])if(!want.has(n))ready.delete(n);for(const n of want){prefetchView(n);idle(()=>{if(!g&&neighbours().includes(n))build(n);});}};
+ document.addEventListener('view-shown',prepare);
+ document.addEventListener('view-prefetched',e=>{if(ready.has(e.detail)&&!g)idle(()=>{if(!g)build(e.detail);});});
+ let g=null,peek=null,busy=false,frame=0;
  const width=()=>main.offsetWidth||innerWidth;
- const dropPeek=()=>{peek?.remove();peek=null;peekFor=null;};
- const ensurePeek=name=>{
-  if(peek&&peekFor===name)return peek;
-  dropPeek();
-  // сосед — в том же контейнере, что и #main (поверх фона раздела, под шапкой и панелью),
-  // и со своими данными: запомненными или подгруженными заранее
-  const host=main.parentElement,r=main.getBoundingClientRect(),h=host.getBoundingClientRect(),top=Math.max(0,r.top);
-  peek=document.createElement('main');peek.className='main-peek';peek.setAttribute('aria-hidden','true');
-  peek.style.cssText=`top:${top-h.top}px;left:${r.left-h.left}px;width:${r.width}px;height:${Math.max(0,innerHeight-top)}px`;
-  fillPeek(peek,name);host.appendChild(peek);peekFor=name;
-  if(!viewCache.get(asView(name,viewKey)))prefetchView(name);
-  return peek;
+ const hidePeek=()=>{if(peek){peek.classList.remove('on');peek.style.transition='none';peek.style.transform='';peek.remove();}peek=null;};
+ // сосед стоит там, где окажется верх раздела после перехода (переход прокручивает к началу) — без прыжка в конце
+ const showPeek=name=>{
+  if(peek&&peek.dataset.name===name)return peek;
+  hidePeek();
+  const el=ready.get(name)||build(name),top=main.getBoundingClientRect().top+scrollY;
+  el.dataset.name=name;el.style.top=`${main.offsetTop+scrollY}px`;el.style.left=`${main.offsetLeft}px`;el.style.width=`${main.offsetWidth}px`;
+  el.style.height=`${Math.max(0,innerHeight-top)}px`;
+  if(!el.isConnected)main.parentElement.appendChild(el);
+  el.classList.add('on');peek=el;return el;
  };
- const fillPeek=(el,name)=>{let html='';try{html=asView(name,()=>(viewMap()[name]||overview)());}catch{html='';}el.innerHTML=html;};
- document.addEventListener('view-prefetched',e=>{if(peek&&peekFor===e.detail)fillPeek(peek,e.detail);});
- // после каждого перехода тихо подгружаем соседей слева и справа
- document.addEventListener('view-shown',()=>{const i=ORDER.indexOf(current());if(i<0)return;for(const n of [ORDER[i+1],ORDER[i-1]])if(n)prefetchView(n);});
- const place=(dx,dir,edge)=>{main.style.transition='none';main.style.transform=`translateX(${edge?dx*.18:dx}px)`;if(peek)peek.style.transition='none',peek.style.transform=`translateX(${dx+dir*width()}px)`;};
- const settle=()=>{
-  const dir=g?.dir||1;main.style.transition=`transform .38s ${spring}`;main.style.transform='';
-  if(peek){peek.style.transition=`transform .38s ${spring}`;peek.style.transform=`translateX(${dir*width()}px)`;setTimeout(dropPeek,390);}
- };
- main.addEventListener('touchstart',e=>{if(busy||e.touches.length!==1||document.querySelector('dialog[open]')||blocked(e.target)){g=null;return;}const t=e.touches[0];g={x:t.clientX,y:t.clientY,t:Date.now(),dx:0,dir:1,on:false};},{passive:true});
- main.addEventListener('touchmove',e=>{
-  if(!g)return;const t=e.touches[0],dx=t.clientX-g.x,dy=t.clientY-g.y;
-  if(!g.on){if(Math.abs(dy)>12&&Math.abs(dy)>Math.abs(dx)){g=null;return;}if(Math.abs(dx)<12||Math.abs(dx)<Math.abs(dy)*1.6)return;g.on=true;}
-  g.dx=dx;g.dir=dx<0?1:-1;
-  const i=ORDER.indexOf(current()),name=ORDER[i+g.dir],edge=i<0||!name;
-  if(edge){dropPeek();place(dx,g.dir,true);}else{ensurePeek(name);place(dx,g.dir,false);}
+ const paint=()=>{frame=0;if(!g?.on)return;const {dx,dir,edge}=g;main.style.transform=`translate3d(${edge?dx*.2:dx}px,0,0)`;if(peek){peek.style.top=`${main.offsetTop+scrollY}px`;peek.style.transform=`translate3d(${dx+dir*width()}px,0,0)`;}};
+ const animate=(el,to,ms)=>{el.style.transition=`transform ${ms}ms ${ease}`;el.style.transform=to;};
+ main.addEventListener('touchstart',e=>{
+  if(busy||e.touches.length!==1||document.querySelector('dialog[open]')||blocked(e.target)){g=null;return;}
+  const t=e.touches[0];g={x:t.clientX,y:t.clientY,dx:0,dir:1,on:false,pts:[[performance.now(),t.clientX]]};
  },{passive:true});
- const end=()=>{
-  if(!g)return;const s=g;g=null;if(!s.on)return;
-  const dir=s.dir,i=ORDER.indexOf(current()),next=ORDER[i+dir],W=width(),speed=Math.abs(s.dx)/Math.max(1,Date.now()-s.t);
-  if(i<0||!next||(Math.abs(s.dx)<W*.25&&speed<.45)){g={dir};settle();g=null;return;}
-  if(still()){dropPeek();main.style.transition='none';main.style.transform='';swipeNav=true;location.hash='#'+next;return;}
-  busy=true;
-  // обе страницы доезжают; затем меняем раздел и убираем «соседа» только когда настоящий экран уже нарисован
-  main.style.transition=`transform .3s ${spring}`;main.style.transform=`translateX(${-dir*W}px)`;
-  if(peek){peek.style.transition=`transform .3s ${spring}`;peek.style.transform='translateX(0px)';}
-  setTimeout(()=>{
-   swipeNav=true;location.hash='#'+next;
-   setTimeout(()=>{main.style.transition='none';main.style.transform='';dropPeek();busy=false;},140);
-  },300);
+ main.addEventListener('touchmove',e=>{
+  if(!g)return;const t=e.touches[0],rx=t.clientX-g.x,ry=t.clientY-g.y;
+  if(!g.on){
+   if(Math.abs(ry)>SLOP&&Math.abs(ry)>Math.abs(rx)){g=null;return;}
+   if(Math.abs(rx)<SLOP||Math.abs(rx)<Math.abs(ry)*1.4)return;
+   g.on=true;g.x=t.clientX;   // палец ведёт страницу с этой точки — без скачка на мёртвую зону
+   main.style.transition='none';
+  }
+  const now=performance.now();g.pts.push([now,t.clientX]);while(g.pts.length>2&&now-g.pts[0][0]>90)g.pts.shift();
+  g.dx=t.clientX-g.x;if(g.dx)g.dir=g.dx<0?1:-1;
+  const i=ORDER.indexOf(current()),name=ORDER[i+g.dir];g.edge=i<0||!name;
+  if(g.edge)hidePeek();else{const p=showPeek(name);p.style.transition='none';}
+  if(!frame)frame=requestAnimationFrame(paint);
+ },{passive:true});
+ const settle=(dir,v)=>{
+  const W=width(),ms=Math.round(Math.min(360,Math.max(220,Math.abs(main.getBoundingClientRect().left)/Math.max(.6,Math.abs(v))*1.6)));
+  animate(main,'translate3d(0,0,0)',ms);
+  const p=peek;if(p){animate(p,`translate3d(${dir*W}px,0,0)`,ms);setTimeout(()=>{if(peek!==p)return;hidePeek();},ms+30);}
  };
- main.addEventListener('touchend',end,{passive:true});main.addEventListener('touchcancel',()=>{if(g?.on)settle();g=null;},{passive:true});
+ const end=()=>{
+  cancelAnimationFrame(frame);frame=0;
+  if(!g)return;const s=g;g=null;if(!s.on)return;
+  const [t0,x0]=s.pts[0],[t1,x1]=s.pts[s.pts.length-1],v=(x1-x0)/Math.max(16,t1-t0);   // px/мс за последние ~90 мс
+  const dir=s.dir,i=ORDER.indexOf(current()),next=ORDER[i+dir],W=width();
+  const flick=Math.abs(v)>.35&&Math.sign(-v)===dir,far=Math.abs(s.dx)>W*.33;
+  if(i<0||!next||!(flick||far)||(Math.abs(v)>.35&&Math.sign(-v)!==dir)){settle(dir,v);return;}
+  if(still()){hidePeek();main.style.transition='none';main.style.transform='';swipeNav=true;location.hash='#'+next;return;}
+  busy=true;
+  // скорость доезда — от скорости пальца: быстрый взмах доезжает быстро, медленный — мягко
+  const left=W-Math.abs(s.dx),ms=Math.round(Math.min(340,Math.max(180,left/Math.max(.9,Math.abs(v))*1.4)));
+  animate(main,`translate3d(${-dir*W}px,0,0)`,ms);
+  const p=peek;if(p)animate(p,'translate3d(0,0,0)',ms);
+  setTimeout(()=>{
+   // раздел меняется в одном кадре: новый экран рисуется (сразу с прокруткой в начало),
+   // встаёт на место, сосед прячется — глаз видит одну и ту же картинку без мигания
+   swipeNav=true;history.pushState(null,'','#'+next);navigate();
+   main.style.transition='none';main.style.transform='';hidePeek();
+   busy=false;
+  },ms+10);
+ };
+ main.addEventListener('touchend',end,{passive:true});
+ main.addEventListener('touchcancel',()=>{cancelAnimationFrame(frame);frame=0;if(g?.on)settle(g.dir,0);g=null;},{passive:true});
 })();
 
 // ── «Что нового»: у каждого улучшения своя запись. Окно показывается один раз после обновления интерфейса, вся история — в Настройках.
