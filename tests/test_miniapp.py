@@ -1395,6 +1395,35 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.call("POST", path, json={"account_id": created["accounts"][4]["id"], "position": 6})).status, 400)
         self.assertEqual((await self.call("POST", path, json={"account_id": created["accounts"][4]["id"], "position": "1"})).status, 400)
 
+    async def test_account_contract_end_stops_accrual_and_notifies_once(self):
+        base = {"name": "Term", "currency": "USD", "rate_percent": 1, "period": "day", "multi": True, "capitalization": True,
+                "capitalization_from": "2026-10-01"}
+        with patch.object(projects, "today", return_value=date(2026, 10, 11)):
+            saved = projects.save(self.db, "1", {**base, "accounts": [
+                {"name": "A", "amount": 1000, "income_to": "2026-10-21"}, {"name": "B", "amount": 1000}]})
+            a, b = saved["accounts"]
+            self.assertEqual((a["contract_status"], a["days_left"]), ("active", 10))
+            self.assertIsNone(b["contract_status"])
+            self.assertTrue(a["contract_capitalization"])
+            self.assertAlmostEqual(a["contract_final_alt"], 1000 + 1000 * 0.01 * 20, places=2)   # без капитализации: простой процент
+            self.assertAlmostEqual(a["contract_difference"], a["contract_final"] - a["contract_final_alt"], places=2)
+            self.assertAlmostEqual(a["contract_final"], 1000 * 1.01 ** 20, places=2)   # 20 дней с 1 по 21 октября
+            with self.assertRaises(ValueError):
+                projects.save(self.db, "1", {**base, "accounts": [{"amount": 1, "income_from": "2026-10-10", "income_to": "2026-10-10"}]}, saved["id"])
+        with patch.object(projects, "today", return_value=date(2026, 11, 30)):
+            done = projects.get(self.db, "1", saved["id"])["accounts"][0]
+            self.assertEqual((done["contract_status"], done["days_left"], done["earning"]), ("completed", 0, False))
+            self.assertAlmostEqual(done["current_amount"], 1000 * 1.01 ** 20, places=2)  # баланс заморожен
+            self.assertEqual(done["expected_income"], 0)
+        with patch.object(projects, "today", return_value=date(2026, 10, 14)):    # 7 дней до конца
+            first = projects.check_contract_terms(self.db)
+            self.assertEqual(len(first), 1)
+            self.assertEqual(projects.check_contract_terms(self.db), [])         # повторно не шлём
+        with patch.object(projects, "today", return_value=date(2026, 10, 21)):
+            self.assertEqual(len(projects.check_contract_terms(self.db)), 1)     # день завершения
+            self.assertEqual(projects.announce_contract_term(self.db), ["1"])       # анонс — один раз на владельца
+            self.assertEqual(projects.announce_contract_term(self.db), [])
+
     async def test_account_fixed_income_is_paid_on_top_of_the_percent_rate(self):
         with patch.object(projects, "today", return_value=date(2026, 10, 2)):
             saved = projects.save(self.db, "1", {"name": "Mixed", "currency": "USD", "rate_percent": 2,
