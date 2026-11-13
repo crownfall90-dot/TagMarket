@@ -2514,3 +2514,32 @@ document.addEventListener('focusin',event=>{const cube=event.target.closest?.('.
  new MutationObserver(schedule).observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['disabled','hidden']});
  scan();
 })();
+
+// ── Свайпы влево и вправо между разделами (Главная · Финансы · Траты · Планы · Друзья) ──
+// Содержимое едет за пальцем, на краю списка тянется «резинкой»; по отпусканию уходит в сторону
+// и новый раздел въезжает с другой. Не мешают поля ввода, графики, таблицы, прокручиваемые вбок ряды и окна.
+(()=>{
+ const main=document.getElementById('main');
+ if(!main)return;
+ const ORDER=tabs.map(t=>t[0]),still=()=>reducedMotion();
+ const current=()=>{const v=state.view;return ['account','accounts','project','forecast','tagmarket','onboarding','banks','income'].includes(v)?'projects':['faq','circle'].includes(v)?'overview':v==='friend'?'people':v;};
+ const blocked=el=>{for(let n=el;n&&n!==main;n=n.parentElement){if(n.matches?.('input,textarea,select,[contenteditable],.chart-wrap,.price-chart-wrap,.table-wrap,.segmented,.seg-pick,.pa-grip,[draggable=true],[data-noswipe]'))return true;if(n.scrollWidth>n.clientWidth+2&&/(auto|scroll)/.test(getComputedStyle(n).overflowX))return true;}return false;};
+ const settle=()=>{main.style.transition='transform .3s cubic-bezier(.2,.8,.2,1),opacity .3s';main.style.transform='';main.style.opacity='';};
+ let g=null;
+ main.addEventListener('touchstart',e=>{if(e.touches.length!==1||document.querySelector('dialog[open]')||blocked(e.target)){g=null;return;}const t=e.touches[0];g={x:t.clientX,y:t.clientY,t:Date.now(),dx:0,on:false};},{passive:true});
+ main.addEventListener('touchmove',e=>{
+  if(!g)return;const t=e.touches[0],dx=t.clientX-g.x,dy=t.clientY-g.y;
+  if(!g.on){if(Math.abs(dy)>12&&Math.abs(dy)>Math.abs(dx)){g=null;return;}if(Math.abs(dx)<12||Math.abs(dx)<Math.abs(dy)*1.6)return;g.on=true;}
+  g.dx=dx;const i=ORDER.indexOf(current()),edge=i<0||(dx>0&&i===0)||(dx<0&&i===ORDER.length-1);
+  main.style.transition='none';main.style.transform=`translateX(${dx*(edge?.16:.55)}px)`;main.style.opacity=String(1-Math.min(Math.abs(dx)/520,.4)*(edge?.3:1));
+ },{passive:true});
+ const end=()=>{
+  if(!g)return;const s=g;g=null;if(!s.on)return;
+  const dir=s.dx<0?1:-1,i=ORDER.indexOf(current()),next=ORDER[i+dir],speed=Math.abs(s.dx)/Math.max(1,Date.now()-s.t);
+  if(i<0||!next||(Math.abs(s.dx)<70&&speed<.45)){settle();return;}
+  if(still()){main.style.transition='none';main.style.transform='';main.style.opacity='';location.hash='#'+next;return;}
+  main.style.transition='transform .16s ease-in,opacity .16s';main.style.transform=`translateX(${-dir*34}%)`;main.style.opacity='0';
+  setTimeout(()=>{location.hash='#'+next;main.style.transition='none';main.style.transform=`translateX(${dir*34}%)`;setTimeout(()=>{main.style.transition='transform .34s cubic-bezier(.2,.8,.2,1),opacity .3s';main.style.transform='';main.style.opacity='';},70);},160);
+ };
+ main.addEventListener('touchend',end,{passive:true});main.addEventListener('touchcancel',()=>{if(g?.on)settle();g=null;},{passive:true});
+})();

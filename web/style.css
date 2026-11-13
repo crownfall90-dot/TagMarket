@@ -2956,3 +2956,35 @@ h1,.page-head h1{font-weight:650;letter-spacing:-.04em}
 .plans .lists-empty:not(#_){padding:12px 16px 30px;gap:6px}
 .plans .lists-empty:not(#_) .empty-orb{width:72px;height:72px;margin:0 0 6px;animation:orb-breathe 6s ease-in-out infinite}
 @media(prefers-reduced-motion:reduce){.plans .lists-empty:not(#_) .empty-orb{animation:none}}
+
+/* ── Свайпы между разделами: вертикальную прокрутку оставляем браузеру, горизонталь берём себе ── */
+#main{touch-action:pan-y;will-change:transform}
+
+/* ── Уведомления: компактная карточка под шапкой вместо плашки поверх неё ── */
+#toast.has-event:not(#_){top:calc(env(safe-area-inset-top,0px) + 80px);width:min(340px,calc(100vw - 32px));transform:translate(-50%,-14px) scale(.97)}
+#toast.has-event.visible:not(#_){transform:translate(-50%,0) scale(1)}
+@media(min-width:741px){#toast.has-event:not(#_){top:108px}}
+.event-toast:not(#_){background:var(--glass);-webkit-backdrop-filter:blur(22px) saturate(1.5);backdrop-filter:blur(22px) saturate(1.5);border:var(--card-border);border-radius:18px;box-shadow:0 12px 32px rgb(0 0 0 / .28)}
+.event-toast-main:not(#_){gap:10px;padding:10px 40px 10px 10px}
+.event-toast-icon:not(#_){width:36px;height:36px;border-radius:12px}
+.event-toast-icon svg{width:17px;height:17px}
+.event-toast-copy:not(#_){gap:1px}
+.event-toast-copy b:not(#_){font-size:14px;font-weight:600;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.event-toast-copy span:not(#_){font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.event-toast-go{display:none!important}
+.event-toast-close:not(#_){position:absolute;top:6px;right:6px;width:26px;height:26px;border-radius:50%;background:var(--raised);color:var(--muted);font-size:16px;line-height:1;border:0}
+.event-toast-timer:not(#_){height:2px;opacity:.7}
+
+/* ── Уведомления: список читается легко, непрочитанные отмечены точкой ── */
+.notification-item:not(#_){position:relative;gap:12px;padding:14px 22px 14px 2px}
+.notification-dot:not(#_){width:38px;height:38px;border-radius:50%}
+.notification-dot svg{width:17px;height:17px}
+.notification-item b:not(#_){font-size:14px;font-weight:600;letter-spacing:-.01em}
+.notification-item p:not(#_){font-size:12.5px;line-height:1.4;color:var(--muted)}
+.notification-item.unread:not(#_):after{content:"";position:absolute;right:4px;top:20px;width:8px;height:8px;border-radius:50%;background:var(--accent)}
+.notification-group h3:not(#_){margin:16px 0 2px;font-size:11.5px;font-weight:550;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+.notification-item:not(#_){background:none;border:0;border-bottom:1px solid var(--line);border-radius:0;box-shadow:none}
+.notification-item:last-child:not(#_){border-bottom:0}
+.notification-item.unread:not(#_):before{content:none;display:none}
+.notification-item.unread:not(#_) b{font-weight:650}
+.event-toast-close:not(#_){top:50%;right:8px;transform:translateY(-50%)}
