@@ -3022,3 +3022,7 @@ h1,.page-head h1{font-weight:650;letter-spacing:-.04em}
 .avatar:not(#_){border-radius:50%}
 .mobile-brand:not(#_){border-radius:12px}
 .fc-avatar:not(#_){background:rgb(var(--accent-rgb) / .14);color:var(--accent);border-radius:50%;box-shadow:none}
+
+/* Зона нажатия не меньше ~44px там, где сама кнопка компактная (вид не меняется) */
+.icon-btn,.avatar,.currency-btn,.button.small,.text-link{position:relative}
+.icon-btn:not(#_):before,.avatar:not(#_):before,.currency-btn:not(#_):before,.button.small:not(#_):before,.text-link:not(#_):before{content:"";position:absolute;inset:-6px;min-width:44px;min-height:44px;left:50%;top:50%;transform:translate(-50%,-50%);width:max(100%,44px);height:max(100%,44px)}
