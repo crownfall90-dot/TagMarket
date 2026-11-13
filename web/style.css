@@ -3039,3 +3039,14 @@ h1,.page-head h1{font-weight:650;letter-spacing:-.04em}
 .hc-row b{font-size:14.5px;font-weight:600;letter-spacing:-.01em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .hc-row small{font-size:12.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .hc-row.soon .hc-side b{color:var(--accent)}
+
+/* Контракты: сводка по проекту и свёрнутая группа завершённых */
+.contract-summary:not(#_){margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
+.pa-archive{margin-top:6px;border-top:1px solid var(--line)}
+.pa-archive>summary{list-style:none;display:flex;align-items:center;gap:10px;padding:14px 2px;cursor:pointer;color:var(--muted);font-size:14px}
+.pa-archive>summary::-webkit-details-marker{display:none}
+.pa-archive>summary em{font-style:normal;font-size:12px;padding:1px 8px;border-radius:999px;background:var(--raised);color:var(--text)}
+.pa-archive>summary svg{margin-left:auto;width:16px;height:16px;transition:transform .2s}
+.pa-archive[open]>summary svg{transform:rotate(90deg)}
+.pa-archive-list{display:grid;gap:10px;padding-bottom:6px}
+.pa-archive .pa-card{opacity:.82}
