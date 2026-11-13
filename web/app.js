@@ -1099,7 +1099,7 @@ async function navigate(){
 // Тема: тёмная (по умолчанию) или светлая — [id, название, фон страницы].
 // Фоном красятся шапка Telegram, строка состояния в браузере и полосы Android.
 // Выбор живёт на устройстве; theme.js ставит его ещё до первой отрисовки
-const THEMES=[['dark','Тёмная','#101010'],['light','Светлая','#f7f7f8']];
+const THEMES=[['dark','Тёмная','#000000'],['light','Светлая','#eaeaed']];
 function currentTheme(){return document.documentElement.dataset.theme==='light'?'light':'dark';}
 function setTheme(id,persist=true){
  const th=THEMES.find(x=>x[0]===id)||THEMES[0],root=document.documentElement;

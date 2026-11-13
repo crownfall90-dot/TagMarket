@@ -2913,7 +2913,7 @@ dialog.picker[open]{display:flex;flex-direction:column}
 
 /* ── Минимализм в стиле Apple: нейтральные токены двух тем, плоские карточки, приветствие слева ── */
 :root{--bg:#000;--bg-rgb:0 0 0;--panel:#101012;--panel-rgb:16 16 18;--raised:#1a1a1d;--raised-2:#252529;--line:rgb(255 255 255 / .08);--line-soft:rgb(255 255 255 / .06);--text:#f5f5f7;--muted:#8e8e93;--faint:#636366;--glass:rgb(28 28 30 / .72);--card-border:1px solid rgb(255 255 255 / .07);--elev-1:none;--shadow:0 24px 60px rgb(0 0 0 / .55);--r-card:22px}
-:root[data-theme=light]{--bg:#f5f5f7;--bg-rgb:245 245 247;--panel:#fff;--panel-rgb:255 255 255;--raised:#f2f2f7;--raised-2:#e5e5ea;--line:rgb(0 0 0 / .08);--line-soft:rgb(0 0 0 / .06);--text:#1d1d1f;--muted:#6e6e73;--faint:#8e8e93;--glass:rgb(255 255 255 / .8);--card-border:1px solid rgb(0 0 0 / .05);--elev-1:0 1px 2px rgb(0 0 0 / .04);--shadow:0 18px 44px rgb(0 0 0 / .1)}
+:root[data-theme=light]{--bg:#eaeaed;--bg-rgb:234 234 237;--panel:#f6f6f8;--panel-rgb:246 246 248;--raised:#ececef;--raised-2:#e2e2e6;--line:rgb(0 0 0 / .09);--line-soft:rgb(0 0 0 / .06);--text:#232328;--muted:#66666e;--faint:#8a8a92;--glass:rgb(246 246 248 / .82);--card-border:1px solid rgb(0 0 0 / .06);--elev-1:0 1px 2px rgb(0 0 0 / .04);--shadow:0 16px 40px rgb(0 0 0 / .09)}
 .panel,.stat,.account-card,.project-card,.people-card{box-shadow:var(--elev-1);border-radius:var(--r-card)}
 .button.primary,.primary{box-shadow:none}
 h1,.page-head h1{font-weight:650;letter-spacing:-.04em}
