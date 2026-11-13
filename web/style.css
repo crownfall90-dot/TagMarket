@@ -3096,3 +3096,6 @@ h1,.page-head h1{font-weight:650;letter-spacing:-.04em}
 .rel-card header small{font-size:12px;color:var(--muted);flex:none}
 .rel-card ul{margin:8px 0 0;padding-left:18px;display:grid;gap:6px;font-size:13.5px;line-height:1.45;color:var(--muted)}
 .app-version-link{text-align:center;margin:0 0 18px}
+
+/* Шторки закрываются свайпом вниз: за заголовок и «ручку» браузер не листает, а отдаёт жест нам */
+#dialog .dialog-head,.picker-grip,.picker-title{touch-action:none}
