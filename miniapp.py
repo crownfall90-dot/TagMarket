@@ -1415,7 +1415,7 @@ FONTS = ("inter-latin.woff2", "inter-cyrillic.woff2", "inter-latin-ext.woff2")
 
 async def static(request):
     name = request.match_info.get("file", "index.html") or "index.html"
-    if name not in ("index.html", "app.js", "style.css", "theme.js", "preview.json", "privacy.html", *FAQ_IMAGES, *FONTS):
+    if name not in ("index.html", "app.js", "style.css", "theme.js", "preview.json", "releases.json", "privacy.html", *FAQ_IMAGES, *FONTS):
         raise web.HTTPNotFound()
     if name in FONTS:
         # файлы шрифта не меняются — пусть лежат в кэше телефона, а не грузятся при каждом запуске

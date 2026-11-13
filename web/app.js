@@ -2660,23 +2660,13 @@ document.addEventListener('focusin',event=>{const cube=event.target.closest?.('.
 })();
 
 // ── «Что нового»: у каждого улучшения своя запись. Окно показывается один раз после обновления интерфейса, вся история — в Настройках.
-// Новое улучшение = новая запись СВЕРХУ списка с номером сборки (?v= в index.html) и один пункт на изменение.
-const RELEASES=[
- {v:'20261113-29',date:'2026-11-13',title:'Свайпы между разделами как в Телеграме',notes:['Соседний раздел виден прямо во время движения пальца: две страницы едут вместе с пальцем','Отпустили далеко или быстро смахнули — раздел меняется, иначе страницы возвращаются на место']},
- {v:'20261113-28',date:'2026-11-13',title:'Плавное закрытие шторок и свайп экранов',notes:['Окна и шторки закрываются плавно: на телефоне уезжают вниз, затемнение фона гаснет','Свайп между разделами стал плавнее: экран уходит и возвращается без паузы']},
- {v:'20261113-27',date:'2026-11-13',title:'Шторки закрываются свайпом вниз',notes:['«Что нового», настройки и выбор из списка закрываются свайпом пальца вниз','Если внутри шторки есть прокручиваемый список, он листается как обычно, а шторка тянется вниз только когда список в начале']},
- {v:'20261113-26',date:'2026-11-13',title:'Что нового',notes:['После обновления интерфейса приложение коротко показывает, что изменилось, а полная история лежит в Настройках']},
- {v:'20261113-25',date:'2026-11-13',title:'Единый вид переключателей',notes:['Проекты · Зарплата · Всё вместе, Месяц · Год и остальные переключатели стали мягкой капсулой без острого фона']},
- {v:'20261113-24',date:'2026-11-13',title:'Прогноз к окончанию контрактов',notes:['На экране прогноза новый блок: итог каждого проекта на дату окончания его контрактов и общий итог','Он показывается рядом с обычным прогнозом на выбранную дату']},
- {v:'20261113-22',date:'2026-11-13',title:'Срок для проектов и счетов TagMarket',notes:['У проекта и у счёта TagMarket можно задать срок; аккаунты без своего срока берут срок проекта','После срока счёт TagMarket продолжает работать (если стоит галочка) или аннулируется и уходит в архив со статистикой','Для новых проектов доход считается с даты начала поступлений, включая сегодняшний день']},
- {v:'20261113-20',date:'2026-11-13',title:'Итог по контрактам в проекте',notes:['На странице проекта итог и доход по контрактам, завершённые контракты собраны в свёрнутую группу']},
- {v:'20261113-19',date:'2026-11-13',title:'Ближайшие окончания и быстрые сроки',notes:['На главной карточка с ближайшими окончаниями контрактов','В редакторе аккаунта кнопки срока: +1, +3, +6 месяцев, +1 год']},
- {v:'20261113-17',date:'2026-11-13',title:'Единый плоский вид',notes:['Все разделы переведены на спокойный минималистичный стиль в тёмной и светлой теме']},
-];
+// Записи лежат в web/releases.json (его же читает бот для рассылки): новое улучшение = новая запись СВЕРХУ с номером сборки (?v= в index.html).
+let RELEASES=[];
+async function loadReleases(){if(RELEASES.length)return RELEASES;try{const r=await fetch(`releases.json?v=${webBuild()}`,{cache:'no-cache'});if(r.ok){const data=await r.json();if(Array.isArray(data))RELEASES=data;}}catch{}return RELEASES;}
 function webBuild(){return document.querySelector('script[src*="app.js?v="]')?.src.match(/v=(\d{8}-\d+)/)?.[1]||'';}
-function releaseCard(r){return `<article class="rel-card"><header><b>${esc(r.title)}</b><small>${esc(date(r.date))}</small></header><ul>${r.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></article>`;}
+function releaseCard(r){const group=(label,items)=>items?.length?`<div class="rel-group"><small>${label}</small><ul>${items.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></div>`:'';return `<article class="rel-card"><header><b>${esc(r.title)}</b><small>${esc(date(r.date))}</small></header>${group('Добавлено',r.added)}${group('Изменено',r.changed)}${group('Убрано',r.removed)}</article>`;}
 async function showWhatsNew(all=false){
- const build=webBuild();let seen=null;try{seen=localStorage.getItem('seen-release');}catch{}
+ await loadReleases();const build=webBuild();let seen=null;try{seen=localStorage.getItem('seen-release');}catch{}
  let list=RELEASES.filter(r=>!build||r.v<=build);
  if(!all){list=seen?list.filter(r=>r.v>seen):list.slice(0,1);try{localStorage.setItem('seen-release',build);}catch{}}
  if(!list.length)return;

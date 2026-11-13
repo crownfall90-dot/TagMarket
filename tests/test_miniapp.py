@@ -976,6 +976,40 @@ class RollupCarryTests(unittest.TestCase):
             "profit": net, "swap": 0, "commission": 0, "net": net,
             "is_balance": False, "is_closing": True, "is_opening": False, "comment": ""}])
 
+    def test_release_announcements_are_sent_once_with_quotes_and_push(self):
+        import asyncio, types
+        class FakeBot:
+            def __init__(self):
+                self.sent = []
+            async def send_message(self, chat_id, text, reply_markup=None, **kw):
+                self.sent.append((chat_id, text))
+                return types.SimpleNamespace(message_id=len(self.sent))
+        def entry(v, **kw):
+            return {"v": v, "date": "2026-11-13", "title": f"Запись {v[-2:]}", "added": [], "changed": [], "removed": [], **kw}
+        entries = [entry("20261113-01", added=["a"]), entry("20261113-02", added=["x & y"], changed=["y"], removed=["z"])]
+        text = self.bot.release_text(entries[1])
+        self.assertIn("🆕 <b>Обновление Platformer</b> · сборка 02", text)
+        self.assertIn("13 ноября 2026", text)
+        for label in ("➕ <b>Добавлено</b>", "🔧 <b>Изменено</b>", "➖ <b>Убрано</b>"):
+            self.assertIn(label, text)
+        self.assertEqual(text.count("<blockquote>"), 3)
+        self.assertIn("x &amp; y", text)                          # пункты экранируются
+        self.assertNotIn("Убрано", self.bot.release_text(entries[0]))      # пустые группы не показываем
+        with patch.object(self.bot, "release_entries", return_value=entries):
+            fb = FakeBot()
+            self.assertEqual(asyncio.run(self.bot.announce_release(fb, self.db)), 1)     # первый запуск — только свежая запись
+            self.assertEqual([c for c, _ in fb.sent], [1])
+            row = self.db.execute("SELECT title, body FROM notifications WHERE event_key='release:20261113-02'").fetchone()
+            self.assertEqual(row[0], "Обновление: Запись 02")
+            self.assertIn("Добавлено: x & y", row[1])
+            self.assertEqual(asyncio.run(self.bot.announce_release(fb, self.db)), 0)     # повторно не шлём
+        newer = entries + [entry("20261113-03", changed=["c"]), entry("20261113-04", added=["d"])]
+        with patch.object(self.bot, "release_entries", return_value=newer):
+            fb2 = FakeBot()
+            self.assertEqual(asyncio.run(self.bot.announce_release(fb2, self.db)), 2)    # каждое улучшение — отдельным сообщением
+            self.assertIn("сборка 03", fb2.sent[0][1])
+            self.assertIn("сборка 04", fb2.sent[1][1])
+
     def test_term_status_and_stats(self):
         # срок счёта: идёт → вышел; «продолжить» оставляет счёт, без него контракт аннулируется
         self.deal(1, 2400.0, "Deposit", datetime(2026, 8, 10, 12))
@@ -4099,6 +4133,33 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(r.headers["Content-Type"], "image/jpeg")
                 self.assertIn("web/" + name, deploy.FILES)
         self.assertEqual((await self.client.get("/app/secret.jpg")).status, 404)
+
+    async def test_release_journal_is_valid_served_and_shipped(self):
+        import re
+        import tools.deploy_miniapp as deploy
+        import tools.rollback_miniapp as rollback
+        r = await self.client.get("/app/releases.json")
+        self.assertEqual(r.status, 200)
+        entries = json.loads(await r.text())
+        self.assertTrue(entries)
+        versions = [e["v"] for e in entries]
+        self.assertEqual(len(set(versions)), len(versions))
+        self.assertEqual(versions, sorted(versions, reverse=True))        # новые сверху
+        for e in entries:
+            with self.subTest(v=e["v"]):
+                self.assertRegex(e["v"], r"^\d{8}-\d+$")
+                date.fromisoformat(e["date"])
+                self.assertTrue(e["title"].strip())
+                self.assertTrue(any(e.get(k) for k in ("added", "changed", "removed")))
+                for k in ("added", "changed", "removed"):
+                    self.assertIsInstance(e.get(k, []), list)
+                    self.assertTrue(all(isinstance(i, str) and i.strip() for i in e.get(k, [])))
+        # свежая запись соответствует номеру сборки в index.html
+        index = await (await self.client.get("/app/")).text()
+        build = re.search(r"app\.js\?v=(\d{8}-\d+)", index).group(1)
+        self.assertEqual(entries[0]["v"], build)
+        self.assertIn("web/releases.json", deploy.FILES)
+        self.assertIn("web/releases.json", rollback.OPTIONAL_FILES)
 
     async def test_theme_script_and_font_are_served_and_shipped(self):
         # тема до первой отрисовки (theme.js) и шрифт Inter: отдаются сервером и есть в поставке,
