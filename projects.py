@@ -261,7 +261,7 @@ def _bonus_window(account, start, end):
     return begins, min(end, expires)
 
 
-def _current_account(account, project, as_of):
+def _current_account(account, project, as_of, capitalization=None):
     """Ставка, капитализация, баланс аккаунта сейчас и действующий бонус.
 
     Доход прибавляется к балансу каждый день, начиная с даты начала (своей
@@ -271,7 +271,8 @@ def _current_account(account, project, as_of):
     паузе не начисляются.
     """
     rate = Decimal(str(account["rate_percent"] if account["rate_percent"] is not None else project["rate_percent"])) / 100
-    enabled = account["capitalization"] if account["capitalization"] is not None else project["capitalization"]
+    enabled = capitalization if capitalization is not None else (
+        account["capitalization"] if account["capitalization"] is not None else project["capitalization"])
     amount = Decimal(str(account["amount"]))
     business_only = project.get("business_days_only", False)
     end = account.get("income_to")
@@ -526,6 +527,13 @@ def get(db, owner, project_id):
             final = _current_account(account, result, date.fromisoformat(end))[2]
             account["contract_final"] = _bounded(final)
             account["contract_income"] = _bounded(final - amount)
+            # для наглядности — тот же срок при другом режиме капитализации (при фиксированной сумме неактуально)
+            account["contract_capitalization"] = bool(enabled)
+            if result["income_mode"] != "fixed":
+                other = _current_account(account, result, date.fromisoformat(end), not enabled)[2]
+                account["contract_final_alt"] = _bounded(other)
+                account["contract_income_alt"] = _bounded(other - amount)
+                account["contract_difference"] = _bounded(abs(final - other))
         account["current_amount"] = _bounded(personal)
         account["capitalization_active"] = enabled
         account["bonus_current_amount"] = _bounded(bonus) if account["bonus_active"] else 0
@@ -803,6 +811,9 @@ def check_contract_terms(db):
                 title = f"До конца контракта {left} дн.: {title_name}"
                 body = (f"Окончание {date.fromisoformat(end).strftime('%d.%m.%Y')}. К этой дате будет "
                         f"{_money(account['contract_final'], currency)}, доход {_money(account['contract_income'], currency)}.")
+            if account.get("contract_final_alt") is not None:
+                mode = "без капитализации" if account["contract_capitalization"] else "с капитализацией"
+                body += f" {mode.capitalize()} было бы {_money(account['contract_final_alt'], currency)} (разница {_money(account['contract_difference'], currency)})."
             key = f"contract:{account['id']}:{end}:{step}"
             if partner.record_notification(db, owner, key, "contract", title, body):
                 partner.enqueue_webhook_delivery(db, key, {"type": "text", "text": f"📅 <b>{title}</b>\n\n{body}"})

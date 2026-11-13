@@ -1404,6 +1404,9 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             a, b = saved["accounts"]
             self.assertEqual((a["contract_status"], a["days_left"]), ("active", 10))
             self.assertIsNone(b["contract_status"])
+            self.assertTrue(a["contract_capitalization"])
+            self.assertAlmostEqual(a["contract_final_alt"], 1000 + 1000 * 0.01 * 20, places=2)   # без капитализации: простой процент
+            self.assertAlmostEqual(a["contract_difference"], a["contract_final"] - a["contract_final_alt"], places=2)
             self.assertAlmostEqual(a["contract_final"], 1000 * 1.01 ** 20, places=2)   # 20 дней с 1 по 21 октября
             with self.assertRaises(ValueError):
                 projects.save(self.db, "1", {**base, "accounts": [{"amount": 1, "income_from": "2026-10-10", "income_to": "2026-10-10"}]}, saved["id"])
