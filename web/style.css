@@ -2988,3 +2988,41 @@ h1,.page-head h1{font-weight:650;letter-spacing:-.04em}
 .notification-item.unread:not(#_):before{content:none;display:none}
 .notification-item.unread:not(#_) b{font-weight:650}
 .event-toast-close:not(#_){top:50%;right:8px;transform:translateY(-50%)}
+
+/* Срок контракта: сравнение капитализации — аккуратный блок вместо длинной «таблетки» */
+.pa-tags .pa-cmp{flex:1 1 100%;display:grid;gap:0;margin-top:2px;padding:4px 12px;border:1px solid var(--line);border-radius:14px;background:var(--raised);min-width:0}
+.pa-cmp .cmp-row{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:7px 0;font-size:13px;color:var(--muted);min-width:0}
+.pa-cmp .cmp-row+.cmp-row{border-top:1px solid var(--line)}
+.pa-cmp .cmp-row b{font-weight:600;color:var(--text);white-space:nowrap}
+.pa-cmp .cmp-row.on b{color:var(--accent)}
+.pa-cmp .cmp-row em{font-style:normal;font-size:11px;padding:1px 7px;margin-left:6px;border-radius:999px;color:var(--accent);background:rgb(var(--accent-rgb) / .12)}
+.pa-cmp .cmp-row.diff{color:var(--muted)}
+.pa-cmp .cmp-row.diff b{color:var(--accent)}
+.pa-cmp .cmp-row b small{margin-left:8px;font-size:12px;font-weight:550;color:var(--muted)}
+
+/* ── Единый современный минимализм для всех разделов: плоские заливки, тонкие контуры, без свечений ── */
+:root{--hl-a:#6366f1;--hl-b:#6366f1;--glow-rgb:0 0 0}
+:root[data-theme=light]{--hl-a:#4f46e5;--hl-b:#4f46e5;--glow-rgb:0 0 0}
+.topbar:not(#_){background:var(--glass);border:var(--card-border);box-shadow:none;-webkit-backdrop-filter:blur(22px) saturate(1.4);backdrop-filter:blur(22px) saturate(1.4)}
+.fab:not(#_){background:var(--accent);color:var(--on-accent);box-shadow:0 8px 22px rgb(0 0 0 / .28)}
+.mobile-nav:not(#_){background:var(--glass);border:var(--card-border);box-shadow:0 10px 30px rgb(0 0 0 / .22)}
+.nav-glider:not(#_){background:rgb(var(--accent-rgb) / .14);box-shadow:none}
+.segmented:not(#_){background:var(--raised);border:0}
+.segmented button.active:not(#_){background:var(--accent);color:var(--on-accent);box-shadow:none}
+.plans-hero2:not(#_){background:var(--panel);border:var(--card-border);box-shadow:var(--elev-1)}
+.plans-hero2 .ph-stat:not(#_){background:var(--raised);border:0;box-shadow:none}
+.plan-tabs:not(#_),.lists-tabs:not(#_){background:var(--raised);border:0;box-shadow:none}
+.plan-tabs .active:not(#_),.lists-tabs .active:not(#_){background:var(--panel);border:0;box-shadow:var(--elev-1);color:var(--text)}
+.sp-up:not(#_){background:var(--panel);border:var(--card-border);box-shadow:none}
+.sp-up.soon:not(#_),.sp-up.soon5:not(#_){border-color:rgb(var(--accent-rgb) / .38)}
+.sp-logo:not(#_){background:rgb(var(--accent-rgb) / .14);color:var(--accent);box-shadow:none}
+.sp-row:not(#_),.task:not(#_),.friend-row:not(#_),.goal-card:not(#_),.inc-card:not(#_){box-shadow:none}
+.sec-hero:not(#_),.project-card:not(#_),.link-card:not(#_),.invite-card:not(#_),.my-profile:not(#_){box-shadow:var(--elev-1)}
+.avatar:not(#_),.mobile-brand:not(#_){background:var(--accent);color:var(--on-accent);box-shadow:none}
+.avatar:not(#_){border-radius:50%}
+.mobile-brand:not(#_){border-radius:12px}
+.fc-avatar:not(#_){background:rgb(var(--accent-rgb) / .14);color:var(--accent);border-radius:50%;box-shadow:none}
+
+/* Зона нажатия не меньше ~44px там, где сама кнопка компактная (вид не меняется) */
+.icon-btn,.avatar,.currency-btn,.button.small,.text-link{position:relative}
+.icon-btn:not(#_):before,.avatar:not(#_):before,.currency-btn:not(#_):before,.button.small:not(#_):before,.text-link:not(#_):before{content:"";position:absolute;inset:-6px;min-width:44px;min-height:44px;left:50%;top:50%;transform:translate(-50%,-50%);width:max(100%,44px);height:max(100%,44px)}
