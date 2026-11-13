@@ -3,6 +3,7 @@
 Свою базу не ведём: MT5 хранит историю сам и подтягивает её с сервера брокера.
 """
 
+import bisect
 import html
 import logging
 import os
@@ -441,14 +442,34 @@ def _stored_capital() -> float:
     return from_agent if from_agent > 0.0 else from_deals
 
 
+_moves_index = (None, -1, [], [0.0])      # (список строк, его длина, времена движений, суммы «после»)
+
+
+def _moves_for(rows: list[dict]):
+    """Индекс движений капитала по списку строк: времена по возрастанию и суммы от каждой позиции до конца.
+
+    Строится один раз на список (пока он тот же и не менялся по длине): раньше каждая сделка заново
+    суммировала все строки, и расчёт счёта с десятками тысяч сделок рос квадратично (30 000 сделок — секунды)."""
+    global _moves_index
+    cached = _moves_index
+    if cached[0] is rows and cached[1] == len(rows):
+        return cached
+    moves = sorted(((r["time"], own_amount(r)) for r in rows
+                    if r["is_balance"] and is_transfer(r) and not is_profit_side(r)), key=lambda m: m[0])
+    suffix = [0.0] * (len(moves) + 1)
+    for i in range(len(moves) - 1, -1, -1):
+        suffix[i] = suffix[i + 1] + moves[i][1]
+    _moves_index = (rows, len(rows), [t for t, _ in moves], suffix)      # присваивание целиком: безопасно и для потоков
+    return _moves_index
+
+
 def capital_moves_after(rows: list[dict], when: datetime) -> float:
     """Сколько капитала завели или вывели после этой даты (в реальных деньгах).
 
     Вывод прибыли капитал не меняет, поэтому такие строки не в счёт.
     """
-    return sum(own_amount(r) for r in rows
-               if r["is_balance"] and is_transfer(r) and r["time"] > when
-               and not is_profit_side(r))
+    _, _, times, suffix = _moves_for(rows)
+    return suffix[bisect.bisect_right(times, when)]
 
 
 def capital_at(when: datetime, rows: list[dict], current: float = None) -> float:

@@ -1010,6 +1010,37 @@ class RollupCarryTests(unittest.TestCase):
             self.assertIn("сборка 03", fb2.sent[0][1])
             self.assertIn("сборка 04", fb2.sent[1][1])
 
+    def test_capital_moves_index_matches_brute_force_and_is_built_once(self):
+        # индекс «движения капитала после даты» даёт те же суммы, что и прямой перебор, и строится один раз на список
+        import random
+        trades.use(accounts.load()[0])
+        rnd = random.Random(7)
+        t0 = datetime(2026, 1, 1)
+        rows = []
+        for i in range(400):
+            comment = rnd.choice(["Deposit", "Withdraw", "Adjust-6.92", "Upgrade-166.08", "Transfer", ""])
+            rows.append({"ticket": i, "time": t0 + timedelta(hours=rnd.randint(0, 3000)), "is_balance": bool(comment),
+                         "is_closing": not comment, "comment": comment, "net": rnd.uniform(-500, 500)})
+        rnd.shuffle(rows)                      # порядок строк не должен иметь значения
+
+        def brute(when, source):
+            return sum(trades.own_amount(r) for r in source if r["is_balance"] and trades.is_transfer(r)
+                       and r["time"] > when and not trades.is_profit_side(r))
+        for _ in range(80):
+            when = t0 + timedelta(hours=rnd.randint(-50, 3100))
+            self.assertAlmostEqual(trades.capital_moves_after(rows, when), brute(when, rows), places=6)
+        self.assertAlmostEqual(trades.capital_moves_after(rows, rows[0]["time"]), brute(rows[0]["time"], rows), places=6)  # строго «после»
+        calls = []
+        real = trades.own_amount
+        probe = list(rows)
+        with patch.object(trades, "own_amount", side_effect=lambda r: calls.append(1) or real(r)):
+            for _ in range(300):
+                trades.capital_moves_after(probe, t0)
+        self.assertLessEqual(len(calls), len(probe))            # не 300 × строк, как раньше
+        probe.append({"ticket": 999, "time": t0 + timedelta(hours=4000), "is_balance": True, "is_closing": False,
+                      "comment": "Deposit", "net": 2400.0})
+        self.assertAlmostEqual(trades.capital_moves_after(probe, t0), brute(t0, probe), places=6)   # список изменился — индекс пересобран
+
     def test_term_status_and_stats(self):
         # срок счёта: идёт → вышел; «продолжить» оставляет счёт, без него контракт аннулируется
         self.deal(1, 2400.0, "Deposit", datetime(2026, 8, 10, 12))
