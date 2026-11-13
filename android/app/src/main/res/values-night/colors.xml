@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Тема Vesper (тёмная, по умолчанию): глубокий pitch-black, строгие границы, янтарный акцент -->
-    <color name="bg">#101010</color>
-    <color name="panel">#161616</color>
-    <color name="line">#232323</color>
-    <color name="text">#FAFAFA</color>
-    <color name="muted">#A0A0A0</color>
-    <color name="accent">#FF8037</color>
-    <color name="on_accent">#101010</color>
+    <color name="bg">#000000</color>
+    <color name="panel">#101012</color>
+    <color name="line">#232326</color>
+    <color name="text">#F5F5F7</color>
+    <color name="muted">#8E8E93</color>
+    <color name="accent">#6366F1</color>
+    <color name="on_accent">#FFFFFF</color>
     <color name="negative">#FF8080</color>
     <color name="negative_fill">#1FFF8080</color>
     <color name="fill">#12FFFFFF</color>
