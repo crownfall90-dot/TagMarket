@@ -2181,7 +2181,7 @@ document.addEventListener('click',async event=>{const el=event.target.closest('[
  else if(/^(home|sync)-/.test(action))await stationAction(action,el);
  else if(action.startsWith('bank-'))await bankAction(action,el);
  else if(action.startsWith('spend-'))await spendAction(action,el);
- else if(action.startsWith('income-'))await incomeAction(action,el);
+ else if(action.startsWith('income-')&&action!=='income-scope')await incomeAction(action,el);
  else if(action.startsWith('goal-'))await goalAction(action,el);
  else if(/^(friend|split)-/.test(action))await friendAction(action,el);
  else if(action.startsWith('profile-'))await profileAction(action,el);
