@@ -3078,3 +3078,12 @@ h1,.page-head h1{font-weight:650;letter-spacing:-.04em}
 .forecast-contracts .cf-total span{color:var(--muted);font-size:13px}
 .forecast-contracts .cf-total b{font-size:18px;font-weight:700;letter-spacing:-.02em;text-align:right}
 .forecast-contracts .cf-total small{grid-column:2;text-align:right;font-size:12.5px}
+
+/* Переключатели (Проекты · Зарплата · Всё вместе, Месяц · Год и т. п.): капсула с мягким фоном и таблетка внутри, без острых углов и обводок */
+.segmented:not(#_){display:inline-flex;flex-wrap:nowrap;gap:2px;padding:3px;background:var(--raised);border:0;border-radius:999px;box-shadow:none}
+.segmented.compact:not(#_){padding:3px}
+.segmented button:not(#_){border:0;border-radius:999px;background:transparent;box-shadow:none;color:var(--muted)}
+.segmented button.active:not(#_){color:var(--on-accent)}
+.segmented .segmented-thumb:not(#_){top:3px;bottom:3px;left:3px;border-radius:999px;background:var(--accent);box-shadow:none}
+.segmented:not(:has(.segmented-thumb)) button.active:not(#_){background:var(--accent);box-shadow:none}
+.nt-filters.segmented:not(#_){display:flex;flex-wrap:wrap}
