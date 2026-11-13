@@ -36,6 +36,41 @@ SERVICES = ["tagmarkets-webhook"]
 OLD_BOT = "tagmarkets-bot"
 
 
+def wait_for_service(base: str, attempts: int = 45, pause: float = 2.0) -> None:
+    """Ждём, пока служба после перезапуска начнёт отвечать.
+
+    Прогрев (курсы валют, база, бот) бывает дольше полминуты, поэтому ждём до полутора минут;
+    раньше 15 попыток по 2 секунды ронял выкладку «Connection refused» на ровном месте.
+    """
+    last = None
+    for _ in range(attempts):
+        try:
+            with urlopen(base + "/health", timeout=3) as r:
+                if r.status == 200:
+                    return
+                last = RuntimeError(f"/health answered {r.status}")
+        except OSError as exc:
+            last = exc
+        time.sleep(pause)
+    raise RuntimeError(f"Service did not become healthy within {attempts * pause:.0f}s: {last}")
+
+
+def probe(base: str, path: str, attempts: int = 10, pause: float = 2.0) -> None:
+    """GET base+path с повторами при отказе соединения; ответ с кодом (в том числе 401) отдаём вызывающему."""
+    for attempt in range(attempts):
+        try:
+            with urlopen(base + path, timeout=5) as r:
+                if r.status != 200:
+                    raise RuntimeError(f"{path} answered {r.status}")
+                return
+        except HTTPError:
+            raise
+        except OSError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(pause)
+
+
 def old_bot_service() -> None:
     embedded = "await bot.main()" in (ROOT / "webhook_server.py").read_text(encoding="utf-8")
     subprocess.run(["systemctl", "disable" if embedded else "enable", "--now", OLD_BOT], check=False)
@@ -152,20 +187,10 @@ def main():
         run("systemctl", "start", *SERVICES)
         port = int(settings.get("WEBHOOK_PORT") or 8443)
         base = f"http://127.0.0.1:{port}"
-        for attempt in range(15):
-            try:
-                with urlopen(base + "/health", timeout=3) as r:
-                    if r.status == 200:
-                        break
-            except OSError:
-                if attempt == 14:
-                    raise
-                time.sleep(2)
-        with urlopen(base + "/app/", timeout=5) as r:
-            if r.status != 200:
-                raise RuntimeError("frontend unavailable")
+        wait_for_service(base)
+        probe(base, "/app/")
         try:
-            urlopen(base + "/api/bootstrap", timeout=5)
+            probe(base, "/api/bootstrap")
         except HTTPError as exc:
             if exc.code != 401:
                 raise
@@ -188,6 +213,8 @@ def main():
                 time.sleep(2)
         print("Public mini-app assets PASS", flush=True)
     except Exception:
+        # хвост журнала службы в лог выкладки — чтобы причину сбоя видно без захода на сервер
+        subprocess.run(["journalctl", "-u", SERVICES[0], "-n", "40", "--no-pager"], check=False)
         if stopped:
             for source in backup.rglob("*"):
                 if source.is_file() and source.relative_to(backup).as_posix() in FILES | {".env"}:
