@@ -3113,3 +3113,6 @@ h1,.page-head h1{font-weight:650;letter-spacing:-.04em}
 @keyframes backdrop-out{from{opacity:1}to{opacity:0}}
 @media(prefers-reduced-motion:no-preference) and (max-width:740px){dialog:not([open]){animation-name:dialog-out-mobile}}
 dialog.no-exit:not([open]),dialog.no-exit:not([open])::backdrop{animation:none}
+
+/* Свайп между разделами: соседний раздел едет рядом, пока палец на экране */
+main.main-peek{position:fixed;overflow:hidden;pointer-events:none;z-index:1;margin:0;min-height:0;will-change:transform}

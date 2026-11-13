@@ -753,6 +753,7 @@ if(androidApp){
  document.addEventListener('click',event=>{if(event.target.closest?.('.mobile-nav a,.segmented button,.tabs button'))buzz('select');},true);
 }
 document.addEventListener('click',event=>{if(!$('#fab-root')?.classList.contains('open'))return;if(event.target.closest?.('.fab-item')||!event.target.closest?.('#fab-root'))setTimeout(()=>fabToggle(false));},true);
+function viewMap(){return {overview,tagmarket:tagmarketView,activity:spendView,spend:spendView,plans:listsView,friend:friendView,circle:circleView,banks:banksView,accounts:accountsView,account:accountView,projects:projectsView,spend:spendView,income:incomeView,project:projectView,forecast:forecastView,people:peopleView,settings:settingsView,faq:faqView,onboarding:welcomeView};}
 function render(preserve=false){const snapshot=preserve?captureUiState():null;$('#main').classList.toggle('quiet-paint',preserve);paintedKey='';nav();
  // FLIP: #main.innerHTML заменяется целиком на каждый render(), поэтому
  // .segmented-thumb каждый раз новый DOM-узел без истории — обычный CSS
@@ -768,7 +769,7 @@ function render(preserve=false){const snapshot=preserve?captureUiState():null;$(
   const fingerprint=[...strip.querySelectorAll('button')].map(b=>b.dataset.value||b.textContent).join('|');
   prevThumbs.set(fingerprint, {left:active.offsetLeft, width:active.offsetWidth});
  });
- const views={overview,tagmarket:tagmarketView,activity:spendView,spend:spendView,plans:listsView,friend:friendView,circle:circleView,banks:banksView,accounts:accountsView,account:accountView,projects:projectsView,spend:spendView,income:incomeView,project:projectView,forecast:forecastView,people:peopleView,settings:settingsView,faq:faqView,onboarding:welcomeView};$('#main').innerHTML=(preview?'<div class="preview-label">Демо-режим · вымышленные данные. Отправка сообщений и управление счетами работают только при запуске из <a href="https://t.me/tagmarketgold_bot" target="_blank" rel="noopener">бота в Telegram</a>.</div>':'')+(views[state.view]||overview)()+(state.view==='settings'&&state.admin?.network?.length?networkView():'');$('#avatar').textContent=state.data.user.name.slice(0,1).toUpperCase();
+ const views=viewMap();$('#main').innerHTML=(preview?'<div class="preview-label">Демо-режим · вымышленные данные. Отправка сообщений и управление счетами работают только при запуске из <a href="https://t.me/tagmarketgold_bot" target="_blank" rel="noopener">бота в Telegram</a>.</div>':'')+(views[state.view]||overview)()+(state.view==='settings'&&state.admin?.network?.length?networkView():'');$('#avatar').textContent=state.data.user.name.slice(0,1).toUpperCase();
  // сначала все замеры, потом все записи: чередование чтения и записи в одном
  // цикле заставляет браузер пересчитывать вёрстку на каждой полосе
  const centering=[];
@@ -2606,31 +2607,54 @@ document.addEventListener('focusin',event=>{const cube=event.target.closest?.('.
  scan();
 })();
 
-// ── Свайпы влево и вправо между разделами (Главная · Финансы · Траты · Планы · Друзья) ──
-// Содержимое едет за пальцем, на краю списка тянется «резинкой»; по отпусканию уходит в сторону
-// и новый раздел въезжает с другой. Не мешают поля ввода, графики, таблицы, прокручиваемые вбок ряды и окна.
+// ── Свайпы влево и вправо между разделами (Главная · Финансы · Траты · Планы · Друзья), как между папками в Телеграме ──
+// Соседний раздел заранее собирается и едет рядом: палец ведёт обе страницы 1:1. Отпустили далеко или быстро — страницы
+// доезжают и раздел меняется, иначе возвращаются. На краю списка тянется «резинкой». Не мешают поля ввода, графики,
+// таблицы, прокручиваемые вбок ряды и окна.
 (()=>{
  const main=document.getElementById('main');
  if(!main)return;
- const ORDER=tabs.map(t=>t[0]),still=()=>reducedMotion();
+ const ORDER=tabs.map(t=>t[0]),still=()=>reducedMotion(),spring='cubic-bezier(.22,1,.36,1)';
  const current=()=>{const v=state.view;return ['account','accounts','project','forecast','tagmarket','onboarding','banks','income'].includes(v)?'projects':['faq','circle'].includes(v)?'overview':v==='friend'?'people':v;};
  const blocked=el=>{for(let n=el;n&&n!==main;n=n.parentElement){if(n.matches?.('input,textarea,select,[contenteditable],.chart-wrap,.price-chart-wrap,.table-wrap,.segmented,.seg-pick,.pa-grip,[draggable=true],[data-noswipe]'))return true;if(n.scrollWidth>n.clientWidth+2&&/(auto|scroll)/.test(getComputedStyle(n).overflowX))return true;}return false;};
- const settle=()=>{main.style.transition='transform .38s cubic-bezier(.22,1,.36,1),opacity .3s ease-out';main.style.transform='';main.style.opacity='';};
- let g=null;
- main.addEventListener('touchstart',e=>{if(e.touches.length!==1||document.querySelector('dialog[open]')||blocked(e.target)){g=null;return;}const t=e.touches[0];g={x:t.clientX,y:t.clientY,t:Date.now(),dx:0,on:false};},{passive:true});
+ let g=null,peek=null,peekFor=null,busy=false;
+ const width=()=>main.offsetWidth||innerWidth;
+ const dropPeek=()=>{peek?.remove();peek=null;peekFor=null;};
+ const ensurePeek=name=>{
+  if(peek&&peekFor===name)return peek;
+  dropPeek();
+  let html='';try{html=(viewMap()[name]||overview)();}catch{html='';}
+  const r=main.getBoundingClientRect(),top=Math.max(0,r.top);
+  peek=document.createElement('main');peek.className='main-peek';peek.setAttribute('aria-hidden','true');
+  peek.style.cssText=`top:${top}px;left:${r.left}px;width:${r.width}px;height:${Math.max(0,innerHeight-top)}px`;
+  peek.innerHTML=html;document.body.appendChild(peek);peekFor=name;return peek;
+ };
+ const place=(dx,dir,edge)=>{main.style.transition='none';main.style.transform=`translateX(${edge?dx*.18:dx}px)`;if(peek)peek.style.transition='none',peek.style.transform=`translateX(${dx+dir*width()}px)`;};
+ const settle=()=>{
+  const dir=g?.dir||1;main.style.transition=`transform .38s ${spring}`;main.style.transform='';
+  if(peek){peek.style.transition=`transform .38s ${spring}`;peek.style.transform=`translateX(${dir*width()}px)`;setTimeout(dropPeek,390);}
+ };
+ main.addEventListener('touchstart',e=>{if(busy||e.touches.length!==1||document.querySelector('dialog[open]')||blocked(e.target)){g=null;return;}const t=e.touches[0];g={x:t.clientX,y:t.clientY,t:Date.now(),dx:0,dir:1,on:false};},{passive:true});
  main.addEventListener('touchmove',e=>{
   if(!g)return;const t=e.touches[0],dx=t.clientX-g.x,dy=t.clientY-g.y;
   if(!g.on){if(Math.abs(dy)>12&&Math.abs(dy)>Math.abs(dx)){g=null;return;}if(Math.abs(dx)<12||Math.abs(dx)<Math.abs(dy)*1.6)return;g.on=true;}
-  g.dx=dx;const i=ORDER.indexOf(current()),edge=i<0||(dx>0&&i===0)||(dx<0&&i===ORDER.length-1);
-  main.style.transition='none';main.style.transform=`translateX(${dx*(edge?.16:.55)}px)`;main.style.opacity=String(1-Math.min(Math.abs(dx)/600,.35)*(edge?.3:1));
+  g.dx=dx;g.dir=dx<0?1:-1;
+  const i=ORDER.indexOf(current()),name=ORDER[i+g.dir],edge=i<0||!name;
+  if(edge){dropPeek();place(dx,g.dir,true);}else{ensurePeek(name);place(dx,g.dir,false);}
  },{passive:true});
  const end=()=>{
   if(!g)return;const s=g;g=null;if(!s.on)return;
-  const dir=s.dx<0?1:-1,i=ORDER.indexOf(current()),next=ORDER[i+dir],speed=Math.abs(s.dx)/Math.max(1,Date.now()-s.t);
-  if(i<0||!next||(Math.abs(s.dx)<70&&speed<.45)){settle();return;}
-  if(still()){main.style.transition='none';main.style.transform='';main.style.opacity='';location.hash='#'+next;return;}
-  main.style.transition='transform .2s cubic-bezier(.4,0,.6,1),opacity .2s ease-out';main.style.transform=`translateX(${-dir*28}%)`;main.style.opacity='.25';
-  setTimeout(()=>{location.hash='#'+next;main.style.transition='none';main.style.transform=`translateX(${dir*28}%)`;requestAnimationFrame(()=>requestAnimationFrame(()=>{main.style.transition='transform .42s cubic-bezier(.22,1,.36,1),opacity .32s ease-out';main.style.transform='';main.style.opacity='';}));},200);
+  const dir=s.dir,i=ORDER.indexOf(current()),next=ORDER[i+dir],W=width(),speed=Math.abs(s.dx)/Math.max(1,Date.now()-s.t);
+  if(i<0||!next||(Math.abs(s.dx)<W*.25&&speed<.45)){g={dir};settle();g=null;return;}
+  if(still()){dropPeek();main.style.transition='none';main.style.transform='';location.hash='#'+next;return;}
+  busy=true;
+  // обе страницы доезжают; затем меняем раздел и убираем «соседа» только когда настоящий экран уже нарисован
+  main.style.transition=`transform .3s ${spring}`;main.style.transform=`translateX(${-dir*W}px)`;
+  if(peek){peek.style.transition=`transform .3s ${spring}`;peek.style.transform='translateX(0px)';}
+  setTimeout(()=>{
+   location.hash='#'+next;
+   setTimeout(()=>{main.style.transition='none';main.style.transform='';dropPeek();busy=false;},140);
+  },300);
  };
  main.addEventListener('touchend',end,{passive:true});main.addEventListener('touchcancel',()=>{if(g?.on)settle();g=null;},{passive:true});
 })();
@@ -2638,6 +2662,7 @@ document.addEventListener('focusin',event=>{const cube=event.target.closest?.('.
 // ── «Что нового»: у каждого улучшения своя запись. Окно показывается один раз после обновления интерфейса, вся история — в Настройках.
 // Новое улучшение = новая запись СВЕРХУ списка с номером сборки (?v= в index.html) и один пункт на изменение.
 const RELEASES=[
+ {v:'20261113-29',date:'2026-11-13',title:'Свайпы между разделами как в Телеграме',notes:['Соседний раздел виден прямо во время движения пальца: две страницы едут вместе с пальцем','Отпустили далеко или быстро смахнули — раздел меняется, иначе страницы возвращаются на место']},
  {v:'20261113-28',date:'2026-11-13',title:'Плавное закрытие шторок и свайп экранов',notes:['Окна и шторки закрываются плавно: на телефоне уезжают вниз, затемнение фона гаснет','Свайп между разделами стал плавнее: экран уходит и возвращается без паузы']},
  {v:'20261113-27',date:'2026-11-13',title:'Шторки закрываются свайпом вниз',notes:['«Что нового», настройки и выбор из списка закрываются свайпом пальца вниз','Если внутри шторки есть прокручиваемый список, он листается как обычно, а шторка тянется вниз только когда список в начале']},
  {v:'20261113-26',date:'2026-11-13',title:'Что нового',notes:['После обновления интерфейса приложение коротко показывает, что изменилось, а полная история лежит в Настройках']},
