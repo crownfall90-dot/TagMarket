@@ -1099,7 +1099,7 @@ async function navigate(){
 // Тема: тёмная (по умолчанию) или светлая — [id, название, фон страницы].
 // Фоном красятся шапка Telegram, строка состояния в браузере и полосы Android.
 // Выбор живёт на устройстве; theme.js ставит его ещё до первой отрисовки
-const THEMES=[['dark','Тёмная','#101010'],['light','Светлая','#f7f7f8']];
+const THEMES=[['dark','Тёмная','#000000'],['light','Светлая','#eaeaed']];
 function currentTheme(){return document.documentElement.dataset.theme==='light'?'light':'dark';}
 function setTheme(id,persist=true){
  const th=THEMES.find(x=>x[0]===id)||THEMES[0],root=document.documentElement;
@@ -1578,7 +1578,7 @@ const ACT_DAYS=[[7,'7 дней'],[30,'30 дней'],[90,'90 дней']];
 const NOTE_COLORS=[['accent','Главный'],['green','Яркий'],['purple','Обычный'],['orange','Спокойный'],['pink','Тихий'],['blue','Фоновый']];
 const REPEATS=[['none','Не повторять'],['weekly','Каждую неделю'],['monthly','Каждый месяц'],['yearly','Каждый год']];
 const MONTH_NAMES=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
-const HOME_CARDS={circle:'Баланс жизни',finance:'Финансы',activity:'Здоровье',tasks:'Дела на сегодня',events:'Ближайшие события',notes:'Заметки'};
+const HOME_CARDS={finance:'Финансы',activity:'Здоровье',tasks:'Дела на сегодня',events:'Ближайшие события',notes:'Заметки'};
 const STATION_DEFAULTS={home:Object.keys(HOME_CARDS),metrics:Object.keys(ACT_KINDS)};
 state.activity=null;state.activityError='';state.activityDays=30;
 state.lists=null;state.listsError='';state.events=null;state.listsTab='tasks';state.circle=null;
@@ -1634,7 +1634,6 @@ function overview(){
  stats.push(`<a href="#plans/calendar" class="greet-stat" data-action="lists-open" data-value="calendar"><span class="greet-stat-icon">${icon('calendar')}</span><span><b>${countUp(todayEvents.length,'int')}</b><small>${countLabel(todayEvents.length,['событие','события','событий']).split(' ').slice(1).join(' ')} сегодня</small></span></a>`);
  const hero=`<section class="greet" data-ui-key="greet"><div class="greet-top"><span class="greet-sky">${dayIcon(hour)}</span><span class="greet-date">${esc(today.charAt(0).toUpperCase()+today.slice(1))}</span></div><h1 class="greet-title">${name?`Привет, <em>${esc(name)}</em>`:'Привет'}</h1><p class="greet-sub">${esc(sub)}</p><div class="greet-day" aria-hidden="true" title="Сколько дня прошло"><i style="--p:${dayPct}"></i></div><div class="greet-stats">${stats.join('')}</div></section>`;
  const cards={
-  circle:()=>circleCard(),
   tasks:()=>tasksCard(),
   finance:()=>`<a href="#projects" class="panel home-card home-finance" data-ui-key="home-finance"><div class="home-card-head"><span class="home-icon">${icon('projects')}</span><span class="eyebrow">Финансы</span>${icon('arrow')}</div><b class="home-big">${portfolio.own==null?'—':countUp(portfolio.own,`money:${state.displayCurrency}`)}</b><small>${state.projects?countLabel(activeProjects().length,['проект','проекта','проектов']):'Проекты'}${d.accounts.length?` · TagMarket ${portfolio.tag==null?'—':money(portfolio.tag,state.displayCurrency)}`:''}</small>${projectsIncomeLine()}</a>`,
   spend:()=>homeSpendStrip(state.spend),
