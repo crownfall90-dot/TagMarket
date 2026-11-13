@@ -4501,6 +4501,70 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
 
 
 
+class LeanAiogramTests(unittest.IsolatedAsyncioTestCase):
+    # lean.py: aiogram не строит схемы всех типов при импорте (−100 МБ памяти сервера),
+    # но каждый тип собирается при первом использовании так же, как раньше
+    def test_schemas_are_lazy_and_every_type_still_builds(self):
+        import pydantic
+        import aiogram.methods
+        import aiogram.types
+        self.assertIn("lean", sys.modules)
+        types = [getattr(aiogram.types, n) for n in aiogram.types.__all__]
+        types = [t for t in types if isinstance(t, type) and issubclass(t, pydantic.BaseModel)]
+        self.assertGreater(len(types), 200)
+        self.assertTrue(any(not t.__pydantic_complete__ for t in types))   # схемы не собраны заранее
+        methods = [getattr(aiogram.methods, n) for n in aiogram.methods.__all__]
+        for t in types + [m for m in methods if isinstance(m, type) and issubclass(m, pydantic.BaseModel)]:
+            with self.subTest(t=t.__name__):
+                t.model_rebuild(force=True)                      # ссылки вперёд находятся
+                self.assertTrue(t.__pydantic_complete__)
+
+    async def test_bot_parses_updates_and_sends_keyboards(self):
+        from aiogram import Bot, Dispatcher, F
+        from aiogram.client.default import DefaultBotProperties
+        from aiogram.client.session.base import BaseSession
+        from aiogram.enums import ParseMode
+        from aiogram.filters import Command
+        from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, WebAppInfo
+        sent = []
+
+        class FakeSession(BaseSession):
+            async def make_request(self, bot, method, timeout=None):
+                sent.append(method)
+                raw = {"message_id": 9, "date": 1700000000, "chat": {"id": 42, "type": "private"}, "text": "ok"}
+                return method.__returning__.model_validate(raw) if method.__returning__ is Message else True
+            async def close(self): pass
+            async def stream_content(self, *a, **k):  # pragma: no cover
+                yield b""
+
+        tg = Bot("1:x", session=FakeSession(), default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+        dp = Dispatcher()
+        seen = []
+
+        @dp.message(Command("start"))
+        async def start(message: Message):
+            seen.append(message.text)
+            kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Открыть", web_app=WebAppInfo(url="https://x.y/app"))]])
+            reply = await message.answer("<b>Привет</b>", reply_markup=kb)
+            seen.append(reply.message_id)
+
+        @dp.callback_query(F.data.startswith("dash:"))
+        async def dash(call: CallbackQuery):
+            seen.append(call.data)
+            await call.answer()
+
+        msg = {"message_id": 5, "date": 1700000000, "chat": {"id": 42, "type": "private", "first_name": "A"},
+               "from": {"id": 42, "is_bot": False, "first_name": "A"}, "text": "/start abc",
+               "entities": [{"type": "bot_command", "offset": 0, "length": 6}]}
+        await dp.feed_raw_update(tg, {"update_id": 1, "message": msg})
+        await dp.feed_raw_update(tg, {"update_id": 2, "callback_query": {"id": "c", "chat_instance": "i", "data": "dash:today",
+                                      "from": {"id": 42, "is_bot": False, "first_name": "A"}, "message": msg}})
+        self.assertEqual(seen, ["/start abc", 9, "dash:today"])
+        self.assertEqual(sent[0].text, "<b>Привет</b>")
+        self.assertEqual(sent[0].reply_markup.inline_keyboard[0][0].web_app.url, "https://x.y/app")
+        self.assertEqual(type(sent[1]).__name__, "AnswerCallbackQuery")
+
+
 class BankMessageParserTests(unittest.TestCase):
     """Разбор SMS и пушей банков: остаток, сумма со знаком, цифры карты, валюта."""
 

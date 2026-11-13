@@ -40,7 +40,7 @@ FILES = (
 # бэкапы без них всё ещё годны для отката (в отличие от FILES).
 # картинки «Частых вопросов» появились позже: снимки до них должны оставаться
 # пригодными для отката, поэтому они необязательны, как и audit.py
-OPTIONAL_FILES = ("web/brand.svg", "web/privacy.html", "fx.py", "projects.py", "activity.py", "lists.py", "banks.py", "insights.py", "spend.py", "income.py", "backup.py", "devices.py", "push.py", "live.py", "goals.py", "friends.py", "tools/audit.py", "docs/AUDIT_HOWTO.md",
+OPTIONAL_FILES = ("web/brand.svg", "lean.py", "web/privacy.html", "fx.py", "projects.py", "activity.py", "lists.py", "banks.py", "insights.py", "spend.py", "income.py", "backup.py", "devices.py", "push.py", "live.py", "goals.py", "friends.py", "tools/audit.py", "docs/AUDIT_HOWTO.md",
                   "web/faq-neo-card.jpg", "web/faq-neo-stats.jpg", "web/faq-sonic-card.jpg",
                   "web/faq-sonic-stats.jpg", "web/faq-license.jpg", "web/faq-mt5.jpg", "web/faq-neo-myfxbook.jpg",
                   "web/theme.js", "web/releases.json", "web/inter-latin.woff2", "web/inter-cyrillic.woff2", "web/inter-latin-ext.woff2")
