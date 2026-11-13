@@ -34,8 +34,7 @@ FILES = (
     "ibportal.py", "miniapp.py", "partner.py", "store.py", "trades.py",
     "webhook_server.py", "requirements.txt", "README.md", "docs/MINIAPP.md",
     "docs/todo.md", "web/index.html", "web/app.js", "web/style.css",
-    "web/preview.json", "tests/selfcheck.py",
-    "tests/test_miniapp.py", "tools/deploy_miniapp.py",
+    "web/preview.json", "tools/deploy_miniapp.py",
 )
 # Копируются, если есть в снимке, но не требуются для совместимости — старые
 # бэкапы без них всё ещё годны для отката (в отличие от FILES).
@@ -46,9 +45,7 @@ OPTIONAL_FILES = ("web/brand.svg", "web/privacy.html", "fx.py", "projects.py", "
                   "web/faq-sonic-stats.jpg", "web/faq-license.jpg", "web/faq-mt5.jpg", "web/faq-neo-myfxbook.jpg",
                   "web/theme.js", "web/releases.json", "web/inter-latin.woff2", "web/inter-cyrillic.woff2", "web/inter-latin-ext.woff2")
 # Раскладка до переноса тестов и документов в tests/ и docs/: старые копии остаются пригодными.
-OLD_MOVED = {"docs/MINIAPP.md": "MINIAPP.md", "docs/todo.md": "todo.md",
-             "tests/selfcheck.py": "tools/selfcheck.py",
-             "tests/test_miniapp.py": "tools/test_miniapp.py"}
+OLD_MOVED = {"docs/MINIAPP.md": "MINIAPP.md", "docs/todo.md": "todo.md"}
 
 
 def layout(path: Path) -> dict[str, str]:
@@ -139,12 +136,6 @@ def restore(version: str) -> None:
     source = BACKUPS / version
     python = str(ROOT / "venv/bin/python")
     run(python, "-m", "compileall", "-q", str(source))
-    for test in ("tests/selfcheck.py", "tests/test_miniapp.py"):
-        result = subprocess.run([python, str(source / layout(source)[test])], cwd=source,
-                                text=True, capture_output=True)
-        if result.returncode:
-            raise RuntimeError(f"{test} failed: {(result.stdout + result.stderr)[-500:]}")
-        print(f"{test} PASS", flush=True)
     previous = snapshot_current()
     print(f"Current code saved: {previous.name}", flush=True)
     try:

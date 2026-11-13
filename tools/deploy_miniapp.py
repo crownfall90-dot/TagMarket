@@ -21,8 +21,8 @@ ROOT = Path("/opt/tagmarkets")
 FILES = {"accounts.py", "account_lock.py", "agent.py", "bot.py", "coordination.py", "fx.py",
          "ibportal.py", "miniapp.py", "partner.py", "projects.py", "activity.py", "lists.py", "banks.py", "insights.py", "spend.py", "income.py", "backup.py", "devices.py", "push.py", "live.py", "goals.py", "friends.py", "store.py", "trades.py", "webhook_server.py",
          "requirements.txt", "README.md", "docs/MINIAPP.md", "docs/todo.md", "web/index.html",
-         "web/app.js", "web/style.css", "web/preview.json", "web/releases.json", "web/privacy.html", "tests/selfcheck.py",
-         "tests/test_miniapp.py", "tools/deploy_miniapp.py", "tools/rollback_miniapp.py",
+         "web/app.js", "web/style.css", "web/preview.json", "web/releases.json", "web/privacy.html",
+         "tools/deploy_miniapp.py", "tools/rollback_miniapp.py",
          "tools/audit.py", "docs/AUDIT_HOWTO.md",
          # картинки раздела «Частые вопросы» (в откате — необязательные)
          "web/faq-neo-card.jpg", "web/faq-neo-stats.jpg", "web/faq-sonic-card.jpg",
@@ -142,10 +142,7 @@ def main():
         bundle.extractall(stage, filter="data")
     python = str(ROOT / "venv/bin/python")
     run(python, "-m", "compileall", "-q", str(stage))
-    for test in ("tests/selfcheck.py", "tests/test_miniapp.py"):
-        result = run(python, str(stage / test), cwd=stage, capture_output=True)
-        (stage / (Path(test).stem + ".log")).write_text(result.stdout + result.stderr)
-        print(test, "PASS", flush=True)
+    # тесты гоняет CI до слияния; на сервер они не попадают и память не занимают
     run("node", "--check", str(stage / "web/app.js"))
     print("web/app.js syntax PASS", flush=True)
     for name in FILES | {".env"}:
@@ -179,6 +176,7 @@ def main():
             target = ROOT / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(stage / name, target)
+        shutil.rmtree(ROOT / "tests", ignore_errors=True)   # прежние выкладки возили тесты на сервер
         migrated_accounts = True
         run(python, "-c", "from dotenv import load_dotenv; load_dotenv('.env'); import accounts; accounts.migrate_passwords()", cwd=ROOT)
         set_key(str(ROOT / ".env"), "MINI_APP_URL", "https://crownfail.shop/tagmarkets/app/")
