@@ -2988,3 +2988,13 @@ h1,.page-head h1{font-weight:650;letter-spacing:-.04em}
 .notification-item.unread:not(#_):before{content:none;display:none}
 .notification-item.unread:not(#_) b{font-weight:650}
 .event-toast-close:not(#_){top:50%;right:8px;transform:translateY(-50%)}
+
+/* Срок контракта: сравнение капитализации — аккуратный блок вместо длинной «таблетки» */
+.pa-tags .pa-cmp{flex:1 1 100%;display:grid;gap:0;margin-top:2px;padding:4px 12px;border:1px solid var(--line);border-radius:14px;background:var(--raised);min-width:0}
+.pa-cmp .cmp-row{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:7px 0;font-size:13px;color:var(--muted);min-width:0}
+.pa-cmp .cmp-row+.cmp-row{border-top:1px solid var(--line)}
+.pa-cmp .cmp-row b{font-weight:600;color:var(--text);white-space:nowrap}
+.pa-cmp .cmp-row.on b{color:var(--accent)}
+.pa-cmp .cmp-row em{font-style:normal;font-size:11px;padding:1px 7px;margin-left:6px;border-radius:999px;color:var(--accent);background:rgb(var(--accent-rgb) / .12)}
+.pa-cmp .cmp-row.diff{color:var(--muted)}
+.pa-cmp .cmp-row.diff b{color:var(--accent)}
