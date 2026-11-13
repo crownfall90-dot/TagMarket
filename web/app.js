@@ -2451,3 +2451,52 @@ function cubeSelect(cube){
 document.addEventListener('click',event=>{const cube=event.target.closest?.('.cube');if(cube)cubeSelect(cube);});
 document.addEventListener('pointerover',event=>{if(event.pointerType!=='mouse')return;const cube=event.target.closest?.('.cube');if(cube&&!cube.classList.contains('active'))cubeSelect(cube);});
 document.addEventListener('focusin',event=>{const cube=event.target.closest?.('.cube');if(cube&&!cube.classList.contains('active'))cubeSelect(cube);});
+
+// ── Выбор из списка: вместо системного окна Android/iOS — своя карточка ──
+// Каждый <select> остаётся в разметке (скрыт) и хранит значение, так что формы и обработчики
+// не меняются; поверх него рисуется кнопка, а по нажатию открывается нижняя карточка с вариантами.
+(()=>{
+ const CHEVRON='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>',TICK='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>';
+ const buttons=new Map(),done=new WeakSet();
+ const titleOf=select=>{const holder=select.closest('label,.field'),text=holder&&[...holder.childNodes].find(n=>n.nodeType===3&&n.textContent.trim());return (select.getAttribute('aria-label')||text?.textContent.trim()||holder?.querySelector('small,span')?.textContent.trim()||'Выберите').slice(0,60);};
+ const shown=select=>select.selectedOptions[0]?.textContent.trim()||'Выберите';
+ function sync(select,button){const label=button.firstChild;if(label.textContent!==shown(select))label.textContent=shown(select);if(button.disabled!==select.disabled)button.disabled=select.disabled;if(button.hidden!==select.hidden)button.hidden=select.hidden;}
+ function enhance(select){
+  if(done.has(select)||select.multiple||select.size>1)return;
+  done.add(select);
+  const button=document.createElement('button');button.type='button';button.className=`pick-btn ${select.className}`.trim();
+  button.innerHTML=`<span></span>${CHEVRON}`;button.setAttribute('aria-haspopup','listbox');
+  select.classList.add('pick-native');select.tabIndex=-1;select.after(button);buttons.set(select,button);
+  button.addEventListener('click',()=>open(select,button));
+  select.addEventListener('change',()=>sync(select,button));
+  sync(select,button);
+ }
+ function open(select,button){
+  sync(select,button);
+  const dlg=document.createElement('dialog');dlg.className='picker';
+  const head=document.createElement('div');head.className='picker-grip';
+  const title=document.createElement('h3');title.className='picker-title';title.textContent=titleOf(select);
+  const list=document.createElement('div');list.className='picker-list';list.setAttribute('role','listbox');
+  const add=(option)=>{
+   const row=document.createElement('button');row.type='button';row.className='picker-opt';row.setAttribute('role','option');
+   row.setAttribute('aria-selected',String(option.selected));row.disabled=option.disabled;
+   row.innerHTML='<span></span><i class="tick"></i>';row.firstChild.textContent=option.textContent.trim();row.lastChild.innerHTML=TICK;
+   row.addEventListener('click',()=>{if(select.value!==option.value){select.value=option.value;select.dispatchEvent(new Event('input',{bubbles:true}));select.dispatchEvent(new Event('change',{bubbles:true}));}dlg.close();});
+   list.append(row);
+  };
+  for(const child of select.children){
+   if(child.tagName==='OPTGROUP'){const g=document.createElement('div');g.className='picker-group';g.textContent=child.label;list.append(g);child.querySelectorAll('option').forEach(add);}
+   else if(child.tagName==='OPTION'&&!child.hidden)add(child);
+  }
+  dlg.append(head,title,list);
+  dlg.addEventListener('click',e=>{if(e.target===dlg)dlg.close();});
+  dlg.addEventListener('close',()=>{dlg.remove();if(button.isConnected)button.focus({preventScroll:true});});
+  document.body.append(dlg);dlg.showModal();
+  list.querySelector('[aria-selected=true]')?.scrollIntoView({block:'center'});
+ }
+ let queued=false;
+ function scan(){queued=false;document.querySelectorAll('select').forEach(enhance);for(const [select,button] of buttons){if(!select.isConnected){button.remove();buttons.delete(select);}else sync(select,button);}}
+ const schedule=()=>{if(!queued){queued=true;requestAnimationFrame(scan);}};
+ new MutationObserver(schedule).observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['disabled','hidden']});
+ scan();
+})();

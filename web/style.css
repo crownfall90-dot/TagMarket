@@ -2871,3 +2871,28 @@ a.friend-row:hover{border-color:rgb(var(--accent-rgb) / .4);transform:translateY
 .sp-kind:has(label:nth-child(3)) label{min-width:0;text-align:center}
 .update-row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .update-status{font-size:12.5px;color:var(--muted)}
+
+/* Свой выбор из списка вместо системного окна (см. «Выбор из списка» в app.js) */
+.pick-native{position:absolute!important;width:1px!important;height:1px!important;min-height:0!important;margin:0!important;padding:0!important;border:0!important;opacity:0!important;pointer-events:none!important}
+.pick-btn{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;min-width:0;min-height:46px;padding:10px 12px 10px 14px;background:var(--bg);border:1px solid var(--line);border-radius:12px;color:var(--text);text-align:left;font:inherit;cursor:pointer;transition:border-color .15s,background .15s}
+.pick-btn[hidden]{display:none}
+.pick-btn span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pick-btn svg{width:16px;height:16px;flex:none;color:var(--muted);transition:transform .2s}
+.pick-btn:hover:not(:disabled){border-color:rgb(var(--accent-rgb) / .5)}
+.pick-btn:active:not(:disabled) svg{transform:translateY(2px)}
+.pick-btn:disabled{opacity:.5;cursor:not-allowed}
+dialog.picker{width:calc(100% - 16px);max-width:520px;margin:auto auto 8px;padding:6px 8px calc(10px + env(safe-area-inset-bottom,0px));max-height:min(70vh,560px);border-radius:24px}
+dialog.picker[open]{display:flex;flex-direction:column}
+.picker-grip{width:38px;height:4px;border-radius:4px;background:var(--line);margin:6px auto 12px;flex:none}
+.picker-title{flex:none;padding:0 14px 8px;font-size:13px;font-weight:500;color:var(--muted)}
+.picker-list{display:grid;gap:2px;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+.picker-group{padding:12px 14px 4px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.picker-opt{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;min-height:54px;padding:12px 14px;border:0;border-radius:14px;background:transparent;color:var(--text);font:inherit;font-size:15px;text-align:left}
+.picker-opt:hover,.picker-opt:active{background:var(--raised)}
+.picker-opt:disabled{opacity:.4}
+.picker-opt .tick{display:grid;place-items:center;width:22px;height:22px;flex:none;border-radius:50%;border:1.5px solid var(--faint);transition:background .15s,border-color .15s}
+.picker-opt .tick svg{width:14px;height:14px;stroke:var(--on-accent);stroke-width:2.4;opacity:0}
+.picker-opt[aria-selected=true]{background:rgb(var(--accent-rgb) / .12);font-weight:550}
+.picker-opt[aria-selected=true] .tick{background:var(--accent);border-color:var(--accent)}
+.picker-opt[aria-selected=true] .tick svg{opacity:1}
+@media(min-width:741px){dialog.picker{margin:auto;max-width:380px}}
