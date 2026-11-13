@@ -163,6 +163,11 @@ async def deliver(db) -> int:
         projects.announce_contract_term(db)
     except Exception:
         log.exception("push: проверка сроков контрактов не удалась")
+    try:
+        import miniapp
+        miniapp.check_account_terms(db)
+    except Exception:
+        log.exception("push: проверка сроков счетов TagMarket не удалась")
     acc = account()
     newest = db.execute("SELECT COALESCE(MAX(id),0) FROM notifications").fetchone()[0]
     raw = partner.kv_get(db, KEY_LAST)

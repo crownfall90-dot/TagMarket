@@ -970,6 +970,66 @@ class RollupCarryTests(unittest.TestCase):
         trades.use(accounts.load()[0])
         return trades.capital()
 
+    def closing(self, ticket, net, when):
+        store.save_deals(self.tdb, 123, [{
+            "ticket": ticket, "time": when, "symbol": "X", "side": "buy", "volume": 1, "price": 1,
+            "profit": net, "swap": 0, "commission": 0, "net": net,
+            "is_balance": False, "is_closing": True, "is_opening": False, "comment": ""}])
+
+    def test_term_status_and_stats(self):
+        # срок счёта: идёт → вышел; «продолжить» оставляет счёт, без него контракт аннулируется
+        self.deal(1, 2400.0, "Deposit", datetime(2026, 8, 10, 12))
+        self.closing(10, 100.0, datetime(2026, 9, 5, 12))
+        self.closing(11, 50.0, datetime(2026, 9, 20, 12))
+        self.closing(12, 200.0, datetime(2026, 10, 15, 12))      # уже после срока — в итоги не входит
+        acc = {**accounts.load()[0], "term_start": "2026-09-01", "term_end": "2026-09-30", "term_continue": False}
+        running = self.bot.term_state(acc, today=date(2026, 9, 15))
+        self.assertEqual((running["status"], running["days_left"], running["stats"]), ("active", 15, None))
+        self.assertEqual(self.bot.term_state(acc, today=date(2026, 9, 30))["status"], "active")   # последний день — ещё срок
+        ended = self.bot.term_state(acc, today=date(2026, 10, 1))
+        self.assertEqual(ended["status"], "annulled")
+        stats = ended["stats"]
+        self.assertAlmostEqual(stats["income"], (100.0 + 50.0) * 0.7, places=2)
+        self.assertGreater(stats["was"], 0)
+        self.assertAlmostEqual(stats["total"], stats["capital_end"] + stats["income"], places=6)
+        self.assertEqual((stats["start"], stats["end"], stats["days"]), ("2026-09-01", "2026-09-30", 29))
+        keep = self.bot.term_state({**acc, "term_continue": True}, today=date(2026, 10, 1))
+        self.assertEqual(keep["status"], "ended")
+        self.assertIsNone(self.bot.term_state({**acc, "term_end": None}))
+
+    def test_account_term_reminders_are_sent_once(self):
+        import miniapp
+        self.closing(10, 100.0, datetime(2026, 9, 5, 12))
+        miniapp._change_account("1", 123, "PATCH", {"term_start": "2026-09-01", "term_end": "2026-09-30", "term_continue": False})
+        def run(day):
+            with patch.object(trades, "clock", return_value=datetime(2026, 9, day, 10)):
+                return miniapp.check_account_terms(self.db)
+        self.assertEqual(run(1), ["tagterm:123:2026-09-30:30"])   # осталось 29 дней ≤ 30 → первое напоминание
+        self.assertEqual(run(1), [])                       # повторно не шлём
+        self.assertEqual(len(run(24)), 1)                  # осталось 6 дней → порог 7
+        self.assertEqual(run(24), [])
+        self.assertEqual(len(run(29)), 1)                  # остался 1 день → порог 1
+        with patch.object(trades, "clock", return_value=datetime(2026, 10, 1, 10)):
+            done = miniapp.check_account_terms(self.db)    # срок вышел → итоги
+        self.assertEqual(len(done), 1)
+        row = self.db.execute("SELECT title, body FROM notifications WHERE event_key LIKE ?", ("tagterm:123:2026-09-30:0",)).fetchone()
+        self.assertIn("Срок вышел", row[0])
+        self.assertIn("аннулирован", row[1])
+        self.assertIn("+70.00", row[1])                     # 100 × 0.7 дохода за срок
+
+    def test_account_term_fields_are_validated_and_saved(self):
+        import miniapp
+        miniapp._change_account("1", 123, "PATCH", {"term_start": "2026-09-01", "term_end": "2027-01-15", "term_continue": True})
+        saved = accounts.load()[0]
+        self.assertEqual((saved["term_start"], saved["term_end"], saved["term_continue"]), ("2026-09-01", "2027-01-15", True))
+        for bad in ({"term_end": "2026-08-01"}, {"term_end": "15.01.2027"}, {"term_continue": "yes"}, {"term_end": "2099-01-01"}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                miniapp._change_account("1", 123, "PATCH", bad)
+        miniapp._change_account("1", 123, "PATCH", {"term_end": None})
+        cleared = accounts.load()[0]
+        self.assertIsNone(cleared["term_end"])
+        self.assertFalse(cleared["term_continue"])
+
     def test_base_capital_survives_rollup(self):
         self.deal(1, 2400.0, "Deposit", datetime(2026, 8, 10, 12))      # +100 своих денег
         self.deal(2, -1200.0, "Withdraw", datetime(2026, 8, 20, 12))    # −50

@@ -279,7 +279,7 @@ def current_account_settings(acc):
                    and item.get("server") == acc.get("server")), None)
     if not source:
         return acc
-    return {**acc, **{key: source.get(key) for key in ("multiplier", "base", "base_at")}}
+    return {**acc, **{key: source.get(key) for key in ("multiplier", "base", "base_at", "term_start", "term_end", "term_continue")}}
 
 
 _state_db = None     # партнёрская KV, где лежат имена пользователей; задаётся в setup()
@@ -294,7 +294,7 @@ def person_name(uid):
 
 def public_account(acc, db):
     result = {k: acc.get(k) for k in ("login", "name", "strategy", "cabinet", "holder",
-              "server", "enabled", "notify", "base", "base_at")}
+              "server", "enabled", "notify", "base", "base_at", "term_start", "term_end", "term_continue")}
     # У копий общего демо-счёта номер в accounts.json лежит строкой, у остальных —
     # числом. Интерфейс сравнивает его строго, и «Настроить» на такой записи
     # молча ничего не делало
@@ -312,6 +312,8 @@ def public_account(acc, db):
         age = (logic.utcnow() - datetime.fromisoformat(state["synced"])).total_seconds()
         result["status"] = "fresh" if age < logic.TERMINAL_STALE else "stale"
         result["totals"] = logic.account_totals(current_account_settings(acc))
+    # срок действия: статус и итоги «было / стало / доход»; аннулированный счёт уходит в архив
+    result["term"] = logic.term_state(current_account_settings(acc)) if acc.get("term_end") or result["shared"] else None
     return result
 
 
@@ -345,13 +347,14 @@ async def bootstrap(request):
         fx_error = "Для полной сводки поддерживаются только USD, RUB и BYN"
     # Personal totals are shown in USD when a current official quote is available.
     totals = {}
-    trading_days = [a["totals"]["last_trade_day"] for a in items
+    live = [a for a in items if (a.get("term") or {}).get("status") != "annulled"]    # аннулированные — в архиве, в итоги не входят
+    trading_days = [a["totals"]["last_trade_day"] for a in live
                     if a.get("totals")
                     and a["totals"].get("last_trade_day")]
     latest_trading_day = max(trading_days, default=None)
     trading_day_usd = 0.0
     trading_day_partial = False
-    for a in items:
+    for a in live:
         t = a["totals"]
         if not t:
             continue
@@ -872,12 +875,96 @@ async def change_account(request):
         return _change_account(uid, request.match_info["login"], request.method, data, request.app["db"])
 
 
+TERM_STEPS = (30, 7, 1)     # за сколько дней до конца срока предупреждаем
+
+
+def _day_label(value):
+    return date.fromisoformat(value).strftime("%d.%m.%Y")
+
+
+def check_account_terms(db):
+    """Напоминания о сроке счетов TagMarket (бот + пуш): за 30, 7 и 1 день и когда срок вышел, с итогами.
+
+    Каждое — один раз (event_key). Срок поставили уже внутри окна — уходит ближайший порог.
+    Выданные счета не трогаем: срок настраивает и видит владелец."""
+    sent = []
+    today = trades.clock().date()
+    for acc in accounts.load():
+        if acc.get("shared_by") or not acc.get("term_end"):
+            continue
+        state = logic.term_state(acc, today=today, stats=False)
+        if not state:
+            continue
+        owner, name, end = str(acc["owner"]), acc.get("strategy") or acc["name"], state["end"]
+        keep = state["continue"]
+        if state["status"] == "active":
+            left = state["days_left"]
+            step = next((n for n in sorted(TERM_STEPS) if left <= n), None)
+            if step is None:
+                continue
+            title = f"До конца срока {left} дн.: {name}"
+            body = (f"Счёт MT5 {acc['login']}, срок до {_day_label(end)}. "
+                    + ("После срока вклад продолжит работать, вывести можно в любой момент."
+                       if keep else "После срока контракт будет аннулирован, а счёт уйдёт в архив."))
+        else:
+            if (today - date.fromisoformat(end)).days > 3:
+                continue        # давно вышедшие не поднимаем заново
+            step = 0
+            full = logic.term_state(acc, today=today)
+            st = (full or {}).get("stats")
+            title = f"Срок вышел: {name}"
+            if st:
+                body = (f"Было {st['was']:.2f} {st['cur']}, доход за срок {st['income']:+.2f}, стало {st['total']:.2f}. "
+                        + ("Вклад продолжает работать." if keep else "Контракт аннулирован, счёт в архиве."))
+            else:
+                body = "Вклад продолжает работать." if keep else "Контракт аннулирован, счёт в архиве."
+        key = f"tagterm:{acc['login']}:{end}:{step}"
+        if partner.record_notification(db, owner, key, "contract", title, body):
+            partner.enqueue_webhook_delivery(db, key, {"type": "text", "text": f"📅 <b>{title}</b>\n\n{body}"})
+            sent.append(key)
+    db.commit()
+    return sent
+
+
+def _term_day(value):
+    """Дата срока: пусто — нет даты; иначе строго YYYY-MM-DD в пределах 2000 года и 10 лет вперёд."""
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        raise ValueError("term")
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError:
+        raise ValueError("term") from None
+    if parsed.isoformat() != value or not date(2000, 1, 1) <= parsed <= trades.clock().date() + timedelta(days=3660):
+        raise ValueError("Дата срока: с 2000 года и не дальше 10 лет вперёд")
+    return value
+
+
+def _term_changes(acc, data):
+    changes = {}
+    for key in ("term_start", "term_end"):
+        if key in data:
+            changes[key] = _term_day(data[key])
+    if "term_continue" in data:
+        if type(data["term_continue"]) is not bool:
+            raise ValueError("term_continue")
+        changes["term_continue"] = data["term_continue"]
+    start = changes.get("term_start", acc.get("term_start"))
+    end = changes.get("term_end", acc.get("term_end"))
+    if start and end and end <= start:
+        raise ValueError("Срок должен заканчиваться позже даты начала")
+    if "term_end" in changes and changes["term_end"] is None:
+        changes["term_continue"] = False     # без срока режим не нужен
+    return changes
+
+
 def _change_account(uid, login, method, data, db=None):
     acc = owned(uid, login)
     if method == "DELETE":
         accounts.remove(acc["name"], uid)
     else:
-        if set(data) - {"name", "enabled", "notify", "base"}:
+        if set(data) - {"name", "enabled", "notify", "base", "term_start", "term_end", "term_continue"}:
             raise ValueError("unknown field")
         if "name" in data:
             bounded_text(data, "name", 48, True)
@@ -903,6 +990,10 @@ def _change_account(uid, login, method, data, db=None):
                 if not math.isfinite(value) or not 0 <= value <= 1e12:
                     raise ValueError("base")
                 changes.update(base=value, base_at=trades.clock().isoformat())
+        if {"term_start", "term_end", "term_continue"} & set(data):
+            if acc.get("shared_by"):
+                raise web.HTTPForbidden(text="Срок этого счёта доступен только для чтения")
+            changes.update(_term_changes(acc, data))
         if "name" in data:
             acc["name"] = accounts.rename(acc["name"], uid, data["name"])
         if changes:
@@ -1402,6 +1493,7 @@ async def tagmarket_forecast(request):
         raise web.HTTPBadRequest(text="Дата прогноза должна быть в пределах 10 лет")
     db = request.app["trades"]
     personal = [current_account_settings(a) for a in accounts.dedup(accounts.load(uid))]
+    personal = [a for a in personal if (logic.term_state(a, stats=False) or {}).get("status") != "annulled"]
     states = {a["login"]: store.get_state(db, a["login"]) for a in personal}
     currencies = {(s["currency"] or "USD").upper() for s in states.values() if s}
     byn_per_unit = None
