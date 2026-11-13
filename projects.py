@@ -279,10 +279,15 @@ def _current_account(account, project, as_of, capitalization=None):
     end = account.get("term_end")
     effective = min(as_of, date.fromisoformat(end)) if end else as_of    # после окончания баланс заморожен
     accrued_to = effective - timedelta(days=paused_shift(account, project, effective))
-    start = account.get("capitalization_from") or project.get("capitalization_from") or as_of.isoformat()
+    start_text = account.get("capitalization_from") or project.get("capitalization_from") or as_of.isoformat()
     begins = income_start(account, project)
-    start = date.fromisoformat(max(start, begins) if begins else start)
-    periods = fractional_periods(start, accrued_to, project["period"], business_only) if accrued_to > start else 0
+    # «Начало поступлений» — первый день начисления, и сегодняшний день тоже идёт в счёт: вклад, открытый 10-го и
+    # внесённый 13-го с началом 11-го, сразу получает доход за 11, 12 и 13 число. Дата капитализации по умолчанию —
+    # день создания, и она не должна сдвигать начало вперёд, поэтому при заданном начале поступлений решает оно
+    start = date.fromisoformat(begins or start_text)
+    inclusive = bool(begins)
+    until = accrued_to + timedelta(days=1) if inclusive else accrued_to
+    periods = fractional_periods(start, until, project["period"], business_only) if until > start else 0
     personal = _growth(amount, rate, periods, enabled)
     personal += Decimal(str(account.get("fixed_income") or 0)) * Decimal(str(periods))
     bonus = Decimal(0)
@@ -304,7 +309,9 @@ def _checkpoint(project, accounts, target, include_bonus, start):
         business_only = project.get("business_days_only", False)
         begins = max(start, account["_from"])     # начисления ещё не начались — прирост с их даты
         stop = min(target, date.fromisoformat(account["term_end"])) if account.get("term_end") else target
-        periods_to_target = fractional_periods(begins, stop, project["period"], business_only) if stop > begins else 0
+        # начало поступлений ещё впереди: сам день начала тоже приносит доход
+        until = stop + timedelta(days=1) if account.get("_future_start") else stop
+        periods_to_target = fractional_periods(begins, until, project["period"], business_only) if until > begins else 0
         if personal_cap:
             personal = _growth(personal_now, rate, periods_to_target, True)
         else:       # простой процент — только на вложенную сумму
@@ -373,6 +380,7 @@ def forecast(db, owner, project_id, until, include_bonus=True):
         account["_current"] = _current_account(account, project, start)
         begins = income_start(account, project)
         account["_from"] = max(start, date.fromisoformat(begins)) if begins else start
+        account["_future_start"] = bool(begins) and begins > start.isoformat()
         accounts.append(account)
     dates = {
         "now": start,

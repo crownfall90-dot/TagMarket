@@ -1632,19 +1632,43 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(later["income_starts"], "2026-10-10")
         self.assertEqual(later["current_total"], 1000)       # капитализация ещё не началась
         self.assertEqual(later["expected_income"], 0)
-        self.assertEqual(forecast["checkpoints"]["week"]["total"], 1000)
-        self.assertAlmostEqual(forecast["total"], 1020.1)    # два дня с 10-го числа
+        self.assertAlmostEqual(forecast["checkpoints"]["week"]["total"], 1010)   # сам день начала (10-е) уже приносит доход
+        self.assertAlmostEqual(forecast["total"], 1030.301)  # три дня: 10, 11 и 12 число
         with patch.object(projects, "today", return_value=date(2026, 10, 12)):
             started = projects.get(self.db, "1", later["id"])
-        self.assertAlmostEqual(started["current_total"], 1020.1)
+        self.assertAlmostEqual(started["current_total"], 1030.301)
         self.assertIsNone(started["income_starts"])
         # своя дата у аккаунта сильнее даты проекта; формат проверяется
         with patch.object(projects, "today", return_value=start):
             mixed = projects.account_change(self.db, "1", later["id"], {"amount":500, "income_from":"2026-10-01"})
-            self.assertEqual(mixed["expected_income"], 5)  # первый ещё ждёт, второй уже работает
+            # первый ещё ждёт, второй уже работает: начало с 1-го числа, за 1, 2 и 3 число начислено (500 × 1,01³), доход на этот баланс 1%
+            self.assertAlmostEqual(mixed["expected_income"], 500 * 1.01 ** 3 * 0.01, places=4)
             for bad in ("10.10.2026", "2046-01-01", 5):
                 with self.assertRaises(ValueError):
                     projects.save(self.db, "1", {"income_from": bad}, later["id"])
+
+    async def test_backdated_income_start_counts_the_start_day_and_today(self):
+        # вклад открыт 10 ноября, внесён в приложение 13-го с началом поступлений 11-го:
+        # доход за 11, 12 и 13 число (три дня) ложится в баланс сразу
+        with patch.object(projects, "today", return_value=date(2026, 11, 13)):
+            saved = projects.save(self.db, "1", {"name": "Back", "currency": "USD", "rate_percent": 1, "period": "day",
+                "multi": True, "capitalization": False, "income_from": "2026-11-11",
+                "accounts": [{"name": "plain", "amount": 1000}, {"name": "cap", "amount": 1000, "capitalization": True,
+                                                                 "capitalization_from": "2026-11-01"}]})
+            plain, cap = saved["accounts"]
+            self.assertAlmostEqual(plain["current_amount"], 1030)               # 3 × 1% простым
+            self.assertAlmostEqual(cap["current_amount"], 1000 * 1.01 ** 3, places=3)
+            self.assertAlmostEqual(plain["accrued_income"], 30)
+            # завтра — четвёртый день; прогноз «на завтра» согласован с текущим балансом
+            forecast = projects.forecast(self.db, "1", saved["id"], "2026-11-14", False)
+            self.assertAlmostEqual(forecast["checkpoints"]["now"]["accounts"][0]["working"], 1030)
+            self.assertAlmostEqual(forecast["checkpoints"]["day"]["accounts"][0]["working"], 1040)
+        with patch.object(projects, "today", return_value=date(2026, 11, 14)):
+            self.assertAlmostEqual(projects.get(self.db, "1", saved["id"])["accounts"][0]["current_amount"], 1040)
+        with patch.object(projects, "today", return_value=date(2026, 11, 10)):   # день до начала — ещё ничего
+            self.assertAlmostEqual(projects.get(self.db, "1", saved["id"])["accounts"][0]["current_amount"], 1000)
+        with patch.object(projects, "today", return_value=date(2026, 11, 11)):   # день начала — первый день дохода
+            self.assertAlmostEqual(projects.get(self.db, "1", saved["id"])["accounts"][0]["current_amount"], 1010)
 
     async def test_project_income_is_added_to_balance_every_day(self):
         # 3% в месяц, октябрь — 31 день: через 10 дней к балансу прибавилось 10/31 месячного дохода
