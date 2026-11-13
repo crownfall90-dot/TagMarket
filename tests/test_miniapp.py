@@ -1632,17 +1632,16 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(later["income_starts"], "2026-10-10")
         self.assertEqual(later["current_total"], 1000)       # капитализация ещё не началась
         self.assertEqual(later["expected_income"], 0)
-        self.assertAlmostEqual(forecast["checkpoints"]["week"]["total"], 1010)   # сам день начала (10-е) уже приносит доход
-        self.assertAlmostEqual(forecast["total"], 1030.301)  # три дня: 10, 11 и 12 число
+        self.assertEqual(forecast["checkpoints"]["week"]["total"], 1000)
+        self.assertAlmostEqual(forecast["total"], 1020.1)    # два дня с 10-го числа (проект создан до 12 ноября — прежнее правило)
         with patch.object(projects, "today", return_value=date(2026, 10, 12)):
             started = projects.get(self.db, "1", later["id"])
-        self.assertAlmostEqual(started["current_total"], 1030.301)
+        self.assertAlmostEqual(started["current_total"], 1020.1)
         self.assertIsNone(started["income_starts"])
         # своя дата у аккаунта сильнее даты проекта; формат проверяется
         with patch.object(projects, "today", return_value=start):
             mixed = projects.account_change(self.db, "1", later["id"], {"amount":500, "income_from":"2026-10-01"})
-            # первый ещё ждёт, второй уже работает: начало с 1-го числа, за 1, 2 и 3 число начислено (500 × 1,01³), доход на этот баланс 1%
-            self.assertAlmostEqual(mixed["expected_income"], 500 * 1.01 ** 3 * 0.01, places=4)
+            self.assertEqual(mixed["expected_income"], 5)  # первый ещё ждёт, второй уже работает
             for bad in ("10.10.2026", "2046-01-01", 5):
                 with self.assertRaises(ValueError):
                     projects.save(self.db, "1", {"income_from": bad}, later["id"])
@@ -1669,6 +1668,31 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertAlmostEqual(projects.get(self.db, "1", saved["id"])["accounts"][0]["current_amount"], 1000)
         with patch.object(projects, "today", return_value=date(2026, 11, 11)):   # день начала — первый день дохода
             self.assertAlmostEqual(projects.get(self.db, "1", saved["id"])["accounts"][0]["current_amount"], 1010)
+
+    async def test_old_projects_keep_the_previous_accrual_rule(self):
+        # проекты, созданные до 12 ноября, считаются по прежнему правилу: день начала и сегодня в счёт не идут
+        def make(day):
+            with patch.object(projects, "today", return_value=day):
+                return projects.save(self.db, "1", {"name": "P", "currency": "USD", "rate_percent": 1, "period": "day",
+                    "multi": False, "capitalization": False, "capitalization_from": "2026-11-01", "income_from": "2026-11-11",
+                    "accounts": [{"amount": 1000}]})
+        old, new = make(date(2026, 11, 11)), make(date(2026, 11, 13))
+        self.assertEqual((old["created_on"], new["created_on"]), ("2026-11-11", "2026-11-13"))
+        with patch.object(projects, "today", return_value=date(2026, 11, 13)):
+            self.assertAlmostEqual(projects.get(self.db, "1", old["id"])["accounts"][0]["current_amount"], 1020)   # 11→13: два дня
+            self.assertAlmostEqual(projects.get(self.db, "1", new["id"])["accounts"][0]["current_amount"], 1030)   # 11, 12 и 13: три дня
+
+    async def test_projects_without_creation_date_are_migrated_by_capitalization_date(self):
+        # при добавлении колонки: капитализация с 12 ноября — новый проект, раньше — прежнее правило
+        self.db.execute("DROP TABLE IF EXISTS project_accounts")
+        self.db.execute("DROP TABLE IF EXISTS projects")
+        self.db.execute("""CREATE TABLE projects (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, name TEXT NOT NULL, currency TEXT NOT NULL,
+            rate_percent REAL NOT NULL, period TEXT NOT NULL, multi INTEGER NOT NULL, capitalization_from TEXT)""")
+        self.db.executemany("INSERT INTO projects VALUES (?,?,?,?,?,?,?,?)", [
+            ("a", "1", "old", "USD", 1, "day", 0, "2026-10-01"), ("b", "1", "new", "USD", 1, "day", 0, "2026-11-12")])
+        projects.setup(self.db)
+        rows = dict(self.db.execute("SELECT id, created_on FROM projects").fetchall())
+        self.assertEqual(rows, {"a": "2000-01-01", "b": "2026-11-12"})
 
     async def test_project_income_is_added_to_balance_every_day(self):
         # 3% в месяц, октябрь — 31 день: через 10 дней к балансу прибавилось 10/31 месячного дохода

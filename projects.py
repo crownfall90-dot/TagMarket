@@ -10,6 +10,9 @@ PERIODS = {"day", "week", "month"}
 MAX_AMOUNT = 1_000_000_000_000
 MAX_RATE = 1000
 MAX_ACCOUNTS = 100
+# Новое правило начисления (день начала и сегодняшний день идут в счёт) действует только для проектов, созданных
+# с этой даты; более ранние считаются по прежнему правилу, чтобы их балансы не менялись
+NEW_ACCRUAL_FROM = "2026-11-12"
 
 
 def setup(db):
@@ -57,6 +60,11 @@ def setup(db):
         if "income_to" not in {r[1] for r in db.execute(f"PRAGMA table_info({table})")}:
             db.execute(f"ALTER TABLE {table} ADD COLUMN income_to TEXT")
     db.execute("UPDATE projects SET capitalization_from=? WHERE capitalization_from IS NULL", (today().isoformat(),))
+    if "created_on" not in {r[1] for r in db.execute("PRAGMA table_info(projects)")}:
+        db.execute("ALTER TABLE projects ADD COLUMN created_on TEXT")
+        # дату создания раньше не хранили: по умолчанию она совпадала с датой капитализации. Проекты, у которых она с 12 ноября,
+        # считаем новыми; остальные — прежними (отметка 2000-01-01), их расчёт не меняется
+        db.execute("UPDATE projects SET created_on=CASE WHEN capitalization_from>=? THEN capitalization_from ELSE '2000-01-01' END", (NEW_ACCRUAL_FROM,))
     db.commit()
 
 
@@ -284,8 +292,10 @@ def _current_account(account, project, as_of, capitalization=None):
     # «Начало поступлений» — первый день начисления, и сегодняшний день тоже идёт в счёт: вклад, открытый 10-го и
     # внесённый 13-го с началом 11-го, сразу получает доход за 11, 12 и 13 число. Дата капитализации по умолчанию —
     # день создания, и она не должна сдвигать начало вперёд, поэтому при заданном начале поступлений решает оно
-    start = date.fromisoformat(begins or start_text)
-    inclusive = bool(begins)
+    if begins and (project.get("created_on") or "") >= NEW_ACCRUAL_FROM:
+        start, inclusive = date.fromisoformat(begins), True
+    else:       # проекты, созданные до 12 ноября, считаются по прежнему правилу и не меняются
+        start, inclusive = date.fromisoformat(max(start_text, begins) if begins else start_text), False
     until = accrued_to + timedelta(days=1) if inclusive else accrued_to
     periods = fractional_periods(start, until, project["period"], business_only) if until > start else 0
     personal = _growth(amount, rate, periods, enabled)
@@ -380,7 +390,7 @@ def forecast(db, owner, project_id, until, include_bonus=True):
         account["_current"] = _current_account(account, project, start)
         begins = income_start(account, project)
         account["_from"] = max(start, date.fromisoformat(begins)) if begins else start
-        account["_future_start"] = bool(begins) and begins > start.isoformat()
+        account["_future_start"] = bool(begins) and begins > start.isoformat() and (project.get("created_on") or "") >= NEW_ACCRUAL_FROM
         accounts.append(account)
     dates = {
         "now": start,
@@ -493,11 +503,11 @@ def numeric(value, maximum, *, amount=False):
 
 
 def get(db, owner, project_id):
-    row = db.execute("SELECT id,name,currency,rate_percent,period,multi,business_days_only,capitalization,capitalization_from,income_fixed_cents,income_from,paused_at,hidden,income_to FROM projects WHERE id=? AND owner_id=?",
+    row = db.execute("SELECT id,name,currency,rate_percent,period,multi,business_days_only,capitalization,capitalization_from,income_fixed_cents,income_from,paused_at,hidden,income_to,created_on FROM projects WHERE id=? AND owner_id=?",
                      (project_id, str(owner))).fetchone()
     if row is None:
         raise LookupError("Проект не найден")
-    result = dict(zip(("id", "name", "currency", "rate_percent", "period", "multi", "business_days_only", "capitalization", "capitalization_from", "income_fixed_cents", "income_from", "paused_at", "hidden", "income_to"), row))
+    result = dict(zip(("id", "name", "currency", "rate_percent", "period", "multi", "business_days_only", "capitalization", "capitalization_from", "income_fixed_cents", "income_from", "paused_at", "hidden", "income_to", "created_on"), row))
     fixed_cents = result.pop("income_fixed_cents")
     result["income_mode"] = "fixed" if fixed_cents else "percent"
     result["fixed_income"] = fixed_cents / 100 if fixed_cents else None
@@ -683,7 +693,7 @@ def save(db, owner, data, project_id=None):
                        (name, currency, rate, period, int(multi), int(business_days_only), int(capitalization), capitalization_from, fixed_cents, income_from, income_to, project_id, str(owner)))
             db.execute("DELETE FROM project_accounts WHERE project_id=?", (project_id,))
         else:
-            db.execute("INSERT INTO projects (id,owner_id,name,currency,rate_percent,period,multi,business_days_only,capitalization,capitalization_from,income_fixed_cents,income_from,income_to) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", (project_id, str(owner), name, currency, rate, period, int(multi), int(business_days_only), int(capitalization), capitalization_from, fixed_cents, income_from, income_to))
+            db.execute("INSERT INTO projects (id,owner_id,name,currency,rate_percent,period,multi,business_days_only,capitalization,capitalization_from,income_fixed_cents,income_from,income_to,created_on) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (project_id, str(owner), name, currency, rate, period, int(multi), int(business_days_only), int(capitalization), capitalization_from, fixed_cents, income_from, income_to, today().isoformat()))
         db.executemany("INSERT INTO project_accounts (id,project_id,name,amount_cents,position,rate_percent,capitalization,capitalization_from,bonus_cents,bonus_activated_at,bonus_expires_at,bonus_capitalization,fixed_income_cents,income_from,paused_at,paused_days,hidden,income_to) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                        [(aid, project_id, title, cents, i, rate, cap, start, bonus, activated or datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z") if bonus else None, expires, int(bonus_cap), fixed, begins, paused_at, paused_days, hidden, ends) for i, (aid, title, cents, rate, cap, start, bonus, activated, expires, bonus_cap, fixed, begins, paused_at, paused_days, hidden, ends) in enumerate(prepared)])
         return get(db, owner, project_id)
