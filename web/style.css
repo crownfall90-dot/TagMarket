@@ -3099,3 +3099,17 @@ h1,.page-head h1{font-weight:650;letter-spacing:-.04em}
 
 /* Шторки закрываются свайпом вниз: за заголовок и «ручку» браузер не листает, а отдаёт жест нам */
 #dialog .dialog-head,.picker-grip,.picker-title{touch-action:none}
+
+/* Плавное закрытие окон и шторок: уезжают вниз (телефон) или мягко растворяются (компьютер), фон затемнения гаснет.
+   display/overlay держат закрывающееся окно на экране, пока играет анимация ухода */
+@media(prefers-reduced-motion:no-preference){
+ dialog{transition:overlay .32s allow-discrete,display .32s allow-discrete}
+ dialog::backdrop{transition:overlay .32s allow-discrete,display .32s allow-discrete}
+ dialog:not([open]){animation:dialog-out .3s cubic-bezier(.4,0,.2,1) both}
+ dialog:not([open])::backdrop{animation:backdrop-out .3s ease both}
+}
+@keyframes dialog-out{from{opacity:1;transform:none}to{opacity:0;transform:translateY(16px) scale(.97)}}
+@keyframes dialog-out-mobile{from{opacity:1;transform:none}to{opacity:1;transform:translateY(100%)}}
+@keyframes backdrop-out{from{opacity:1}to{opacity:0}}
+@media(prefers-reduced-motion:no-preference) and (max-width:740px){dialog:not([open]){animation-name:dialog-out-mobile}}
+dialog.no-exit:not([open]),dialog.no-exit:not([open])::backdrop{animation:none}
