@@ -434,21 +434,20 @@ def station_sections(page, nav):
     page.locator(f'{nav} a[href="#overview"]').click()
     page.locator('.home-grid').wait_for()
     assert page.locator('.greet').count() == 1 and page.locator('.greet-title').inner_text().strip()
-    assert page.locator('.home-card').count() == 6          # круг, финансы, шаги, дела, ближайшее, заметки
+    assert page.locator('.home-card').count() == 5          # финансы, списания, дела, ближайшее, заметки
+    assert page.locator('.home-circle').count() == 0, "«Баланс жизни» с главной убран"
     assert page.locator('.home-chip').count() == 0, "быстрых кнопок на главной больше нет"
-    assert page.locator('.home-circle .circle-seg').count() == 4   # финансы, дела, планы, мечты
     assert page.locator('.greet-stat').count() == 3 and page.locator('.greet-day i').count() == 1
 # Предстоящие списания: ближайшие траты прямо на главной
     assert page.locator('.home-spend .sp-home-item').count() >= 1 and page.locator('.home-spend .live-tag').count() == 1
     assert 'трениров' not in page.locator('.home-spend').inner_text().lower() and 'вес' not in page.locator('.home-spend').inner_text().lower()
-    assert page.locator('.home-circle .insight').count() >= 3
     assert page.locator('.page-head [data-action="onboard-open"]').count() == 0, "на главной не навязываем счёт"
     fits(page)
     # число в приветствии «набегает» и приходит к итогу
     page.wait_for_function("[...document.querySelectorAll('.greet .count-up')].every(e => e.textContent === formatCount(Number(e.dataset.to), e.dataset.format))")
     assert page.locator('[data-action="home-settings"]').count() == 0, "настройка главной убрана"
-    # баланс жизни открывается из карточки и ведёт в сферы
-    page.locator('.home-circle a.text-link').click()
+    # страница баланса жизни по-прежнему открывается по адресу и ведёт в сферы
+    page.evaluate("location.hash = '#circle'")
     page.locator('.bal-hero .circle-ring').wait_for()
     assert page.locator('.bal-tile').count() == 4 and page.locator('.insight').count() >= 3
     assert not page.locator('.bal-tile', has_text='Здоровье').count() and not page.locator('.bal-tile', has_text='Люди').count()

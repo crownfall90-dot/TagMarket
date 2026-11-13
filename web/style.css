@@ -2932,3 +2932,21 @@ h1,.page-head h1{font-weight:650;letter-spacing:-.04em}
 .greet-stats .greet-stat:first-child{background:var(--panel);border:var(--card-border);color:var(--text);box-shadow:var(--elev-1)}
 .greet-stats .greet-stat:first-child small{color:var(--muted)}
 .greet-stats .greet-stat:first-child .greet-stat-icon{background:none;color:var(--accent)}
+
+/* ── Главная: единые плоские карточки без свечений и разнобоя (Apple-минимализм) ── */
+.home-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,330px),1fr));gap:12px}
+.home-grid .panel.home-card:not(#_){display:block;background:var(--panel);border:var(--card-border);border-radius:24px;box-shadow:var(--elev-1);padding:18px 18px 16px;margin:0;-webkit-backdrop-filter:none;backdrop-filter:none;overflow:hidden}
+.home-grid .panel.home-card:not(#_):before,.home-grid .panel.home-card:not(#_):after{content:none;display:none}
+.home-grid .panel.home-card:not(#_):hover{border-color:rgb(var(--accent-rgb) / .35)}
+.home-grid .home-card-head{display:flex;align-items:center;gap:10px;margin:0 0 12px;padding:0}
+.home-grid .home-card-head .home-icon{display:grid;place-items:center;width:auto;height:auto;background:none;border:0;border-radius:0;box-shadow:none;color:var(--accent)}
+.home-grid .home-card-head .home-icon svg{width:20px;height:20px}
+.home-grid .home-card-head .eyebrow{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:15px;font-weight:600;letter-spacing:-.015em;text-transform:none;color:var(--text)}
+.home-grid .home-card-head>svg{flex:none;width:16px;height:16px;stroke:var(--faint)}
+.home-grid .home-card-head .icon-btn{width:32px;height:32px;border:0;background:var(--raised)}
+.home-grid .home-big{display:block;font-size:34px;line-height:1.05;font-weight:700;letter-spacing:-.045em;color:var(--text)}
+.home-grid .home-big small,.home-grid .home-big em{font-size:14px;font-weight:500;font-style:normal;letter-spacing:0;color:var(--muted);margin-left:6px}
+.home-grid .home-empty,.home-grid .panel.home-card>p.muted{margin:6px 0 0;font-size:14px;line-height:1.45;color:var(--muted)}
+.home-grid .home-card .ac-live .live-tag{font-size:11.5px;color:var(--muted);background:var(--raised);border-radius:999px;padding:3px 9px}
+@media(max-width:480px){.home-grid .home-card-head .ac-live{display:none}}
+.home-grid .panel.home-card.home-activity:not(#_)>.home-card-head{padding:0}
