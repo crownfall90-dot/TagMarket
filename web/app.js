@@ -948,25 +948,25 @@ async function api(path,options={}){
 async function loadReport(){const params=new URLSearchParams({period:state.period});if(state.period==='custom'){if(!state.from||!state.to)return null;params.set('from',state.from);params.set('to',state.to);}if(state.view==='tagmarket')return api(`/overview/report?${params}`);const acc=currentAccount();if(!acc)return null;state.login=acc.login;params.set('kind',state.kind);params.set('offset',state.offset);return api(`/accounts/${acc.login}/report?${params}`);}
 // Данные самого раздела сверх общих /bootstrap: отчёт, график цены, гости,
 // сервисная панель. Нужны и фоновому обновлению, и переходу между разделами
-async function viewParts(){
+async function viewParts(v=state.view){
  // независимые запросы идут одновременно: раньше отчёт, свечи, проекты и
  // прогноз TagMarket ждали друг друга по очереди, и раздел открывался на их сумму
  const out={},jobs=[];
- if(['tagmarket','account'].includes(state.view))jobs.push((async()=>{try{out.report=await loadReport();out.reportError='';}catch(error){out.report=null;out.reportError=error.message;}})());
- if(state.view==='tagmarket'){const sonic=state.data.accounts.find(a=>/sonic|sonik/i.test(`${a.strategy||''} ${a.name||''}`));jobs.push((async()=>{out.priceChart=sonic?await api(`/accounts/${sonic.login}/candles?period=${state.period==='custom'?'week':state.period}`).catch(()=>null):null;})());}
- if(['people','tagmarket'].includes(state.view))jobs.push((async()=>{out.people=await api('/people');})());
- if(['projects','spend','income'].includes(state.view))jobs.push((async()=>{try{out.spend=preview?{...previewSpend(),span:state.view==='spend'?state.spendSpan:'month'}:await api('/spend'+(state.view==='spend'&&state.spendSpan==='year'?'?span=year':''));out.spendError='';}catch(error){out.spend=state.spend;out.spendError=error.message;}})());
- if(state.view==='projects')jobs.push((async()=>{try{out.goals=preview?previewGoals():await api('/goals');}catch(error){out.goals=state.goals;}})());
- if(['people','spend'].includes(state.view))jobs.push((async()=>{try{out.friends=preview?previewFriends():await api('/friends');out.friendsError='';}catch(error){out.friends=state.friends;out.friendsError=error.message;}})());
- if(['projects','income'].includes(state.view))jobs.push((async()=>{try{out.income=preview?previewIncome():await api('/income');out.incomeError='';}catch(error){out.income=state.income;out.incomeError=error.message;}})());
- if(['overview','projects','banks','income'].includes(state.view))jobs.push((async()=>{try{out.banks=preview?previewBanks():await api('/banks');out.banksError='';}catch(error){out.banks=state.banks;out.banksError=error.message;}})());
- if(['overview','activity'].includes(state.view))jobs.push((async()=>{try{out.activity=preview?previewActivity(state.activityDays):await api(`/activity?days=${state.view==='overview'?7:state.activityDays}`);out.activityError='';}catch(error){out.activity=state.activity;out.activityError=error.message;}})());
- if(['overview','plans'].includes(state.view))jobs.push((async()=>{try{const [from,to]=monthBounds(state.calMonth);const [lists,events]=await Promise.all([preview?previewLists():api('/lists'),state.view==='plans'?(preview?previewLists():api(`/events?from=${from}&to=${to}`)):Promise.resolve(state.events)]);out.lists=lists;out.events=events;out.listsError='';}catch(error){out.lists=state.lists;out.listsError=error.message;}})());
- if(state.view==='projects')jobs.push((async()=>{const tag=await fetchTagForecast();if(!tag.error)out.tagStats=tag;})());
- if(['projects','project','overview','forecast'].includes(state.view))jobs.push((async()=>{try{out.projects=(await api('/projects')).projects;out.projectsError='';if(state.view==='forecast'){const [result,tag,contracts]=await Promise.all([fetchForecast(out.projects),fetchTagForecast(),fetchContractForecasts(out.projects)]);out.forecast={...state.forecast,result,tag,contracts,...await fetchForecastStart()};}}catch(error){out.projects=state.projects;out.projectsError=error.message;}})());
- if(['settings','people'].includes(state.view))jobs.push((async()=>{try{out.profile=preview?previewProfile():await api('/profile');}catch(error){out.profile=state.profile;}})());
- if(state.view==='friend')jobs.push((async()=>{try{out.friendProfile=preview?previewFriendProfile():await api('/friends/'+encodeURIComponent(state.friendId)+'/profile');out.friendProfileError='';}catch(error){out.friendProfile=null;out.friendProfileError=error.message;}})());
- if(state.view==='settings'&&state.data.founder)jobs.push((async()=>{out.admin=await api('/admin');})());
+ if(['tagmarket','account'].includes(v))jobs.push((async()=>{try{out.report=await loadReport();out.reportError='';}catch(error){out.report=null;out.reportError=error.message;}})());
+ if(v==='tagmarket'){const sonic=state.data.accounts.find(a=>/sonic|sonik/i.test(`${a.strategy||''} ${a.name||''}`));jobs.push((async()=>{out.priceChart=sonic?await api(`/accounts/${sonic.login}/candles?period=${state.period==='custom'?'week':state.period}`).catch(()=>null):null;})());}
+ if(['people','tagmarket'].includes(v))jobs.push((async()=>{out.people=await api('/people');})());
+ if(['projects','spend','income'].includes(v))jobs.push((async()=>{try{out.spend=preview?{...previewSpend(),span:v==='spend'?state.spendSpan:'month'}:await api('/spend'+(v==='spend'&&state.spendSpan==='year'?'?span=year':''));out.spendError='';}catch(error){out.spend=state.spend;out.spendError=error.message;}})());
+ if(v==='projects')jobs.push((async()=>{try{out.goals=preview?previewGoals():await api('/goals');}catch(error){out.goals=state.goals;}})());
+ if(['people','spend'].includes(v))jobs.push((async()=>{try{out.friends=preview?previewFriends():await api('/friends');out.friendsError='';}catch(error){out.friends=state.friends;out.friendsError=error.message;}})());
+ if(['projects','income'].includes(v))jobs.push((async()=>{try{out.income=preview?previewIncome():await api('/income');out.incomeError='';}catch(error){out.income=state.income;out.incomeError=error.message;}})());
+ if(['overview','projects','banks','income'].includes(v))jobs.push((async()=>{try{out.banks=preview?previewBanks():await api('/banks');out.banksError='';}catch(error){out.banks=state.banks;out.banksError=error.message;}})());
+ if(['overview','activity'].includes(v))jobs.push((async()=>{try{out.activity=preview?previewActivity(state.activityDays):await api(`/activity?days=${v==='overview'?7:state.activityDays}`);out.activityError='';}catch(error){out.activity=state.activity;out.activityError=error.message;}})());
+ if(['overview','plans'].includes(v))jobs.push((async()=>{try{const [from,to]=monthBounds(state.calMonth);const [lists,events]=await Promise.all([preview?previewLists():api('/lists'),v==='plans'?(preview?previewLists():api(`/events?from=${from}&to=${to}`)):Promise.resolve(state.events)]);out.lists=lists;out.events=events;out.listsError='';}catch(error){out.lists=state.lists;out.listsError=error.message;}})());
+ if(v==='projects')jobs.push((async()=>{const tag=await fetchTagForecast();if(!tag.error)out.tagStats=tag;})());
+ if(['projects','project','overview','forecast'].includes(v))jobs.push((async()=>{try{out.projects=(await api('/projects')).projects;out.projectsError='';if(v==='forecast'){const [result,tag,contracts]=await Promise.all([fetchForecast(out.projects),fetchTagForecast(),fetchContractForecasts(out.projects)]);out.forecast={...state.forecast,result,tag,contracts,...await fetchForecastStart()};}}catch(error){out.projects=state.projects;out.projectsError=error.message;}})());
+ if(['settings','people'].includes(v))jobs.push((async()=>{try{out.profile=preview?previewProfile():await api('/profile');}catch(error){out.profile=state.profile;}})());
+ if(v==='friend')jobs.push((async()=>{try{out.friendProfile=preview?previewFriendProfile():await api('/friends/'+encodeURIComponent(state.friendId)+'/profile');out.friendProfileError='';}catch(error){out.friendProfile=null;out.friendProfileError=error.message;}})());
+ if(v==='settings'&&state.data.founder)jobs.push((async()=>{out.admin=await api('/admin');})());
  await Promise.all(jobs);
  return out;
 }
@@ -976,7 +976,8 @@ async function viewParts(){
 // Свежесть держит фоновое обновление; старше его интервала — грузим заново
 const viewCache=new Map();
 function viewKey(){return [state.view,state.login,state.projectId,state.period,state.from,state.to,state.currency,state.kind,state.offset,state.view==='activity'?state.activityDays:'',state.view==='plans'?state.calMonth:'',state.view==='spend'?state.spendSpan:'',state.view==='friend'?state.friendId:''].join('|');}
-function remember(){viewCache.set(viewKey(),{report:state.report,reportError:state.reportError,priceChart:state.priceChart,projects:state.projects,projectsError:state.projectsError,banks:state.banks,spend:state.spend,income:state.income,goals:state.goals,friends:state.friends,activity:state.activity,lists:state.lists,events:state.events,at:Date.now()});}
+function cacheEntry(o){return {report:o.report,reportError:o.reportError,priceChart:o.priceChart,projects:o.projects,projectsError:o.projectsError,banks:o.banks,spend:o.spend,income:o.income,goals:o.goals,friends:o.friends,activity:o.activity,lists:o.lists,events:o.events,at:Date.now()};}
+function remember(){viewCache.set(viewKey(),cacheEntry(state));}
 function refreshEvery(){return Math.max(30,Number(state.data?.refresh_seconds)||60)*1000;}
 const VIEW_NEEDS_DATA=view=>['overview','tagmarket','activity','plans','circle','banks','spend','income','account','people','projects','project','forecast','friend','settings'].includes(view);
 // Смена периода, вкладки истории, страницы, валюты: то же, что переход —
@@ -1007,10 +1008,11 @@ function showCached(el){
 // Переключение отменяет загрузки, которые ещё в пути: иначе ответ по прежнему
 // периоду или разделу, пришедший позже, лёг бы под новую подпись
 function cancelLoads(){generation++;document.body.classList.remove('is-loading');}
-async function loadView(){
+// quiet — уже показаны запомненные данные: обновляем без мигания, анимаций и тоста об ошибке
+async function loadView(quiet=false){
  const gen=++generation,key=viewKey();document.body.classList.add('is-loading');
- try{const parts=await viewParts();if(gen!==generation||key!==viewKey())return;Object.assign(state,parts);remember();render();}
- catch(error){if(gen===generation)toast('Не удалось обновить данные. Показаны последние полученные значения.');}
+ try{const parts=await viewParts();if(gen!==generation||key!==viewKey())return;Object.assign(state,parts);remember();render(quiet);}
+ catch(error){if(gen===generation&&!quiet)toast('Не удалось обновить данные. Показаны последние полученные значения.');}
  finally{if(gen===generation)document.body.classList.remove('is-loading');}
 }
 let quietPending=false,quietFlushTimer=0;
@@ -1063,9 +1065,39 @@ async function refresh(quiet=false){
   else{setOffline(true);if(!quiet)toast('Не удалось обновить данные. Показаны последние полученные значения.');}
  }finally{state.busy=false;document.body.classList.remove('is-loading');if(state.pendingRefresh){state.pendingRefresh=false;await refresh();}else if(quietPending&&!uiEditing())flushQuiet();}
 }
+// Запомненные данные раздела — в state: и для перехода, и для «соседа» при свайпе
+function applyCached(next,cached){
+ state.report=cached?cached.report:null;state.reportError=cached?.reportError||'';
+ if(cached&&next==='tagmarket')state.priceChart=cached.priceChart;
+ if(cached&&['projects','project','forecast','overview'].includes(next)){state.projects=cached.projects;state.projectsError=cached.projectsError||'';}
+ if(cached&&['projects','income'].includes(next))state.income=cached.income??state.income;
+ if(cached&&next==='projects')state.goals=cached.goals??state.goals;
+ if(cached&&['people','spend'].includes(next))state.friends=cached.friends??state.friends;
+ if(cached&&['overview','projects','banks','income'].includes(next))state.banks=cached.banks??state.banks;
+ if(cached&&['projects','spend'].includes(next))state.spend=cached.spend??state.spend;
+ if(cached&&['overview','activity','plans'].includes(next)){state.activity=cached.activity??state.activity;state.lists=cached.lists??state.lists;state.events=cached.events??state.events;}
+}
+// Раздел «как если бы мы в нём были»: state временно подменяется и возвращается как был.
+// Так свайп рисует соседа с его собственными данными, а не с данными текущего раздела
+function asView(next,fn){
+ const saved={...state};
+ try{if(next!==state.view&&state.filters[next])Object.assign(state,state.filters[next]);state.view=next;state.offset=0;state.kind='trades';applyCached(next,viewCache.get(viewKey()));return fn();}
+ finally{for(const k of Object.keys(state))if(!(k in saved))delete state[k];Object.assign(state,saved);}
+}
+// Соседние разделы подгружаются заранее и тихо: к свайпу у них уже есть данные
+const prefetching=new Set();
+async function prefetchView(next){
+ if(!state.data||!VIEW_NEEDS_DATA(next)||next===state.view)return;
+ const key=asView(next,viewKey),have=viewCache.get(key);
+ if(prefetching.has(key)||(have&&Date.now()-have.at<refreshEvery()))return;
+ prefetching.add(key);
+ try{const parts=await asView(next,()=>viewParts(next));viewCache.set(key,cacheEntry({...asView(next,()=>({...state})),...parts}));document.dispatchEvent(new CustomEvent('view-prefetched',{detail:next}));}
+ catch{}finally{prefetching.delete(key);}
+}
+let swipeNav=false;
 let navSeq=0;
 async function navigate(){
- const seq=++navSeq;
+ const seq=++navSeq,swiped=swipeNav;swipeNav=false;
  let [view,login]=location.hash.slice(1).split('/');
  if(view==='lists'){view='plans';login='notes';}   // прежняя ссылка на списки
  if(view==='plans'){if(['tasks','calendar','notes'].includes(login))state.listsTab=login;login=undefined;}
@@ -1082,29 +1114,23 @@ async function navigate(){
  state.offset=0;state.kind='trades';
  const cached=state.data&&viewCache.get(viewKey());
  const fresh=!!state.data&&(!VIEW_NEEDS_DATA(next)||(!!cached&&Date.now()-cached.at<refreshEvery()));
- state.report=cached?cached.report:null;state.reportError=cached?.reportError||'';
- if(cached&&next==='tagmarket')state.priceChart=cached.priceChart;
- if(cached&&['projects','project','forecast','overview'].includes(next)){state.projects=cached.projects;state.projectsError=cached.projectsError||'';}
- if(cached&&['projects','income'].includes(next))state.income=cached.income??state.income;
- if(cached&&next==='projects')state.goals=cached.goals??state.goals;
- if(cached&&['people','spend'].includes(next))state.friends=cached.friends??state.friends;
- if(cached&&['overview','projects','banks','income'].includes(next))state.banks=cached.banks??state.banks;
- if(cached&&['projects','spend'].includes(next))state.spend=cached.spend??state.spend;
- if(cached&&['overview','activity','plans'].includes(next)){state.activity=cached.activity??state.activity;state.lists=cached.lists??state.lists;state.events=cached.events??state.events;}
+ applyCached(next,cached);
  // подсветка панели едет сразу по нажатию, а старый экран уходит параллельно:
  // ждать отрисовки нового значило бы показать задержку на самом заметном месте
  nav();
  if(state.data){
-  if(moved)await leaveView(direction);
+  // свайп уже довёз новый раздел пальцем: без второго ухода, въезда и счётчиков
+  if(moved&&!swiped)await leaveView(direction);
   // пока старый экран уезжал, нажали другой раздел: отрисует тот переход,
   // иначе новый экран появлялся дважды подряд
   if(seq!==navSeq)return;
   if(moved)window.scrollTo(0,0);
-  render();
-  if(moved)enterView(direction);
+  render(swiped);
+  if(moved&&!swiped)enterView(direction);
  }
  if(!state.data)await refresh();
- else if(!fresh)await loadView();
+ else if(!fresh)await loadView(swiped&&!!cached);
+ if(seq===navSeq)setTimeout(()=>{if(seq===navSeq)document.dispatchEvent(new Event('view-shown'));},400);
  if(seq===navSeq&&next==='faq'&&login==='connect')$('#faq-connect')?.scrollIntoView({block:'start'});
  dialogBack();
 }
@@ -2623,12 +2649,19 @@ document.addEventListener('focusin',event=>{const cube=event.target.closest?.('.
  const ensurePeek=name=>{
   if(peek&&peekFor===name)return peek;
   dropPeek();
-  let html='';try{html=(viewMap()[name]||overview)();}catch{html='';}
-  const r=main.getBoundingClientRect(),top=Math.max(0,r.top);
+  // сосед — в том же контейнере, что и #main (поверх фона раздела, под шапкой и панелью),
+  // и со своими данными: запомненными или подгруженными заранее
+  const host=main.parentElement,r=main.getBoundingClientRect(),h=host.getBoundingClientRect(),top=Math.max(0,r.top);
   peek=document.createElement('main');peek.className='main-peek';peek.setAttribute('aria-hidden','true');
-  peek.style.cssText=`top:${top}px;left:${r.left}px;width:${r.width}px;height:${Math.max(0,innerHeight-top)}px`;
-  peek.innerHTML=html;document.body.appendChild(peek);peekFor=name;return peek;
+  peek.style.cssText=`top:${top-h.top}px;left:${r.left-h.left}px;width:${r.width}px;height:${Math.max(0,innerHeight-top)}px`;
+  fillPeek(peek,name);host.appendChild(peek);peekFor=name;
+  if(!viewCache.get(asView(name,viewKey)))prefetchView(name);
+  return peek;
  };
+ const fillPeek=(el,name)=>{let html='';try{html=asView(name,()=>(viewMap()[name]||overview)());}catch{html='';}el.innerHTML=html;};
+ document.addEventListener('view-prefetched',e=>{if(peek&&peekFor===e.detail)fillPeek(peek,e.detail);});
+ // после каждого перехода тихо подгружаем соседей слева и справа
+ document.addEventListener('view-shown',()=>{const i=ORDER.indexOf(current());if(i<0)return;for(const n of [ORDER[i+1],ORDER[i-1]])if(n)prefetchView(n);});
  const place=(dx,dir,edge)=>{main.style.transition='none';main.style.transform=`translateX(${edge?dx*.18:dx}px)`;if(peek)peek.style.transition='none',peek.style.transform=`translateX(${dx+dir*width()}px)`;};
  const settle=()=>{
   const dir=g?.dir||1;main.style.transition=`transform .38s ${spring}`;main.style.transform='';
@@ -2646,13 +2679,13 @@ document.addEventListener('focusin',event=>{const cube=event.target.closest?.('.
   if(!g)return;const s=g;g=null;if(!s.on)return;
   const dir=s.dir,i=ORDER.indexOf(current()),next=ORDER[i+dir],W=width(),speed=Math.abs(s.dx)/Math.max(1,Date.now()-s.t);
   if(i<0||!next||(Math.abs(s.dx)<W*.25&&speed<.45)){g={dir};settle();g=null;return;}
-  if(still()){dropPeek();main.style.transition='none';main.style.transform='';location.hash='#'+next;return;}
+  if(still()){dropPeek();main.style.transition='none';main.style.transform='';swipeNav=true;location.hash='#'+next;return;}
   busy=true;
   // обе страницы доезжают; затем меняем раздел и убираем «соседа» только когда настоящий экран уже нарисован
   main.style.transition=`transform .3s ${spring}`;main.style.transform=`translateX(${-dir*W}px)`;
   if(peek){peek.style.transition=`transform .3s ${spring}`;peek.style.transform='translateX(0px)';}
   setTimeout(()=>{
-   location.hash='#'+next;
+   swipeNav=true;location.hash='#'+next;
    setTimeout(()=>{main.style.transition='none';main.style.transform='';dropPeek();busy=false;},140);
   },300);
  };
