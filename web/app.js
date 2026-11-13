@@ -1126,7 +1126,7 @@ let modalLock=null;
 function dialogBack(){tg?.BackButton?.[($('#dialog').open||['account','project'].includes(state.view))?'show':'hide']();}
 function lockDialog(){try{tg?.disableVerticalSwipes?.();}catch{}if(modalLock)return;modalLock={x:scrollX,y:scrollY};document.documentElement.classList.add('modal-open');document.body.style.setProperty('--modal-top',`${-modalLock.y}px`);dialogBack();}
 document.querySelector('#dialog').addEventListener('close',()=>{try{tg?.enableVerticalSwipes?.();}catch{}if($('#dialog').open||!modalLock)return;const pos=modalLock;modalLock=null;document.documentElement.classList.remove('modal-open');document.body.style.removeProperty('--modal-top');window.scrollTo(pos.x,pos.y);dialogBack();});
-async function dialog(title,body,label='Сохранить',opts={}){const current=$('#dialog');if(current.open||modalLock){const closed=new Promise(resolve=>current.addEventListener('close',resolve,{once:true}));if(current.open&&!await requestDialogExit(current))return null;await closed;}return new Promise(resolve=>{const d=$('#dialog');$('#dialog-title').textContent=title;$('#dialog-body').innerHTML=body;$('#dialog-submit').textContent=label;const info=['Закрыть','Понятно','Готово'].includes(label);d.classList.toggle('info-only',info);d.onclick=e=>{if(info&&e.target===d)requestDialogExit(d);};d.returnValue='';d.onclose=()=>{d.dataset.dirty='';const cancelButton=d.querySelector('.dialog-actions button[value="cancel"]');if(cancelButton)cancelButton.textContent='Отмена';const values=Object.fromEntries(new FormData($('form',d)));resolve(d.returnValue==='confirm'?values:null);};const form=$('form',d);form.querySelectorAll('select[name="capitalization"]').forEach(select=>{const date=form.querySelector('input[name="capitalization_from"]');if(date)date.disabled=select.value==='inherit';});const cancelButton=d.querySelector('.dialog-actions button[value="cancel"]');if(cancelButton)cancelButton.textContent=opts.cancelLabel||'Отмена';
+async function dialog(title,body,label='Сохранить',opts={}){const current=$('#dialog');if(current.open||modalLock){const closed=new Promise(resolve=>current.addEventListener('close',resolve,{once:true}));if(current.open&&!await requestDialogExit(current))return null;await closed;}return new Promise(resolve=>{const d=$('#dialog');d.classList.remove('no-exit');d.style.transform='';d.style.transition='';$('#dialog-title').textContent=title;$('#dialog-body').innerHTML=body;$('#dialog-submit').textContent=label;const info=['Закрыть','Понятно','Готово'].includes(label);d.classList.toggle('info-only',info);d.onclick=e=>{if(info&&e.target===d)requestDialogExit(d);};d.returnValue='';d.onclose=()=>{d.dataset.dirty='';const cancelButton=d.querySelector('.dialog-actions button[value="cancel"]');if(cancelButton)cancelButton.textContent='Отмена';const values=Object.fromEntries(new FormData($('form',d)));resolve(d.returnValue==='confirm'?values:null);};const form=$('form',d);form.querySelectorAll('select[name="capitalization"]').forEach(select=>{const date=form.querySelector('input[name="capitalization_from"]');if(date)date.disabled=select.value==='inherit';});const cancelButton=d.querySelector('.dialog-actions button[value="cancel"]');if(cancelButton)cancelButton.textContent=opts.cancelLabel||'Отмена';
   form.oninput=()=>d.querySelector('.dialog-error')?.remove();
   form.onsubmit=e=>{if(e.submitter?.value==='cancel'){e.preventDefault();requestDialogExit(d,true);return;}const fields=[...d.querySelectorAll('input,select,textarea')];if(!fields.every(f=>f.reportValidity())){e.preventDefault();return;}
    // своя проверка: окно остаётся открытым, ошибка видна внутри него, введённое не теряется
@@ -1196,12 +1196,16 @@ function attachSheetSwipe(d,exit){
    d.style.transition='transform .22s cubic-bezier(.4,0,1,1)';d.style.transform=`translateY(${d.offsetHeight+40}px)`;
    haptics?.impactOccurred?.('light');
    await new Promise(r=>setTimeout(r,200));
+   d.classList.add('no-exit');           // шторка уже уехала за экран — повторную анимацию ухода не играем
    const closed=custom?(exit(),true):await requestDialogExit(d,true);
-   if(!closed||d.open)reset();else{d.classList.remove('sheet-dragging');d.style.transition='';d.style.transform='';}
+   if(!closed||d.open){d.classList.remove('no-exit');reset();}else d.classList.remove('sheet-dragging');
   }else reset();
  };
  d.addEventListener('touchend',end);d.addEventListener('touchcancel',end);
- d.addEventListener('close',()=>{d.style.transform='';d.style.transition='';d.classList.remove('sheet-dragging');});
+ d.addEventListener('close',()=>{
+  const clear=()=>{d.style.transform='';d.style.transition='';d.classList.remove('sheet-dragging','no-exit');};
+  if(d.classList.contains('no-exit'))setTimeout(()=>{if(!d.open)clear();},360);else clear();     // после свайпа положение держим, пока окно не скроется
+ });
 }
 attachSheetSwipe($('#dialog'));
 window.addEventListener('beforeunload',event=>{if($('#dialog').open&&dialogHasChanges($('#dialog'))){event.preventDefault();event.returnValue='';}});
@@ -2591,7 +2595,7 @@ document.addEventListener('focusin',event=>{const cube=event.target.closest?.('.
   dlg.append(head,title,list);
   dlg.addEventListener('click',e=>{if(e.target===dlg)dlg.close();});
   attachSheetSwipe(dlg,()=>dlg.close());
-  dlg.addEventListener('close',()=>{dlg.remove();if(button.isConnected)button.focus({preventScroll:true});});
+  dlg.addEventListener('close',()=>{setTimeout(()=>dlg.remove(),360);if(button.isConnected)button.focus({preventScroll:true});});
   document.body.append(dlg);dlg.showModal();
   list.querySelector('[aria-selected=true]')?.scrollIntoView({block:'center'});
  }
@@ -2611,22 +2615,22 @@ document.addEventListener('focusin',event=>{const cube=event.target.closest?.('.
  const ORDER=tabs.map(t=>t[0]),still=()=>reducedMotion();
  const current=()=>{const v=state.view;return ['account','accounts','project','forecast','tagmarket','onboarding','banks','income'].includes(v)?'projects':['faq','circle'].includes(v)?'overview':v==='friend'?'people':v;};
  const blocked=el=>{for(let n=el;n&&n!==main;n=n.parentElement){if(n.matches?.('input,textarea,select,[contenteditable],.chart-wrap,.price-chart-wrap,.table-wrap,.segmented,.seg-pick,.pa-grip,[draggable=true],[data-noswipe]'))return true;if(n.scrollWidth>n.clientWidth+2&&/(auto|scroll)/.test(getComputedStyle(n).overflowX))return true;}return false;};
- const settle=()=>{main.style.transition='transform .3s cubic-bezier(.2,.8,.2,1),opacity .3s';main.style.transform='';main.style.opacity='';};
+ const settle=()=>{main.style.transition='transform .38s cubic-bezier(.22,1,.36,1),opacity .3s ease-out';main.style.transform='';main.style.opacity='';};
  let g=null;
  main.addEventListener('touchstart',e=>{if(e.touches.length!==1||document.querySelector('dialog[open]')||blocked(e.target)){g=null;return;}const t=e.touches[0];g={x:t.clientX,y:t.clientY,t:Date.now(),dx:0,on:false};},{passive:true});
  main.addEventListener('touchmove',e=>{
   if(!g)return;const t=e.touches[0],dx=t.clientX-g.x,dy=t.clientY-g.y;
   if(!g.on){if(Math.abs(dy)>12&&Math.abs(dy)>Math.abs(dx)){g=null;return;}if(Math.abs(dx)<12||Math.abs(dx)<Math.abs(dy)*1.6)return;g.on=true;}
   g.dx=dx;const i=ORDER.indexOf(current()),edge=i<0||(dx>0&&i===0)||(dx<0&&i===ORDER.length-1);
-  main.style.transition='none';main.style.transform=`translateX(${dx*(edge?.16:.55)}px)`;main.style.opacity=String(1-Math.min(Math.abs(dx)/520,.4)*(edge?.3:1));
+  main.style.transition='none';main.style.transform=`translateX(${dx*(edge?.16:.55)}px)`;main.style.opacity=String(1-Math.min(Math.abs(dx)/600,.35)*(edge?.3:1));
  },{passive:true});
  const end=()=>{
   if(!g)return;const s=g;g=null;if(!s.on)return;
   const dir=s.dx<0?1:-1,i=ORDER.indexOf(current()),next=ORDER[i+dir],speed=Math.abs(s.dx)/Math.max(1,Date.now()-s.t);
   if(i<0||!next||(Math.abs(s.dx)<70&&speed<.45)){settle();return;}
   if(still()){main.style.transition='none';main.style.transform='';main.style.opacity='';location.hash='#'+next;return;}
-  main.style.transition='transform .16s ease-in,opacity .16s';main.style.transform=`translateX(${-dir*34}%)`;main.style.opacity='0';
-  setTimeout(()=>{location.hash='#'+next;main.style.transition='none';main.style.transform=`translateX(${dir*34}%)`;setTimeout(()=>{main.style.transition='transform .34s cubic-bezier(.2,.8,.2,1),opacity .3s';main.style.transform='';main.style.opacity='';},70);},160);
+  main.style.transition='transform .2s cubic-bezier(.4,0,.6,1),opacity .2s ease-out';main.style.transform=`translateX(${-dir*28}%)`;main.style.opacity='.25';
+  setTimeout(()=>{location.hash='#'+next;main.style.transition='none';main.style.transform=`translateX(${dir*28}%)`;requestAnimationFrame(()=>requestAnimationFrame(()=>{main.style.transition='transform .42s cubic-bezier(.22,1,.36,1),opacity .32s ease-out';main.style.transform='';main.style.opacity='';}));},200);
  };
  main.addEventListener('touchend',end,{passive:true});main.addEventListener('touchcancel',()=>{if(g?.on)settle();g=null;},{passive:true});
 })();
@@ -2634,6 +2638,7 @@ document.addEventListener('focusin',event=>{const cube=event.target.closest?.('.
 // ── «Что нового»: у каждого улучшения своя запись. Окно показывается один раз после обновления интерфейса, вся история — в Настройках.
 // Новое улучшение = новая запись СВЕРХУ списка с номером сборки (?v= в index.html) и один пункт на изменение.
 const RELEASES=[
+ {v:'20261113-28',date:'2026-11-13',title:'Плавное закрытие шторок и свайп экранов',notes:['Окна и шторки закрываются плавно: на телефоне уезжают вниз, затемнение фона гаснет','Свайп между разделами стал плавнее: экран уходит и возвращается без паузы']},
  {v:'20261113-27',date:'2026-11-13',title:'Шторки закрываются свайпом вниз',notes:['«Что нового», настройки и выбор из списка закрываются свайпом пальца вниз','Если внутри шторки есть прокручиваемый список, он листается как обычно, а шторка тянется вниз только когда список в начале']},
  {v:'20261113-26',date:'2026-11-13',title:'Что нового',notes:['После обновления интерфейса приложение коротко показывает, что изменилось, а полная история лежит в Настройках']},
  {v:'20261113-25',date:'2026-11-13',title:'Единый вид переключателей',notes:['Проекты · Зарплата · Всё вместе, Месяц · Год и остальные переключатели стали мягкой капсулой без острого фона']},
