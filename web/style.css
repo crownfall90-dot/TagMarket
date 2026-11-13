@@ -3026,3 +3026,16 @@ h1,.page-head h1{font-weight:650;letter-spacing:-.04em}
 /* Зона нажатия не меньше ~44px там, где сама кнопка компактная (вид не меняется) */
 .icon-btn,.avatar,.currency-btn,.button.small,.text-link{position:relative}
 .icon-btn:not(#_):before,.avatar:not(#_):before,.currency-btn:not(#_):before,.button.small:not(#_):before,.text-link:not(#_):before{content:"";position:absolute;inset:-6px;min-width:44px;min-height:44px;left:50%;top:50%;transform:translate(-50%,-50%);width:max(100%,44px);height:max(100%,44px)}
+
+/* Срок контракта: быстрые кнопки в редакторе и карточка «Ближайшие окончания» на главной */
+.term-quick{display:flex;flex-wrap:wrap;gap:8px;margin:2px 0 14px}
+.term-chip{min-height:36px;padding:7px 14px;border:1px solid var(--line);border-radius:999px;background:var(--raised);color:var(--text);font:inherit;font-size:13px;cursor:pointer;transition:background .15s,border-color .15s}
+.term-chip:active{background:rgb(var(--accent-rgb) / .14);border-color:rgb(var(--accent-rgb) / .4)}
+.term-chip.ghost{background:none;color:var(--muted)}
+.home-grid .home-contracts .hc-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 0;color:inherit;text-decoration:none;border-top:1px solid var(--line)}
+.home-grid .home-contracts .hc-row:first-of-type{border-top:0;padding-top:2px}
+.hc-main,.hc-side{display:grid;gap:2px;min-width:0}
+.hc-side{text-align:right;flex:none}
+.hc-row b{font-size:14.5px;font-weight:600;letter-spacing:-.01em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hc-row small{font-size:12.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hc-row.soon .hc-side b{color:var(--accent)}
