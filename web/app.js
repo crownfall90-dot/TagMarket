@@ -696,7 +696,7 @@ function appVersionLine(){
  const app=(navigator.userAgent.match(/PlatformerAndroid\/([\w.]+)/)||[])[1];
  const web=(document.querySelector('script[src*="app.js?v="]')?.src.match(/v=(\d{4})(\d{2})(\d{2})-(\d+)/)||[]);
  const build=web.length?`интерфейс от ${web[3]}.${web[2]}.${web[1]} · сборка ${web[4]}`:'';
- return `<p class="app-version" data-ui-key="app-version">${app?`Platformer ${esc(app)} для Android`:'Platformer в Telegram'}${build?`<span>${build}</span>`:''}</p>`;
+ return `<p class="app-version" data-ui-key="app-version">${app?`Platformer ${esc(app)} для Android`:'Platformer в Telegram'}${build?`<span>${build}</span>`:''}</p><p class="app-version-link"><button type="button" class="text-link" data-action="whatsnew-open">История обновлений</button></p>`;
 }
 // отпечаток всего, из чего строится экран; server_time меняется на каждом
 // запросе и на вид не влияет — без него одинаковые данные дают одинаковый ключ
@@ -2267,6 +2267,7 @@ document.addEventListener('click',async event=>{const el=event.target.closest('[
  else if(action.startsWith('profile-'))await profileAction(action,el);
  else if(action==='onboard-hide'){try{localStorage.setItem('fin-onboard-hidden','1');}catch{}render(true);}
  else if(action==='fab-toggle')fabToggle();
+ else if(action==='whatsnew-open')await showWhatsNew(true);
  else if(action==='refresh')await refresh();
  else if(action==='notifications')await openNotifications();
  else if(action==='notification-open')await openNotification(el.dataset.id);
@@ -2624,3 +2625,25 @@ document.addEventListener('focusin',event=>{const cube=event.target.closest?.('.
  };
  main.addEventListener('touchend',end,{passive:true});main.addEventListener('touchcancel',()=>{if(g?.on)settle();g=null;},{passive:true});
 })();
+
+// ── «Что нового»: у каждого улучшения своя запись. Окно показывается один раз после обновления интерфейса, вся история — в Настройках.
+// Новое улучшение = новая запись СВЕРХУ списка с номером сборки (?v= в index.html) и один пункт на изменение.
+const RELEASES=[
+ {v:'20261113-26',date:'2026-11-13',title:'Что нового',notes:['После обновления интерфейса приложение коротко показывает, что изменилось, а полная история лежит в Настройках']},
+ {v:'20261113-25',date:'2026-11-13',title:'Единый вид переключателей',notes:['Проекты · Зарплата · Всё вместе, Месяц · Год и остальные переключатели стали мягкой капсулой без острого фона']},
+ {v:'20261113-24',date:'2026-11-13',title:'Прогноз к окончанию контрактов',notes:['На экране прогноза новый блок: итог каждого проекта на дату окончания его контрактов и общий итог','Он показывается рядом с обычным прогнозом на выбранную дату']},
+ {v:'20261113-22',date:'2026-11-13',title:'Срок для проектов и счетов TagMarket',notes:['У проекта и у счёта TagMarket можно задать срок; аккаунты без своего срока берут срок проекта','После срока счёт TagMarket продолжает работать (если стоит галочка) или аннулируется и уходит в архив со статистикой','Для новых проектов доход считается с даты начала поступлений, включая сегодняшний день']},
+ {v:'20261113-20',date:'2026-11-13',title:'Итог по контрактам в проекте',notes:['На странице проекта итог и доход по контрактам, завершённые контракты собраны в свёрнутую группу']},
+ {v:'20261113-19',date:'2026-11-13',title:'Ближайшие окончания и быстрые сроки',notes:['На главной карточка с ближайшими окончаниями контрактов','В редакторе аккаунта кнопки срока: +1, +3, +6 месяцев, +1 год']},
+ {v:'20261113-17',date:'2026-11-13',title:'Единый плоский вид',notes:['Все разделы переведены на спокойный минималистичный стиль в тёмной и светлой теме']},
+];
+function webBuild(){return document.querySelector('script[src*="app.js?v="]')?.src.match(/v=(\d{8}-\d+)/)?.[1]||'';}
+function releaseCard(r){return `<article class="rel-card"><header><b>${esc(r.title)}</b><small>${esc(date(r.date))}</small></header><ul>${r.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></article>`;}
+async function showWhatsNew(all=false){
+ const build=webBuild();let seen=null;try{seen=localStorage.getItem('seen-release');}catch{}
+ let list=RELEASES.filter(r=>!build||r.v<=build);
+ if(!all){list=seen?list.filter(r=>r.v>seen):list.slice(0,1);try{localStorage.setItem('seen-release',build);}catch{}}
+ if(!list.length)return;
+ await dialog(all?'История обновлений':'Что нового',`<div class="rel-list">${list.slice(0,all?12:4).map(releaseCard).join('')}</div>`,'Понятно');
+}
+setTimeout(()=>{if(!preview&&!onboardingOnly()&&!$('#dialog').open&&!modalLock)showWhatsNew().catch(()=>{});},3000);
