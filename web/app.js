@@ -1159,15 +1159,18 @@ $('#dialog').addEventListener('cancel',event=>{if(event.target!==event.currentTa
 // Окно на телефоне — лист снизу: его можно смахнуть пальцем вниз. Тянется за шапку или за
 // содержимое, прокрученное к началу; отпустили ниже порога или быстро смахнули — лист
 // уезжает и закрывается (с вопросом, если есть несохранённое), иначе пружинит обратно.
-(function sheetSwipe(){
- const d=$('#dialog'),mobile=()=>matchMedia('(max-width:740px)').matches,ease='transform .32s cubic-bezier(.2,.9,.3,1.15)';
- let y0=null,x0=0,t0=0,dy=0,drag=false,fromHead=false;
+function attachSheetSwipe(d,exit){
+ const custom=!!exit,mobile=()=>matchMedia('(max-width:740px)').matches,ease='transform .32s cubic-bezier(.2,.9,.3,1.15)';
+ let y0=null,x0=0,t0=0,dy=0,drag=false,fromHead=false,inner=null,scrolledAtStart=false;
  const reset=(animate=true)=>{d.style.transition=animate?ease:'';d.style.transform='';d.classList.remove('sheet-dragging');setTimeout(()=>{if(!drag)d.style.transition='';},340);};
  d.addEventListener('touchstart',e=>{
   if(!d.open||!mobile()||e.touches.length!==1)return;
-  const t=e.target;fromHead=!!t.closest('.dialog-head');
+  const t=e.target;fromHead=!!t.closest('.dialog-head,.picker-grip,.picker-title');
+  // внутри шторки может быть свой прокручиваемый список: пока он не в начале, палец вниз листает его, а не тянет шторку
+  inner=null;for(let n=t;n&&n!==d;n=n.parentElement){const o=getComputedStyle(n).overflowY;if((o==='auto'||o==='scroll')&&n.scrollHeight>n.clientHeight+1){inner=n;break;}}
   // в полях ввода и на ползунках палец занят своим делом
   if(!fromHead&&t.closest('input,textarea,select,[contenteditable],input[type=range]'))return;
+  scrolledAtStart=(inner?inner.scrollTop>0:false)||d.scrollTop>0;      // жест, начатый на прокрученном содержимом, весь принадлежит прокрутке
   y0=e.touches[0].clientY;x0=e.touches[0].clientX;t0=performance.now();dy=0;drag=false;
  },{passive:true});
  d.addEventListener('touchmove',e=>{
@@ -1175,7 +1178,7 @@ $('#dialog').addEventListener('cancel',event=>{if(event.target!==event.currentTa
   const y=e.touches[0].clientY,x=e.touches[0].clientX;dy=y-y0;
   if(!drag){
    if(Math.abs(x-x0)>Math.abs(dy)+4){y0=null;return;}            // горизонтальный жест — не наш
-   if(dy>8&&(fromHead||d.scrollTop<=0)){drag=true;d.classList.add('sheet-dragging');d.style.transition='';}
+   if(dy>8&&(fromHead||!scrolledAtStart)){drag=true;d.classList.add('sheet-dragging');d.style.transition='';}
    else if(dy<-4){y0=null;return;}                                   // палец вверх — обычная прокрутка
    else return;
   }
@@ -1187,19 +1190,20 @@ $('#dialog').addEventListener('cancel',event=>{if(event.target!==event.currentTa
   if(y0==null)return;y0=null;
   if(!drag)return;drag=false;
   const v=dy/Math.max(1,performance.now()-t0);
-  if(dy>Math.min(160,d.offsetHeight*.28)||(v>.55&&dy>40)){
+  if(dy>Math.min(120,d.offsetHeight*.22)||(v>.55&&dy>40)){
    // есть несохранённое — лист возвращается, и вопрос задаётся на виду
-   if(dialogHasChanges(d)){reset();requestDialogExit(d,true);return;}
+   if(!custom&&dialogHasChanges(d)){reset();requestDialogExit(d,true);return;}
    d.style.transition='transform .22s cubic-bezier(.4,0,1,1)';d.style.transform=`translateY(${d.offsetHeight+40}px)`;
    haptics?.impactOccurred?.('light');
    await new Promise(r=>setTimeout(r,200));
-   const closed=await requestDialogExit(d,true);
+   const closed=custom?(exit(),true):await requestDialogExit(d,true);
    if(!closed||d.open)reset();else{d.classList.remove('sheet-dragging');d.style.transition='';d.style.transform='';}
   }else reset();
  };
  d.addEventListener('touchend',end);d.addEventListener('touchcancel',end);
  d.addEventListener('close',()=>{d.style.transform='';d.style.transition='';d.classList.remove('sheet-dragging');});
-})();
+}
+attachSheetSwipe($('#dialog'));
 window.addEventListener('beforeunload',event=>{if($('#dialog').open&&dialogHasChanges($('#dialog'))){event.preventDefault();event.returnValue='';}});
 async function confirm(title,text,label='Подтвердить'){return !!await dialog(title,`<p>${esc(text)}</p>`,label);}
 async function mutate(path,data,method='POST'){await api(path,{method,body:data===undefined?undefined:JSON.stringify(data)});haptics?.notificationOccurred('success');toast('Сохранено. Изменения доступны и в боте.');await refresh();}
@@ -2586,6 +2590,7 @@ document.addEventListener('focusin',event=>{const cube=event.target.closest?.('.
   }
   dlg.append(head,title,list);
   dlg.addEventListener('click',e=>{if(e.target===dlg)dlg.close();});
+  attachSheetSwipe(dlg,()=>dlg.close());
   dlg.addEventListener('close',()=>{dlg.remove();if(button.isConnected)button.focus({preventScroll:true});});
   document.body.append(dlg);dlg.showModal();
   list.querySelector('[aria-selected=true]')?.scrollIntoView({block:'center'});
@@ -2629,6 +2634,7 @@ document.addEventListener('focusin',event=>{const cube=event.target.closest?.('.
 // ── «Что нового»: у каждого улучшения своя запись. Окно показывается один раз после обновления интерфейса, вся история — в Настройках.
 // Новое улучшение = новая запись СВЕРХУ списка с номером сборки (?v= в index.html) и один пункт на изменение.
 const RELEASES=[
+ {v:'20261113-27',date:'2026-11-13',title:'Шторки закрываются свайпом вниз',notes:['«Что нового», настройки и выбор из списка закрываются свайпом пальца вниз','Если внутри шторки есть прокручиваемый список, он листается как обычно, а шторка тянется вниз только когда список в начале']},
  {v:'20261113-26',date:'2026-11-13',title:'Что нового',notes:['После обновления интерфейса приложение коротко показывает, что изменилось, а полная история лежит в Настройках']},
  {v:'20261113-25',date:'2026-11-13',title:'Единый вид переключателей',notes:['Проекты · Зарплата · Всё вместе, Месяц · Год и остальные переключатели стали мягкой капсулой без острого фона']},
  {v:'20261113-24',date:'2026-11-13',title:'Прогноз к окончанию контрактов',notes:['На экране прогноза новый блок: итог каждого проекта на дату окончания его контрактов и общий итог','Он показывается рядом с обычным прогнозом на выбранную дату']},
