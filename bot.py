@@ -401,6 +401,56 @@ def account_totals(acc: dict) -> dict | None:
             "cur": trades.currency()}
 
 
+def term_state(acc: dict, today: date = None, stats: bool = True) -> dict | None:
+    """Срок действия счёта TagMarket: статус и, когда срок вышел, итоги «было / стало / доход».
+
+    active    — срок идёт;
+    ended     — срок вышел, стоит «продолжить»: вклад остаётся, доход идёт дальше;
+    annulled  — срок вышел без «продолжить»: контракт аннулирован, счёт уходит в архив.
+    Последний день срока входит в срок. Без term_end срока нет (None).
+    """
+    end = acc.get("term_end")
+    if not end:
+        return None
+    try:
+        end_day = date.fromisoformat(end)
+    except ValueError:
+        return None
+    today = today or trades.clock().date()
+    keep = bool(acc.get("term_continue"))
+    ended = today > end_day
+    out = {"start": acc.get("term_start"), "end": end, "continue": keep,
+           "status": ("ended" if keep else "annulled") if ended else "active",
+           "days_left": max(0, (end_day - today).days), "stats": None}
+    if ended and stats:
+        out["stats"] = term_stats(acc, end_day)
+    return out
+
+
+def term_stats(acc: dict, end_day: date) -> dict | None:
+    """Итоги срока: капитал на начало, доход за срок (чистыми), капитал на конец и итог.
+
+    Начало — term_start, а без него первая сделка счёта. Доход — результат закрытых сделок
+    за срок после доли брокера; пополнения и выводы в доход не входят."""
+    if not connect(acc):
+        return None
+    rows = trades.fetch(datetime(2000, 1, 1), trades.clock())
+    current = trades.capital()
+    first = min((r["time"] for r in rows), default=None)
+    try:
+        start_day = date.fromisoformat(acc["term_start"]) if acc.get("term_start") else (first.date() if first else end_day)
+    except ValueError:
+        start_day = first.date() if first else end_day
+    start_dt, end_dt = datetime.combine(start_day, time.min), datetime.combine(end_day, time.max)
+    was = trades.capital_at(start_dt, rows, current)
+    capital_end = trades.capital_at(end_dt, rows, current)
+    in_term = [r for r in rows if start_dt <= r["time"] <= end_dt]
+    income = trades.net_of_fee(trades.mine(trades.summary(in_term)["total"]))
+    return {"start": start_day.isoformat(), "end": end_day.isoformat(), "days": (end_day - start_day).days,
+            "was": was, "income": income, "capital_end": capital_end, "total": capital_end + income,
+            "pct": (income / was * 100) if was > 0 else None, "cur": trades.currency()}
+
+
 def dashboard(owner) -> tuple[str, InlineKeyboardMarkup]:
     """Стартовый экран: по каждому кабинету — вложено, PnL и ROI."""
     groups = accounts.cabinets(owner)

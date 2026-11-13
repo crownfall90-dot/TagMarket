@@ -970,6 +970,66 @@ class RollupCarryTests(unittest.TestCase):
         trades.use(accounts.load()[0])
         return trades.capital()
 
+    def closing(self, ticket, net, when):
+        store.save_deals(self.tdb, 123, [{
+            "ticket": ticket, "time": when, "symbol": "X", "side": "buy", "volume": 1, "price": 1,
+            "profit": net, "swap": 0, "commission": 0, "net": net,
+            "is_balance": False, "is_closing": True, "is_opening": False, "comment": ""}])
+
+    def test_term_status_and_stats(self):
+        # срок счёта: идёт → вышел; «продолжить» оставляет счёт, без него контракт аннулируется
+        self.deal(1, 2400.0, "Deposit", datetime(2026, 8, 10, 12))
+        self.closing(10, 100.0, datetime(2026, 9, 5, 12))
+        self.closing(11, 50.0, datetime(2026, 9, 20, 12))
+        self.closing(12, 200.0, datetime(2026, 10, 15, 12))      # уже после срока — в итоги не входит
+        acc = {**accounts.load()[0], "term_start": "2026-09-01", "term_end": "2026-09-30", "term_continue": False}
+        running = self.bot.term_state(acc, today=date(2026, 9, 15))
+        self.assertEqual((running["status"], running["days_left"], running["stats"]), ("active", 15, None))
+        self.assertEqual(self.bot.term_state(acc, today=date(2026, 9, 30))["status"], "active")   # последний день — ещё срок
+        ended = self.bot.term_state(acc, today=date(2026, 10, 1))
+        self.assertEqual(ended["status"], "annulled")
+        stats = ended["stats"]
+        self.assertAlmostEqual(stats["income"], (100.0 + 50.0) * 0.7, places=2)
+        self.assertGreater(stats["was"], 0)
+        self.assertAlmostEqual(stats["total"], stats["capital_end"] + stats["income"], places=6)
+        self.assertEqual((stats["start"], stats["end"], stats["days"]), ("2026-09-01", "2026-09-30", 29))
+        keep = self.bot.term_state({**acc, "term_continue": True}, today=date(2026, 10, 1))
+        self.assertEqual(keep["status"], "ended")
+        self.assertIsNone(self.bot.term_state({**acc, "term_end": None}))
+
+    def test_account_term_reminders_are_sent_once(self):
+        import miniapp
+        self.closing(10, 100.0, datetime(2026, 9, 5, 12))
+        miniapp._change_account("1", 123, "PATCH", {"term_start": "2026-09-01", "term_end": "2026-09-30", "term_continue": False})
+        def run(day):
+            with patch.object(trades, "clock", return_value=datetime(2026, 9, day, 10)):
+                return miniapp.check_account_terms(self.db)
+        self.assertEqual(run(1), ["tagterm:123:2026-09-30:30"])   # осталось 29 дней ≤ 30 → первое напоминание
+        self.assertEqual(run(1), [])                       # повторно не шлём
+        self.assertEqual(len(run(24)), 1)                  # осталось 6 дней → порог 7
+        self.assertEqual(run(24), [])
+        self.assertEqual(len(run(29)), 1)                  # остался 1 день → порог 1
+        with patch.object(trades, "clock", return_value=datetime(2026, 10, 1, 10)):
+            done = miniapp.check_account_terms(self.db)    # срок вышел → итоги
+        self.assertEqual(len(done), 1)
+        row = self.db.execute("SELECT title, body FROM notifications WHERE event_key LIKE ?", ("tagterm:123:2026-09-30:0",)).fetchone()
+        self.assertIn("Срок вышел", row[0])
+        self.assertIn("аннулирован", row[1])
+        self.assertIn("+70.00", row[1])                     # 100 × 0.7 дохода за срок
+
+    def test_account_term_fields_are_validated_and_saved(self):
+        import miniapp
+        miniapp._change_account("1", 123, "PATCH", {"term_start": "2026-09-01", "term_end": "2027-01-15", "term_continue": True})
+        saved = accounts.load()[0]
+        self.assertEqual((saved["term_start"], saved["term_end"], saved["term_continue"]), ("2026-09-01", "2027-01-15", True))
+        for bad in ({"term_end": "2026-08-01"}, {"term_end": "15.01.2027"}, {"term_continue": "yes"}, {"term_end": "2099-01-01"}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                miniapp._change_account("1", 123, "PATCH", bad)
+        miniapp._change_account("1", 123, "PATCH", {"term_end": None})
+        cleared = accounts.load()[0]
+        self.assertIsNone(cleared["term_end"])
+        self.assertFalse(cleared["term_continue"])
+
     def test_base_capital_survives_rollup(self):
         self.deal(1, 2400.0, "Deposit", datetime(2026, 8, 10, 12))      # +100 своих денег
         self.deal(2, -1200.0, "Withdraw", datetime(2026, 8, 20, 12))    # −50
@@ -1424,6 +1484,39 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(projects.announce_contract_term(self.db), ["1"])       # анонс — один раз на владельца
             self.assertEqual(projects.announce_contract_term(self.db), [])
 
+    async def test_project_term_is_inherited_by_accounts_without_their_own(self):
+        base = {"name": "Term", "currency": "USD", "rate_percent": 1, "period": "day", "multi": True,
+                "capitalization": True, "capitalization_from": "2026-10-01", "income_to": "2026-10-21"}
+        with patch.object(projects, "today", return_value=date(2026, 10, 11)):
+            saved = projects.save(self.db, "1", {**base, "accounts": [
+                {"name": "A", "amount": 1000}, {"name": "B", "amount": 1000, "income_to": "2026-11-10"}]})
+            a, b = saved["accounts"]
+            self.assertEqual(saved["income_to"], "2026-10-21")
+            self.assertEqual((a["term_end"], a["term_inherited"], a["income_to"]), ("2026-10-21", True, None))
+            self.assertEqual((b["term_end"], b["term_inherited"]), ("2026-11-10", False))     # свой срок главнее
+            self.assertEqual((a["contract_status"], a["days_left"]), ("active", 10))
+            self.assertAlmostEqual(a["contract_final"], 1000 * 1.01 ** 20, places=2)
+            self.assertEqual(b["days_left"], 30)
+            # срок проекта поменяли — аккаунт без своего срока едет за ним, редактирование формы не «прилипает»
+            moved = projects.save(self.db, "1", {"income_to": "2026-10-31"}, saved["id"])
+            self.assertEqual(moved["accounts"][0]["term_end"], "2026-10-31")
+            self.assertIsNone(moved["accounts"][0]["income_to"])
+            # проверки: срок не раньше начала начислений
+            with self.assertRaises(ValueError):
+                projects.save(self.db, "1", {"income_from": "2026-10-10", "income_to": "2026-10-10"}, saved["id"])
+            with self.assertRaises(ValueError):
+                projects.save(self.db, "1", {"accounts": [{"name": "A", "amount": 1, "income_from": "2026-11-01"}]}, saved["id"])
+            # напоминания приходят и аккаунтам, которые наследуют срок проекта
+        with patch.object(projects, "today", return_value=date(2026, 10, 24)):
+            self.assertEqual(len(projects.check_contract_terms(self.db)), 2)   # A: 7 дней (наследует), B: 17 дней → порог 30
+        # срок проекта убрали: аккаунт без своего срока снова бессрочный, свой срок остался
+        with patch.object(projects, "today", return_value=date(2026, 10, 11)):
+            cleared = projects.save(self.db, "1", {"income_to": None}, saved["id"])
+            a2, b2 = cleared["accounts"]
+            self.assertIsNone(a2["term_end"])
+            self.assertIsNone(a2["contract_status"])
+            self.assertEqual(b2["term_end"], "2026-11-10")
+
     async def test_account_fixed_income_is_paid_on_top_of_the_percent_rate(self):
         with patch.object(projects, "today", return_value=date(2026, 10, 2)):
             saved = projects.save(self.db, "1", {"name": "Mixed", "currency": "USD", "rate_percent": 2,
@@ -1539,19 +1632,43 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(later["income_starts"], "2026-10-10")
         self.assertEqual(later["current_total"], 1000)       # капитализация ещё не началась
         self.assertEqual(later["expected_income"], 0)
-        self.assertEqual(forecast["checkpoints"]["week"]["total"], 1000)
-        self.assertAlmostEqual(forecast["total"], 1020.1)    # два дня с 10-го числа
+        self.assertAlmostEqual(forecast["checkpoints"]["week"]["total"], 1010)   # сам день начала (10-е) уже приносит доход
+        self.assertAlmostEqual(forecast["total"], 1030.301)  # три дня: 10, 11 и 12 число
         with patch.object(projects, "today", return_value=date(2026, 10, 12)):
             started = projects.get(self.db, "1", later["id"])
-        self.assertAlmostEqual(started["current_total"], 1020.1)
+        self.assertAlmostEqual(started["current_total"], 1030.301)
         self.assertIsNone(started["income_starts"])
         # своя дата у аккаунта сильнее даты проекта; формат проверяется
         with patch.object(projects, "today", return_value=start):
             mixed = projects.account_change(self.db, "1", later["id"], {"amount":500, "income_from":"2026-10-01"})
-            self.assertEqual(mixed["expected_income"], 5)  # первый ещё ждёт, второй уже работает
+            # первый ещё ждёт, второй уже работает: начало с 1-го числа, за 1, 2 и 3 число начислено (500 × 1,01³), доход на этот баланс 1%
+            self.assertAlmostEqual(mixed["expected_income"], 500 * 1.01 ** 3 * 0.01, places=4)
             for bad in ("10.10.2026", "2046-01-01", 5):
                 with self.assertRaises(ValueError):
                     projects.save(self.db, "1", {"income_from": bad}, later["id"])
+
+    async def test_backdated_income_start_counts_the_start_day_and_today(self):
+        # вклад открыт 10 ноября, внесён в приложение 13-го с началом поступлений 11-го:
+        # доход за 11, 12 и 13 число (три дня) ложится в баланс сразу
+        with patch.object(projects, "today", return_value=date(2026, 11, 13)):
+            saved = projects.save(self.db, "1", {"name": "Back", "currency": "USD", "rate_percent": 1, "period": "day",
+                "multi": True, "capitalization": False, "income_from": "2026-11-11",
+                "accounts": [{"name": "plain", "amount": 1000}, {"name": "cap", "amount": 1000, "capitalization": True,
+                                                                 "capitalization_from": "2026-11-01"}]})
+            plain, cap = saved["accounts"]
+            self.assertAlmostEqual(plain["current_amount"], 1030)               # 3 × 1% простым
+            self.assertAlmostEqual(cap["current_amount"], 1000 * 1.01 ** 3, places=3)
+            self.assertAlmostEqual(plain["accrued_income"], 30)
+            # завтра — четвёртый день; прогноз «на завтра» согласован с текущим балансом
+            forecast = projects.forecast(self.db, "1", saved["id"], "2026-11-14", False)
+            self.assertAlmostEqual(forecast["checkpoints"]["now"]["accounts"][0]["working"], 1030)
+            self.assertAlmostEqual(forecast["checkpoints"]["day"]["accounts"][0]["working"], 1040)
+        with patch.object(projects, "today", return_value=date(2026, 11, 14)):
+            self.assertAlmostEqual(projects.get(self.db, "1", saved["id"])["accounts"][0]["current_amount"], 1040)
+        with patch.object(projects, "today", return_value=date(2026, 11, 10)):   # день до начала — ещё ничего
+            self.assertAlmostEqual(projects.get(self.db, "1", saved["id"])["accounts"][0]["current_amount"], 1000)
+        with patch.object(projects, "today", return_value=date(2026, 11, 11)):   # день начала — первый день дохода
+            self.assertAlmostEqual(projects.get(self.db, "1", saved["id"])["accounts"][0]["current_amount"], 1010)
 
     async def test_project_income_is_added_to_balance_every_day(self):
         # 3% в месяц, октябрь — 31 день: через 10 дней к балансу прибавилось 10/31 месячного дохода
