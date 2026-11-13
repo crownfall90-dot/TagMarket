@@ -18,6 +18,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from urllib.parse import quote, urlsplit
 
 import aiohttp
+import lean  # noqa: F401  — до aiogram: схемы типов строятся лениво (−100 МБ)
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession

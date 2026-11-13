@@ -24,6 +24,7 @@ from urllib.parse import parse_qsl
 from account_lock import locked
 
 from aiohttp import web
+import lean  # noqa: F401  — до aiogram: схемы типов строятся лениво (−100 МБ)
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramForbiddenError
 from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
