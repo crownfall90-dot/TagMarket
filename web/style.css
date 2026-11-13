@@ -3116,7 +3116,8 @@ dialog.no-exit:not([open]),dialog.no-exit:not([open])::backdrop{animation:none}
 
 /* Свайп между разделами: соседний раздел едет рядом, пока палец на экране */
 main.workspace{position:relative}
-.main-peek{position:absolute;overflow:hidden;pointer-events:none;z-index:2;margin:0;min-height:0;background:var(--bg);will-change:transform}
+.main-peek{position:absolute;top:0;left:0;height:100vh;overflow:hidden;pointer-events:none;z-index:2;margin:0;min-height:0;background:var(--bg);visibility:hidden;contain:strict;will-change:transform}
+.main-peek.on{visibility:visible}
 .main-peek,.main-peek *{animation:none!important;transition:none!important}
 .rel-card .rel-group{margin-top:10px}
 .rel-card .rel-group small{display:block;font-size:11.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--faint)}
