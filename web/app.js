@@ -2643,7 +2643,7 @@ document.addEventListener('focusin',event=>{const cube=event.target.closest?.('.
  const ORDER=tabs.map(t=>t[0]),still=()=>reducedMotion(),ease='cubic-bezier(.2,.85,.25,1)',SLOP=10;
  const current=()=>{const v=state.view;return ['account','accounts','project','forecast','tagmarket','onboarding','banks','income'].includes(v)?'projects':['faq','circle'].includes(v)?'overview':v==='friend'?'people':v;};
  const blocked=el=>{for(let n=el;n&&n!==main;n=n.parentElement){if(n.matches?.('input,textarea,select,[contenteditable],.chart-wrap,.price-chart-wrap,.table-wrap,.segmented,.seg-pick,.pa-grip,[draggable=true],[data-noswipe]'))return true;if(n.scrollWidth>n.clientWidth+2&&/(auto|scroll)/.test(getComputedStyle(n).overflowX))return true;}return false;};
- // Соседи собираются заранее, в простое, и ждут скрытыми: во время свайпа палец только двигает
+ // Соседи собираются заранее, в простое, и ждут вне страницы (не мешают поиску элементов): во время свайпа палец только двигает
  // готовые слои (transform), без сборки страницы — поэтому первый кадр жеста не дёргается
  const ready=new Map();   // имя раздела → готовый скрытый слой
  const build=name=>{
@@ -2651,18 +2651,17 @@ document.addEventListener('focusin',event=>{const cube=event.target.closest?.('.
   if(!el){el=document.createElement('main');el.className='main-peek';el.setAttribute('aria-hidden','true');ready.set(name,el);}
   let html='';try{html=asView(name,()=>(viewMap()[name]||overview)());}catch{html='';}
   el.style.width=`${main.offsetWidth}px`;el.style.left=`${main.offsetLeft}px`;
-  el.innerHTML=html;el.dataset.at=Date.now();
-  if(!el.isConnected)main.parentElement.appendChild(el);
+  el.innerHTML=html;el.querySelectorAll('[id]').forEach(n=>n.removeAttribute('id'));   // без двойников id
   return el;
  };
  const idle=fn=>(window.requestIdleCallback||(f=>setTimeout(f,120)))(fn,{timeout:800});
  const neighbours=()=>{const i=ORDER.indexOf(current());return i<0?[]:[ORDER[i-1],ORDER[i+1]].filter(Boolean);};
- const prepare=()=>{if(g)return;const want=new Set(neighbours());for(const [n,el] of ready)if(!want.has(n)){el.remove();ready.delete(n);}for(const n of want){prefetchView(n);idle(()=>{if(!g&&neighbours().includes(n))build(n);});}};
+ const prepare=()=>{if(g)return;const want=new Set(neighbours());for(const n of [...ready.keys()])if(!want.has(n))ready.delete(n);for(const n of want){prefetchView(n);idle(()=>{if(!g&&neighbours().includes(n))build(n);});}};
  document.addEventListener('view-shown',prepare);
  document.addEventListener('view-prefetched',e=>{if(ready.has(e.detail)&&!g)idle(()=>{if(!g)build(e.detail);});});
  let g=null,peek=null,busy=false,frame=0;
  const width=()=>main.offsetWidth||innerWidth;
- const hidePeek=()=>{if(peek){peek.classList.remove('on');peek.style.transition='none';peek.style.transform='';}peek=null;};
+ const hidePeek=()=>{if(peek){peek.classList.remove('on');peek.style.transition='none';peek.style.transform='';peek.remove();}peek=null;};
  // сосед стоит там, где окажется верх раздела после перехода (переход прокручивает к началу) — без прыжка в конце
  const showPeek=name=>{
   if(peek&&peek.dataset.name===name)return peek;
@@ -2670,9 +2669,10 @@ document.addEventListener('focusin',event=>{const cube=event.target.closest?.('.
   const el=ready.get(name)||build(name),top=main.getBoundingClientRect().top+scrollY;
   el.dataset.name=name;el.style.top=`${main.offsetTop+scrollY}px`;el.style.left=`${main.offsetLeft}px`;el.style.width=`${main.offsetWidth}px`;
   el.style.height=`${Math.max(0,innerHeight-top)}px`;
+  if(!el.isConnected)main.parentElement.appendChild(el);
   el.classList.add('on');peek=el;return el;
  };
- const paint=()=>{frame=0;if(!g?.on)return;const {dx,dir,edge}=g;main.style.transform=`translate3d(${edge?dx*.2:dx}px,0,0)`;if(peek)peek.style.transform=`translate3d(${dx+dir*width()}px,0,0)`;};
+ const paint=()=>{frame=0;if(!g?.on)return;const {dx,dir,edge}=g;main.style.transform=`translate3d(${edge?dx*.2:dx}px,0,0)`;if(peek){peek.style.top=`${main.offsetTop+scrollY}px`;peek.style.transform=`translate3d(${dx+dir*width()}px,0,0)`;}};
  const animate=(el,to,ms)=>{el.style.transition=`transform ${ms}ms ${ease}`;el.style.transform=to;};
  main.addEventListener('touchstart',e=>{
   if(busy||e.touches.length!==1||document.querySelector('dialog[open]')||blocked(e.target)){g=null;return;}
