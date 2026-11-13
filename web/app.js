@@ -2458,19 +2458,34 @@ document.addEventListener('focusin',event=>{const cube=event.target.closest?.('.
 (()=>{
  const CHEVRON='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>',TICK='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>';
  const buttons=new Map(),done=new WeakSet();
+ const compact=select=>{const o=[...select.children];return o.length>=2&&o.length<=4&&o.every(c=>c.tagName==='OPTION'&&!c.hidden)&&o.reduce((n,c)=>n+c.textContent.trim().length,0)<=34;};
  const titleOf=select=>{const holder=select.closest('label,.field'),text=holder&&[...holder.childNodes].find(n=>n.nodeType===3&&n.textContent.trim());return (select.getAttribute('aria-label')||text?.textContent.trim()||holder?.querySelector('small,span')?.textContent.trim()||'Выберите').slice(0,60);};
  const shown=select=>select.selectedOptions[0]?.textContent.trim()||'Выберите';
  function sync(select,button){const label=button.firstChild;if(label.textContent!==shown(select))label.textContent=shown(select);if(button.disabled!==select.disabled)button.disabled=select.disabled;if(button.hidden!==select.hidden)button.hidden=select.hidden;}
  function enhance(select){
   if(done.has(select)||select.multiple||select.size>1)return;
   done.add(select);
-  const button=document.createElement('button');button.type='button';button.className=`pick-btn ${select.className}`.trim();
+  select.classList.add('pick-native');select.tabIndex=-1;
+  if(compact(select)){
+   const group=document.createElement('div');group.className=`seg-pick ${select.className}`.replace('pick-native','').trim();group.setAttribute('role','radiogroup');group.setAttribute('aria-label',titleOf(select));
+   const radios=[...select.options].map(option=>{
+    const radio=document.createElement('button');radio.type='button';radio.className='seg-opt';radio.setAttribute('role','radio');radio.innerHTML='<i class="dot"></i><span></span>';radio.lastChild.textContent=option.textContent.trim();
+    radio.addEventListener('click',()=>choose(select,option.value));
+    radio.addEventListener('keydown',e=>{const step={ArrowRight:1,ArrowDown:1,ArrowLeft:-1,ArrowUp:-1}[e.key];if(!step)return;e.preventDefault();const next=radios[(radios.indexOf(radio)+step+radios.length)%radios.length];next.focus();next.click();});
+    group.append(radio);return radio;});
+   select.after(group);
+   const update=()=>{radios.forEach((radio,i)=>{const on=select.options[i]?.selected||false;radio.setAttribute('aria-checked',String(on));radio.tabIndex=on?0:-1;radio.disabled=select.disabled||select.options[i]?.disabled;});if(group.hidden!==select.hidden)group.hidden=select.hidden;};
+   buttons.set(select,{node:group,update});select.addEventListener('change',update);update();return;
+  }
+  const button=document.createElement('button');button.type='button';button.className=`pick-btn ${select.className}`.replace('pick-native','').trim();
   button.innerHTML=`<span></span>${CHEVRON}`;button.setAttribute('aria-haspopup','listbox');
-  select.classList.add('pick-native');select.tabIndex=-1;select.after(button);buttons.set(select,button);
+  select.after(button);
+  const update=()=>sync(select,button);
+  buttons.set(select,{node:button,update});
   button.addEventListener('click',()=>open(select,button));
-  select.addEventListener('change',()=>sync(select,button));
-  sync(select,button);
+  select.addEventListener('change',update);update();
  }
+ function choose(select,value){if(select.value!==value){select.value=value;select.dispatchEvent(new Event('input',{bubbles:true}));select.dispatchEvent(new Event('change',{bubbles:true}));}}
  function open(select,button){
   sync(select,button);
   const dlg=document.createElement('dialog');dlg.className='picker';
@@ -2481,7 +2496,7 @@ document.addEventListener('focusin',event=>{const cube=event.target.closest?.('.
    const row=document.createElement('button');row.type='button';row.className='picker-opt';row.setAttribute('role','option');
    row.setAttribute('aria-selected',String(option.selected));row.disabled=option.disabled;
    row.innerHTML='<span></span><i class="tick"></i>';row.firstChild.textContent=option.textContent.trim();row.lastChild.innerHTML=TICK;
-   row.addEventListener('click',()=>{if(select.value!==option.value){select.value=option.value;select.dispatchEvent(new Event('input',{bubbles:true}));select.dispatchEvent(new Event('change',{bubbles:true}));}dlg.close();});
+   row.addEventListener('click',()=>{choose(select,option.value);dlg.close();});
    list.append(row);
   };
   for(const child of select.children){
@@ -2495,7 +2510,7 @@ document.addEventListener('focusin',event=>{const cube=event.target.closest?.('.
   list.querySelector('[aria-selected=true]')?.scrollIntoView({block:'center'});
  }
  let queued=false;
- function scan(){queued=false;document.querySelectorAll('select').forEach(enhance);for(const [select,button] of buttons){if(!select.isConnected){button.remove();buttons.delete(select);}else sync(select,button);}}
+ function scan(){queued=false;document.querySelectorAll('select').forEach(enhance);for(const [select,item] of buttons){if(!select.isConnected){item.node.remove();buttons.delete(select);}else item.update();}}
  const schedule=()=>{if(!queued){queued=true;requestAnimationFrame(scan);}};
  new MutationObserver(schedule).observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['disabled','hidden']});
  scan();

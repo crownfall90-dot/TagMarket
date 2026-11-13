@@ -2896,3 +2896,17 @@ dialog.picker[open]{display:flex;flex-direction:column}
 .picker-opt[aria-selected=true] .tick{background:var(--accent);border-color:var(--accent)}
 .picker-opt[aria-selected=true] .tick svg{opacity:1}
 @media(min-width:741px){dialog.picker{margin:auto;max-width:380px}}
+
+/* Компактный выбор: 2–4 коротких варианта — переключатель-радио прямо в форме */
+.seg-pick{display:flex;flex-wrap:wrap;gap:4px;width:100%;min-width:0;padding:4px;background:var(--bg);border:1px solid var(--line);border-radius:14px}
+.seg-pick[hidden]{display:none}
+.seg-opt{flex:1 1 auto;display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:38px;padding:8px 12px;border:1px solid transparent;border-radius:10px;background:transparent;color:var(--muted);font:inherit;font-size:13px;white-space:nowrap;transition:background .18s,color .18s,border-color .18s}
+.seg-opt .dot{position:relative;flex:none;width:16px;height:16px;border-radius:50%;border:1.5px solid var(--faint);transition:border-color .18s}
+.seg-opt .dot:after{content:"";position:absolute;inset:3px;border-radius:50%;background:var(--accent);transform:scale(0);transition:transform .18s var(--ease-out,ease)}
+.seg-opt:hover:not(:disabled){color:var(--text)}
+.seg-opt[aria-checked=true]{background:rgb(var(--accent-rgb) / .14);border-color:rgb(var(--accent-rgb) / .45);color:var(--text);font-weight:550}
+.seg-opt[aria-checked=true] .dot{border-color:var(--accent)}
+.seg-opt[aria-checked=true] .dot:after{transform:scale(1)}
+.seg-opt:disabled{opacity:.45}
+.seg-pick{container-type:inline-size}
+@container (max-width:260px){.seg-opt{padding:8px 8px;gap:0;font-size:12.5px}.seg-opt .dot{display:none}}
