@@ -911,6 +911,98 @@ def link_buttons(link: str, inline_ok: bool = False) -> list[InlineKeyboardButto
            InlineKeyboardButton(text="↗️ Переслать", url=share)]
 
 
+# ── Сообщения об обновлениях: после выпуска бот и пуш сами рассказывают, что добавилось, изменилось и убрано ──
+RELEASES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web", "releases.json")
+KEY_RELEASE_SENT = "release_announced"
+RELEASE_GROUPS = (("added", "➕", "Добавлено"), ("changed", "🔧", "Изменено"), ("removed", "➖", "Убрано"))
+MONTHS_RU = ("января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря")
+
+
+def release_entries() -> list[dict]:
+    """Записи журнала обновлений (web/releases.json), от старых к новым."""
+    try:
+        with open(RELEASES_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return []
+    entries = [e for e in data if isinstance(e, dict) and e.get("v") and e.get("title")] if isinstance(data, list) else []
+    return sorted(entries, key=lambda e: str(e["v"]))
+
+
+def release_text(entry: dict) -> str:
+    """Сообщение в бота: заголовок, дата и три группы в цитатах. Кратко: по пунктам, без лишних слов."""
+    build = str(entry["v"]).rsplit("-", 1)[-1]
+    try:
+        d = date.fromisoformat(str(entry.get("date")))
+        when = f"{d.day} {MONTHS_RU[d.month - 1]} {d.year}"
+    except ValueError:
+        when = ""
+    lines = [f"🆕 <b>Обновление Platformer</b> · сборка {html.escape(build)}"]
+    if when:
+        lines.append(f"<i>{when}</i>")
+    lines += ["", f"<b>{html.escape(str(entry['title']))}</b>"]
+    for key, icon, label in RELEASE_GROUPS:
+        items = [str(i) for i in (entry.get(key) or []) if i]
+        if items:
+            lines += ["", f"{icon} <b>{label}</b>", "<blockquote>" + "\n".join("• " + html.escape(i) for i in items) + "</blockquote>"]
+    return "\n".join(lines)
+
+
+def release_push(entry: dict) -> tuple[str, str]:
+    """Заголовок и короткий текст для пуша в приложение."""
+    parts = []
+    for key, _, label in RELEASE_GROUPS:
+        items = [str(i) for i in (entry.get(key) or []) if i]
+        if items:
+            parts.append(f"{label}: {items[0]}" + (f" (+{len(items) - 1})" if len(items) > 1 else ""))
+    return f"Обновление: {entry['title']}", " · ".join(parts)[:300]
+
+
+def release_recipients(db) -> set[str]:
+    """Кому рассказываем об обновлении: пользователи бота, владельцы счетов и телефоны с приложением."""
+    uids = {str(uid) for uid, _ in all_guests(db)}
+    uids |= {str(a["owner"]) for a in accounts.load()}
+    try:
+        uids |= {str(r[0]) for r in db.execute("SELECT DISTINCT owner_id FROM app_devices")}
+    except Exception:
+        pass
+    return {u for u in uids if u.lstrip("-").isdigit()}
+
+
+async def announce_release(bot: Bot, db) -> int:
+    """Новая запись журнала → сообщение в бота и пуш в приложение. Каждая запись уходит один раз.
+
+    Первый запуск рассказывает только о самой свежей записи, а не всю историю; если же накопилось
+    несколько записей (сервер был недоступен), каждая идёт отдельным обновлением (не больше трёх)."""
+    entries = release_entries()
+    if not entries:
+        return 0
+    last = kv_get(db, KEY_RELEASE_SENT)
+    fresh = [e for e in entries if last is None or str(e["v"]) > last]
+    if last is None:
+        fresh = fresh[-1:]
+    if not fresh:
+        return 0
+    kv_set(db, KEY_RELEASE_SENT, str(entries[-1]["v"]))     # помечаем сразу: повторной рассылки не будет, даже если часть отправок не прошла
+    sent = 0
+    for entry in fresh[-3:]:
+        title, body = release_push(entry)
+        text = release_text(entry)
+        for uid in sorted(release_recipients(db)):
+            try:
+                partner.record_notification(db, uid, f"release:{entry['v']}", "update", title, body)   # колокольчик + пуш на телефон
+            except Exception:
+                log.exception("не записал уведомление об обновлении для %s", uid)
+            try:
+                await send(bot, int(uid), text)
+                sent += 1
+            except Exception as e:
+                log.warning("об обновлении не доставил %s: %s", uid, e)
+            await asyncio.sleep(0.05)
+    log.info("обновление %s: сообщений в бота — %d", entries[-1]["v"], sent)
+    return sent
+
+
 def all_guests(db) -> list[tuple[str, str]]:
     """Все, кто зашёл по чьей-либо ссылке и не отключил бота: [(uid, имя)].
 
@@ -3307,6 +3399,17 @@ async def main():
         _background(telegram_watchdog())
         _background(machines_watchdog())
         _background(mt5_loop())
+
+        async def release_announcer():
+            await asyncio.sleep(25)         # дать боту подняться после выкладки
+            while True:
+                try:
+                    await announce_release(bot, db)
+                except Exception:
+                    log.exception("не разослал сообщение об обновлении")
+                await asyncio.sleep(600)
+
+        _background(release_announcer())
         # кабинет IB Portal временно не опрашиваем — токен просрочен, а новый
         # брать пока не нужно: без этого только пропадает лента уведомлений
         # о лидах/депозитах партнёрской сети, счета и баланс кошелька не
