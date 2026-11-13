@@ -157,6 +157,12 @@ async def deliver(db) -> int:
         spend.check_upcoming_reminders(db)
     except Exception:
         pass
+    try:
+        import projects
+        projects.check_contract_terms(db)
+        projects.announce_contract_term(db)
+    except Exception:
+        log.exception("push: проверка сроков контрактов не удалась")
     acc = account()
     newest = db.execute("SELECT COALESCE(MAX(id),0) FROM notifications").fetchone()[0]
     raw = partner.kv_get(db, KEY_LAST)
