@@ -1624,7 +1624,7 @@ function overview(){
  const todayEvents=(lists?.upcoming||[]).filter(e=>e.date===projectToday());
  const hints=[];
  if(todayEvents.length)hints.push(`сегодня ${countLabel(todayEvents.length,['событие','события','событий'])}`);
- const sub=hints.length?hints.join(' · ').replace(/^./,c=>c.toUpperCase()):'Хорошего дня!';
+ const sub=hints.length?hints.join(' · ').replace(/^./,c=>c.toUpperCase()):greeting;
  const openTasks=(lists?.tasks||[]).filter(t=>!t.done),today3=projectToday();
  const dueToday=openTasks.filter(t=>t.due&&t.due<=today3).length;
  const minutes=mskMinutes(),dayPct=Math.round(minutes/14.4)/100;
@@ -1632,7 +1632,7 @@ function overview(){
  if(p.home.includes('finance'))stats.push(`<a href="#projects" class="greet-stat"><span class="greet-stat-icon">${icon('projects')}</span><span><b>${portfolio.own==null?'—':countUp(portfolio.own,`money:${state.displayCurrency}`)}</b><small>все активы</small></span></a>`);
  stats.push(`<a href="#plans/tasks" class="greet-stat" data-action="lists-open" data-value="tasks"><span class="greet-stat-icon">${icon('plans')}</span><span><b>${countUp(dueToday,'int')}</b><small>${dueToday?`${countLabel(dueToday,['дело','дела','дел']).split(' ').slice(1).join(' ')} на сегодня`:'дел на сегодня'}</small></span></a>`);
  stats.push(`<a href="#plans/calendar" class="greet-stat" data-action="lists-open" data-value="calendar"><span class="greet-stat-icon">${icon('calendar')}</span><span><b>${countUp(todayEvents.length,'int')}</b><small>${countLabel(todayEvents.length,['событие','события','событий']).split(' ').slice(1).join(' ')} сегодня</small></span></a>`);
- const hero=`<section class="greet" data-ui-key="greet"><div class="greet-top"><span class="greet-sky">${dayIcon(hour)}</span><span class="greet-date">${esc(today.charAt(0).toUpperCase()+today.slice(1))}</span></div><h1 class="greet-title">${greeting}${name?`,<br><em>${esc(name)}</em>`:''}</h1><p class="greet-sub">${esc(sub)}</p><div class="greet-day" aria-hidden="true" title="Сколько дня прошло"><i style="--p:${dayPct}"></i></div><div class="greet-stats">${stats.join('')}</div></section>`;
+ const hero=`<section class="greet" data-ui-key="greet"><div class="greet-top"><span class="greet-sky">${dayIcon(hour)}</span><span class="greet-date">${esc(today.charAt(0).toUpperCase()+today.slice(1))}</span></div><h1 class="greet-title">${name?`Привет, <em>${esc(name)}</em>`:'Привет'}</h1><p class="greet-sub">${esc(sub)}</p><div class="greet-day" aria-hidden="true" title="Сколько дня прошло"><i style="--p:${dayPct}"></i></div><div class="greet-stats">${stats.join('')}</div></section>`;
  const cards={
   circle:()=>circleCard(),
   tasks:()=>tasksCard(),

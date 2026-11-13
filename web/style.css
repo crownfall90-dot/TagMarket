@@ -2910,3 +2910,25 @@ dialog.picker[open]{display:flex;flex-direction:column}
 .seg-opt:disabled{opacity:.45}
 .seg-pick{container-type:inline-size}
 @container (max-width:260px){.seg-opt{padding:8px 8px;gap:0;font-size:12.5px}.seg-opt .dot{display:none}}
+
+/* ── Минимализм в стиле Apple: нейтральные токены двух тем, плоские карточки, приветствие слева ── */
+:root{--bg:#000;--bg-rgb:0 0 0;--panel:#101012;--panel-rgb:16 16 18;--raised:#1a1a1d;--raised-2:#252529;--line:rgb(255 255 255 / .08);--line-soft:rgb(255 255 255 / .06);--text:#f5f5f7;--muted:#8e8e93;--faint:#636366;--glass:rgb(28 28 30 / .72);--card-border:1px solid rgb(255 255 255 / .07);--elev-1:none;--shadow:0 24px 60px rgb(0 0 0 / .55);--r-card:22px}
+:root[data-theme=light]{--bg:#f5f5f7;--bg-rgb:245 245 247;--panel:#fff;--panel-rgb:255 255 255;--raised:#f2f2f7;--raised-2:#e5e5ea;--line:rgb(0 0 0 / .08);--line-soft:rgb(0 0 0 / .06);--text:#1d1d1f;--muted:#6e6e73;--faint:#8e8e93;--glass:rgb(255 255 255 / .8);--card-border:1px solid rgb(0 0 0 / .05);--elev-1:0 1px 2px rgb(0 0 0 / .04);--shadow:0 18px 44px rgb(0 0 0 / .1)}
+.panel,.stat,.account-card,.project-card,.people-card{box-shadow:var(--elev-1);border-radius:var(--r-card)}
+.button.primary,.primary{box-shadow:none}
+h1,.page-head h1{font-weight:650;letter-spacing:-.04em}
+.greet{display:block;text-align:left;padding:2px 2px 0;margin:0 0 24px}
+.greet-top{display:block;margin:0}
+.greet-sky,.greet-day{display:none}
+.greet-date{display:block;font-size:12.5px;font-weight:550;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.greet-title{margin:6px 0 0;font-size:clamp(34px,9.6vw,46px);line-height:1.06;font-weight:700;letter-spacing:-.045em;color:var(--text)}
+.greet-title em{font-style:normal;color:inherit}
+.greet-sub{margin:8px 0 0;font-size:15px;color:var(--muted)}
+.greet-stats{margin-top:22px;gap:10px}
+.greet-stat{background:var(--panel);border:var(--card-border);box-shadow:var(--elev-1);border-radius:20px;padding:14px 15px}
+.greet-stat-icon{background:none;color:var(--muted);width:auto;height:auto;border:0}
+.greet-stat b{font-size:18px;font-weight:600;letter-spacing:-.02em}
+.greet-stat small{color:var(--muted)}
+.greet-stats .greet-stat:first-child{background:var(--panel);border:var(--card-border);color:var(--text);box-shadow:var(--elev-1)}
+.greet-stats .greet-stat:first-child small{color:var(--muted)}
+.greet-stats .greet-stat:first-child .greet-stat-icon{background:none;color:var(--accent)}
