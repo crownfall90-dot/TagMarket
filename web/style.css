@@ -3065,3 +3065,16 @@ h1,.page-head h1{font-weight:650;letter-spacing:-.04em}
 .term-archive-card .ta-cell small{font-size:12px;color:var(--muted)}
 .term-archive-card .ta-cell b{font-size:17px;font-weight:650;letter-spacing:-.02em}
 .tag-archive{margin-top:14px}
+
+/* Прогноз: итог к окончанию контрактов рядом с выбранной датой */
+.forecast-contracts .cf-card{padding:14px 0;border-top:1px solid var(--line)}
+.forecast-contracts .panel-head+.stat-note+.cf-card{border-top:0}
+.forecast-contracts .cf-card header h3{margin:0;font-size:15px}
+.forecast-contracts .cf-card header p{margin-top:2px;font-size:12.5px;color:var(--muted)}
+.forecast-contracts .cf-values{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:10px}
+.forecast-contracts .cf-values small{display:block;font-size:12px;color:var(--muted)}
+.forecast-contracts .cf-values b{display:block;font-size:15px;font-weight:650;letter-spacing:-.02em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.forecast-contracts .cf-total{display:grid;grid-template-columns:1fr auto;gap:2px 12px;align-items:baseline;margin-top:6px;padding:14px;border-radius:14px;background:var(--raised)}
+.forecast-contracts .cf-total span{color:var(--muted);font-size:13px}
+.forecast-contracts .cf-total b{font-size:18px;font-weight:700;letter-spacing:-.02em;text-align:right}
+.forecast-contracts .cf-total small{grid-column:2;text-align:right;font-size:12.5px}
