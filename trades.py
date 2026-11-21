@@ -11,8 +11,11 @@ import re
 import subprocess
 import time
 from datetime import date, datetime, time as dtime, timedelta, timezone
+from math import isclose
 
 from dotenv import load_dotenv
+
+import accounts
 
 log = logging.getLogger("trades")
 
@@ -485,6 +488,61 @@ def capital_at(when: datetime, rows: list[dict], current: float = None) -> float
     запросов на один экран Mini App).
     """
     return (capital() if current is None else current) - capital_moves_after(rows, when)
+
+
+TRADE_ROUNDING_LIMIT = 0.05   # полцента округления здесь составляет от 10% результата
+COPIED_CLOSE_WINDOW = timedelta(seconds=2)
+
+
+def reference_trade_percentages(acc: dict, deals: list[tuple[dict, float]], cur: str) -> dict[int, float]:
+    """Процент того же закрытия на более крупном счёте, если свой неточен или недоступен."""
+    if HAS_MT5:
+        return {}
+    small_deals = [(row, base) for row, base in deals
+                   if row["is_closing"] and row.get("price")
+                   and row.get("symbol") and row.get("side")
+                   and (base <= 0 or abs(row["net"]) <= TRADE_ROUNDING_LIMIT)]
+    if not small_deals:
+        return {}
+
+    db = _store_db()
+    best = {}
+    try:
+        sources = [peer for peer in accounts.load() if not peer.get("shared_by")]
+        for peer in accounts.dedup(sources, by_owner=False):
+            login = int(peer["login"])
+            if login == int(acc["login"]) or peer["server"] != acc["server"]:
+                continue
+            state = store.get_state(db, login)
+            if not state or (state["currency"] or "USD") != cur:
+                continue
+
+            history = None
+            for row, base in small_deals:
+                when = row["time"]
+                symbol = row["symbol"].split(".")[0].upper()
+                side = row["side"].upper()
+                nearby = store.fetch(db, login, when - COPIED_CLOSE_WINDOW, when + COPIED_CLOSE_WINDOW)
+                matches = [other for other in nearby
+                           if other["is_closing"] and (other["symbol"] or "").split(".")[0].upper() == symbol
+                           and (other["side"] or "").upper() == side and other["price"]
+                           and isclose(row["price"], other["price"], rel_tol=0.0001)]
+                if len(matches) != 1:
+                    continue
+                other, = matches
+                if abs(other["net"] or 0) <= TRADE_ROUNDING_LIMIT:
+                    continue
+                if history is None:
+                    use(peer)
+                    current = capital()
+                    history = fetch(datetime(2000, 1, 1), clock() + timedelta(days=1), all_history=True)
+                peer_base = capital_at(other["time"], history, current)
+                ticket = row["ticket"]
+                if peer_base > best.get(ticket, (max(0, base), None))[0]:
+                    best[ticket] = (peer_base, net_of_fee(mine(other["net"])) / peer_base * 100)
+    finally:
+        use(acc)
+    return {ticket: percent for ticket, (_, percent) in best.items()}
 
 
 def capital_around(row: dict) -> tuple[float, float]:
@@ -1635,14 +1693,18 @@ def fmt_account_event(acc: dict, row: dict, cur: str, day_net: float = None,
     Общая для бота и для вебхука: если о переводе первым узнал вебхук, а
     строка MT5 уже есть в базе, сообщение выглядит ровно так же, как из бота.
     """
-    body = fmt_notification(row, cur, day_net, day_count, total_net, pair=pair)
+    if row["is_closing"] and not row["is_balance"] and not row["is_opening"]:
+        body, label = _trade_notification(row, cur, day_net, day_count, acc)
+    else:
+        body = fmt_notification(row, cur, day_net, day_count, total_net, pair=pair)
+        label = event_label(row, pair) if body else ""
     if not body:
         return "", "", ""
     title = acc.get("strategy") or acc["name"]
     who = acc.get("holder") or acc.get("cabinet") or ""
     sub = " · ".join(x for x in (html.escape(who), f"<code>{acc['login']}</code>") if x)
     tag = f"🏷 <b>{html.escape(title)}</b>" + (f"\n<i>{sub}</i>" if sub else "")
-    return (f"{tag}\n{THIN}\n{body}", f"{title} · {event_label(row, pair)}", feed_body(body))
+    return (f"{tag}\n{THIN}\n{body}", f"{title} · {label}", feed_body(body))
 
 
 def balance_line(around: dict, cur: str) -> str:
@@ -1729,10 +1791,14 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
     if row["is_opening"]:
         return ""       # про открытие не пишем: интересен результат, а он при закрытии
 
-    # ── закрытие позиции ──────────────────────────────────────────────────
+    body, _ = _trade_notification(row, cur, day_net, day_count)
+    return body
+
+
+def _trade_notification(row: dict, cur: str, day_net: float, day_count: int,
+                        acc: dict = None) -> tuple[str, str]:
     gross = mine(row["net"])          # результат сделки до комиссии брокера
     profit = net_of_fee(gross)        # чистыми — профит именно этой сделки
-    plus = profit >= 0
     cap = capital()                   # баланс стратегии сейчас (профит лежит отдельно)
     # процент — к капиталу НА МОМЕНТ сделки, не к сегодняшнему: уведомления
     # доставляются не мгновенно (late_note — отдельный случай, но и обычная
@@ -1754,13 +1820,20 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
     if not pct_base:
         pct_base = around["was"] or around["became"] - profit
     nth, total = ordinal_today(row)
+    reference_pct = (reference_trade_percentages(acc, [(row, cap_then)], cur).get(row["ticket"])
+                     if acc is not None else None)
+    deal_pct = reference_pct
+    if deal_pct is None and pct_base > 0:
+        deal_pct = profit / pct_base * 100
+    plus = (reference_pct if reference_pct is not None else profit) >= 0
+    label = "Сделка в плюс" if plus else "Сделка в минус"
 
     # коротко: когда, итог, результат, за день, что накоплено и сколько на стратегии
     out = [f"🕒 <b>{dow(row['time'])}, {row['time']:%d.%m.%Y  %H:%M:%S}</b>",
-           f"{'✅' if plus else '❌'} <b>Сделка в {'плюс' if plus else 'минус'}</b> · "
+           f"{'✅' if plus else '❌'} <b>{label}</b> · "
            f"{short(row['symbol'], 12).split('.')[0]} {'покупка' if str(row['side']).upper() == 'BUY' else 'продажа'}",
            f"<b>{money(profit)}{sign(cur)}</b>"
-           + (f"  <i>{pct(profit / pct_base * 100)}</i>" if pct_base else "")]
+           + (f"  <i>{pct(deal_pct)}</i>" if deal_pct is not None else "")]
 
     # профит за все сделки дня и его процент к капиталу — показываем всегда,
     # а не только когда сделок больше одной
@@ -1774,4 +1847,4 @@ def fmt_notification(row: dict, cur: str, day_net: float = None, day_count: int 
     if around["became"] or around["was"]:
         out.append(balance_line(around, cur))
     out.append(late_note(row))
-    return "\n".join(out)
+    return "\n".join(out), label

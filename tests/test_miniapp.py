@@ -3375,6 +3375,70 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         r = await self.call("GET","/api/accounts/123/report?period=month&offset=50")
         self.assertEqual(len((await r.json())["deals"]),10)
 
+    async def test_small_trade_uses_larger_matching_account_for_percentage(self):
+        now = trades.clock().replace(microsecond=0) - timedelta(minutes=5)
+
+        def close(ticket, when, net):
+            return {"ticket": ticket, "time": when, "symbol": "XAUUSD.f", "side": "buy",
+                    "volume": 0.1, "price": 2500.0, "net": net, "profit": net,
+                    "swap": 0, "commission": 0, "is_closing": True}
+
+        loss_time, unmatched_time = now + timedelta(minutes=1), now + timedelta(minutes=2)
+        zero_time = now + timedelta(minutes=3)
+        store.save_deals(self.tdb, 123, [
+            close(1, now, 0.01), close(2, loss_time, -0.01), close(3, unmatched_time, 0.01)])
+        for login, owner, base in [(124, "1", 500), (125, "1", 1000), (126, "2", 2000), (127, "1", 0)]:
+            accounts.add({**self.acc, "name": str(login), "strategy": str(login),
+                          "login": login, "owner": owner, "base": base})
+            store.save_state(self.tdb, login, base * 24, base * 24, "USD", "Demo")
+
+        store.save_deals(self.tdb, 124, [close(11, now, 0.5), close(12, loss_time, -0.5)])
+        store.save_deals(self.tdb, 125, [
+            close(21, now + timedelta(seconds=1), 2),
+            close(22, loss_time, -3), close(23, loss_time, -6),
+            {"ticket": 24, "time": unmatched_time + timedelta(minutes=1), "is_balance": True,
+             "net": 2400, "comment": "Deposit"},
+        ])
+        store.save_deals(self.tdb, 126, [
+            {**close(31, now, 20), "side": "sell"},
+            {**close(32, unmatched_time, 20), "price": 2510},
+            close(33, zero_time, -8),
+        ])
+        store.save_deals(self.tdb, 127, [close(41, zero_time, 0)])
+
+        # Счёт 125 выигрывает по капиталу на момент сделки, до пополнения в 100.
+        response = await self.call("GET", "/api/accounts/123/report?period=all")
+        self.assertEqual(response.status, 200, await response.text())
+        data = await response.json()
+        deals = {row["ticket"]: row for row in data["deals"]}
+        self.assertAlmostEqual(deals[1]["pct_capital"], 2 * 0.7 / 900 * 100, places=4)
+        self.assertAlmostEqual(deals[1]["net_income"], 0.007)
+        # Два закрытия на счёте 125 неоднозначны, поэтому берём счёт 124.
+        self.assertAlmostEqual(deals[2]["pct_capital"], -0.07)
+        self.assertAlmostEqual(deals[3]["pct_capital"], 0.007, places=4)
+
+        acc = accounts.load(1)[0]
+        trades.use(acc)
+        rows = trades.since_ticket(0)
+        notice, _, feed = trades.fmt_account_event(acc, rows[0], "USD")
+        self.assertIn("<b>+0.01$</b>  <i>+0.156%</i>", notice)
+        self.assertIn("+0.156%", feed)
+        self.assertEqual(trades.account().login, 123)
+
+        response = await self.call("GET", "/api/accounts/127/report?period=all")
+        self.assertEqual(response.status, 200, await response.text())
+        zero_deal, = (await response.json())["deals"]
+        self.assertEqual(zero_deal["net_income"], 0)
+        self.assertAlmostEqual(zero_deal["pct_capital"], -0.28)
+
+        empty_account = next(acc for acc in accounts.load(1) if acc["login"] == 127)
+        trades.use(empty_account)
+        zero_row, = trades.since_ticket(0)
+        notice, title, _ = trades.fmt_account_event(empty_account, zero_row, "USD")
+        self.assertIn("Сделка в минус", notice)
+        self.assertIn("Сделка в минус", title)
+        self.assertIn("<b>+0.00$</b>  <i>-0.28%</i>", notice)
+
     async def test_trade_insights_separate_current_and_previous_week(self):
         previous = miniapp.logic.period("lastweek")[1] + timedelta(days=1)
         current = trades.clock()  # часы брокера, как и period() — иначе тест плывёт у границы недели

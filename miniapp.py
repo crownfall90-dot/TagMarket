@@ -692,13 +692,18 @@ async def report(request):
     page = filtered[offset:offset + 50]
     flows = (trades.fetch(min(r["time"] for r in page), logic.utcnow() + timedelta(days=1))
              if page and kind != "moves" else [])
+    cur = trades.currency()
+    deal_bases = [(row, 0 if row["is_balance"] else trades.capital_at(row["time"], flows, raw_capital))
+                  for row in page]
+    reference_pcts = trades.reference_trade_percentages(acc, deal_bases, cur)
     deals = []
-    for row in page:
+    for row, capital_then in deal_bases:
         net_income = trades.own_amount(row) if row["is_balance"] else trades.net_of_fee(trades.mine(row["net"]))
-        capital_then = (trades.capital_at(row["time"], flows, raw_capital)
-                        if not row["is_balance"] else 0)
+        pct = reference_pcts.get(row["ticket"])
+        if pct is None and capital_then > 0:
+            pct = net_income / capital_then * 100
         item = {**row, "time": row["time"].isoformat() + "Z", "net_income": net_income,
-                "pct_capital": round(net_income / capital_then * 100, 4) if capital_then > 0 else None}
+                "pct_capital": round(pct, 4) if pct is not None else None}
         if row["is_balance"]:
             item["move"] = move_kind(row)
             if row["ticket"] in steps:
@@ -756,12 +761,12 @@ async def report(request):
                  "site_moves": [{**m, "time": m["time"] + "Z"} for m in site]}
     timeline = report_timeline(chart, since, until, account_state, all_rows,
                                retained_history_start(request.app["trades"], acc["login"]))
-    return web.json_response({**extra, "timeline": timeline, "title": title, "summary": summary, "currency": trades.currency(),
+    return web.json_response({**extra, "timeline": timeline, "title": title, "summary": summary, "currency": cur,
         "deals": deals, "has_more": offset + 50 < len(filtered), "offset": offset,
         "insights": insights, "day_totals": day_totals,
         "chart": [{"day": k, "value": v} for k, v in sorted(chart.items())],
         "months": months, "archived": bool(archived),
-        "report": plain_report(trades.fmt_report(title, rows, trades.currency(), since=since, until=until))})
+        "report": plain_report(trades.fmt_report(title, rows, cur, since=since, until=until))})
 
 
 async def price_chart(request):
