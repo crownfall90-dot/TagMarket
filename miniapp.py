@@ -665,13 +665,16 @@ async def report(request):
     archived = report_archive(since, until)
     total = summary["total"] + sum((m["gross"] or 0) + (m["platform"] or 0) for m in archived)
     summary["net_income"] = trades.net_of_fee(trades.mine(total))
+    requested_period = request.query.get("period", "month")
+    weekly_report = requested_period in ("week", "lastweek")
     # один раз на запрос: капитал на дату сделки/месяца — это он же минус
     # позднейшие движения (trades.capital_at с current), а не новый пересчёт
     raw_capital = trades.capital()
     # проценты — единой мерой trades.period_growth, как у карточек счёта: вся
     # история движений нужна, чтобы найти капитал на момент каждой сделки
     all_rows = trades.fetch(datetime(2000, 1, 1), logic.utcnow() + timedelta(days=1))
-    summary["pct_capital"] = round(trades.period_growth(rows, all_rows, archived, raw_capital), 3)
+    if not weekly_report:
+        summary["pct_capital"] = round(trades.period_growth(rows, all_rows, archived, raw_capital), 3)
     summary["count"] += sum(m["trades"] or 0 for m in archived)
     summary["wins"] += sum(m["wins"] or 0 for m in archived)
     chart = {}
@@ -690,17 +693,25 @@ async def report(request):
     filtered.sort(key=lambda x: (x["time"], x["ticket"]), reverse=True)
     steps = capital_steps(filtered) if kind == "moves" else {}
     page = filtered[offset:offset + 50]
-    flows = (trades.fetch(min(r["time"] for r in page), logic.utcnow() + timedelta(days=1))
-             if page and kind != "moves" else [])
     cur = trades.currency()
-    deal_bases = [(row, 0 if row["is_balance"] else trades.capital_at(row["time"], flows, raw_capital))
-                  for row in page]
-    reference_pcts = trades.reference_trade_percentages(acc, deal_bases, cur)
+    periods = {key: logic.period(key)[1:3] for key in ("week", "lastweek", "month")}
+    week_start = periods["lastweek"][0]
+    week_end = periods["week"][1]
+    candidates = {r["ticket"]: r for r in all_rows
+                  if r["is_closing"] and week_start <= r["time"] <= week_end}
+    candidates.update((r["ticket"], r) for r in page if r["is_closing"])
+    deal_bases = {ticket: trades.capital_at(r["time"], all_rows, raw_capital)
+                  for ticket, r in candidates.items()}
+    reference_pcts = trades.reference_trade_percentages(
+        acc, [(r, deal_bases[ticket]) for ticket, r in candidates.items()], cur)
+    unreliable = {ticket for ticket, base in deal_bases.items()
+                  if base < trades.MIN_RELIABLE_TRADE_CAPITAL and ticket not in reference_pcts}
     deals = []
-    for row, capital_then in deal_bases:
+    for row in page:
+        capital_then = deal_bases.get(row["ticket"], 0)
         net_income = trades.own_amount(row) if row["is_balance"] else trades.net_of_fee(trades.mine(row["net"]))
         pct = reference_pcts.get(row["ticket"])
-        if pct is None and capital_then > 0:
+        if pct is None and capital_then > 0 and not (weekly_report and row["ticket"] in unreliable):
             pct = net_income / capital_then * 100
         item = {**row, "time": row["time"].isoformat() + "Z", "net_income": net_income,
                 "pct_capital": round(pct, 4) if pct is not None else None}
@@ -719,19 +730,25 @@ async def report(request):
                        "net": trades.net_of_fee(trades.mine((m["gross"] or 0) + (m["platform"] or 0))),
                        "pct_capital": round(trades.period_growth(
                            live, all_rows, () if m.get("_live") else (m,), raw_capital), 3)})
-    starts = {key: logic.period(key)[1] for key in ("week", "lastweek", "month")}
-    recent = trades.fetch(min(starts.values()), logic.utcnow() + timedelta(days=1))
+    recent_start = min(first for first, _ in periods.values())
+    recent = [r for r in all_rows if r["time"] >= recent_start]
     insights = {}
-    for key in ("week", "lastweek", "month"):
-        _, first, last, _ = logic.period(key)
+    for key, (first, last) in periods.items():
         old = report_archive(first, last)
         selected = [r for r in recent if first <= r["time"] <= last]
         summary_for_period = trades.summary(selected)
         amount = summary_for_period["total"] + sum((m["gross"] or 0) + (m["platform"] or 0) for m in old)
+        weekly = key in ("week", "lastweek")
+        # Без надёжной базы или совпадения частичный процент недели вводит в заблуждение.
+        missing = weekly and any(r["ticket"] in unreliable for r in selected)
+        pct = None if missing else round(trades.period_growth(
+            selected, all_rows, old, raw_capital, reference_pcts=reference_pcts if weekly else None), 3)
         insights[key] = {"available": True, "count": summary_for_period["count"] +
                          sum(m["trades"] or 0 for m in old),
                          "net": trades.net_of_fee(trades.mine(amount)),
-                         "pct_capital": round(trades.period_growth(selected, all_rows, old, raw_capital), 3)}
+                         "pct_capital": pct}
+    if weekly_report:
+        summary["pct_capital"] = insights[requested_period]["pct_capital"]
     insights["all"] = {"available": True, "count": sum(m["count"] for m in months),
                        "net": sum(m["net"] for m in months),
                        "pct_capital": round(trades.growth_all(), 3)}   # тот же ROI, что на карточке
@@ -744,8 +761,11 @@ async def report(request):
     for day, day_rows in by_day.items():
         day_summary = trades.summary(day_rows)
         day_net = trades.net_of_fee(trades.mine(day_summary["total"]))
+        missing = weekly_report and any(r["ticket"] in unreliable for r in day_rows)
+        day_pct = None if missing else round(trades.growth_pct(
+            day_rows, all_rows, raw_capital, reference_pcts=reference_pcts if weekly_report else None), 3)
         day_totals[day] = {"count": day_summary["count"], "net": day_net,
-                           "pct_capital": round(trades.growth_pct(day_rows, all_rows, raw_capital), 3)}
+                           "pct_capital": day_pct}
     extra = {}
     if kind == "moves":
         # общая сумма удержанной комиссии брокера (30%) — одной цифрой вместо

@@ -491,6 +491,7 @@ def capital_at(when: datetime, rows: list[dict], current: float = None) -> float
 
 
 TRADE_ROUNDING_LIMIT = 0.05   # полцента округления здесь составляет от 10% результата
+MIN_RELIABLE_TRADE_CAPITAL = 1.0
 COPIED_CLOSE_WINDOW = timedelta(seconds=2)
 
 
@@ -501,7 +502,7 @@ def reference_trade_percentages(acc: dict, deals: list[tuple[dict, float]], cur:
     small_deals = [(row, base) for row, base in deals
                    if row["is_closing"] and row.get("price")
                    and row.get("symbol") and row.get("side")
-                   and (base <= 0 or abs(row["net"]) <= TRADE_ROUNDING_LIMIT)]
+                   and (base < MIN_RELIABLE_TRADE_CAPITAL or abs(row["net"]) <= TRADE_ROUNDING_LIMIT)]
     if not small_deals:
         return {}
 
@@ -538,7 +539,8 @@ def reference_trade_percentages(acc: dict, deals: list[tuple[dict, float]], cur:
                     history = fetch(datetime(2000, 1, 1), clock() + timedelta(days=1), all_history=True)
                 peer_base = capital_at(other["time"], history, current)
                 ticket = row["ticket"]
-                if peer_base > best.get(ticket, (max(0, base), None))[0]:
+                if (peer_base >= MIN_RELIABLE_TRADE_CAPITAL
+                        and peer_base > best.get(ticket, (base, None))[0]):
                     best[ticket] = (peer_base, net_of_fee(mine(other["net"])) / peer_base * 100)
     finally:
         use(acc)
@@ -589,7 +591,8 @@ def strategy_around(row: dict) -> dict:
             "kept_was": kept_was, "kept_became": kept_became}
 
 
-def period_growth(rows: list[dict], flows: list[dict], archived=(), current: float = None) -> float:
+def period_growth(rows: list[dict], flows: list[dict], archived=(), current: float = None,
+                  *, reference_pcts: dict[int, float] = None) -> float:
     """Доходность периода, %: живые сделки — growth_pct, свёрнутые месяцы —
     процентом, сохранённым при свёртке; месяцы перемножаются, как в growth_all.
 
@@ -611,10 +614,11 @@ def period_growth(rows: list[dict], flows: list[dict], archived=(), current: flo
                           flows, current)
         if base > 0:
             g *= 1 + net_of_fee(mine((m.get("gross") or 0) + (m.get("platform") or 0))) / base
-    return (g * (1 + growth_pct(rows, flows, current) / 100) - 1) * 100
+    return (g * (1 + growth_pct(rows, flows, current, reference_pcts=reference_pcts) / 100) - 1) * 100
 
 
-def growth_pct(rows: list[dict], flows: list[dict] = None, current: float = None) -> float:
+def growth_pct(rows: list[dict], flows: list[dict] = None, current: float = None,
+               *, reference_pcts: dict[int, float] = None) -> float:
     """Доходность за период: доходности сделок к капиталу на их момент, сложенные.
 
     Внутри месяца складываем, а не перемножаем (месяцы перемножаются, как в
@@ -637,10 +641,15 @@ def growth_pct(rows: list[dict], flows: list[dict] = None, current: float = None
     # границу месяца, считался бы иначе, чем его же месяцы по отдельности
     by_month: dict = {}
     for r in closed:
-        base = capital_at(r["time"], flows, current)
-        if base > 0:
-            key = (r["time"].year, r["time"].month)
-            by_month[key] = by_month.get(key, 0.0) + net_of_fee(mine(r["net"])) / base
+        if reference_pcts and r.get("ticket") in reference_pcts:
+            gain = reference_pcts[r["ticket"]] / 100
+        else:
+            base = capital_at(r["time"], flows, current)
+            if base <= 0:
+                continue
+            gain = net_of_fee(mine(r["net"])) / base
+        key = (r["time"].year, r["time"].month)
+        by_month[key] = by_month.get(key, 0.0) + gain
     g = 1.0
     for part in by_month.values():
         g *= 1 + part

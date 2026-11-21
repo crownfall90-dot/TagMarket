@@ -3439,6 +3439,37 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Сделка в минус", title)
         self.assertIn("<b>+0.00$</b>  <i>-0.28%</i>", notice)
 
+    async def test_weekly_dynamics_uses_matching_returns_instead_of_tiny_capital(self):
+        week = bot.period("week")[1]
+        lastweek = bot.period("lastweek")[1]
+        accounts.add({**self.acc, "login": 124, "owner": "2", "base": 1000})
+        store.save_state(self.tdb, 124, 24000, 24000, "USD", "Demo")
+        store.save_state(self.tdb, 123, 0, 0, "USD", "Demo")
+
+        def close(ticket, when, net):
+            return {"ticket": ticket, "time": when, "symbol": "XAUUSD", "side": "buy",
+                    "price": 2500, "volume": 0.1, "net": net, "profit": net, "swap": 0,
+                    "commission": 0, "is_closing": True}
+
+        store.save_deals(self.tdb, 123, [
+            close(1, lastweek, 0.07), close(2, week, 0.01),
+            {"ticket": 3, "time": week + timedelta(seconds=5), "is_balance": True,
+             "net": -4.8, "comment": "Withdraw"},
+        ])
+        store.save_deals(self.tdb, 124, [close(10, lastweek, 20), close(11, week, 30)])
+        for period, expected in (("week", 2.1), ("lastweek", 1.4)):
+            response = await self.call("GET", f"/api/accounts/123/report?period={period}")
+            self.assertEqual(response.status, 200, await response.text())
+            data = await response.json()
+            self.assertAlmostEqual(data["summary"]["pct_capital"], expected)
+            self.assertAlmostEqual(data["insights"][period]["pct_capital"], expected)
+            self.assertAlmostEqual(next(iter(data["day_totals"].values()))["pct_capital"], expected)
+            self.assertAlmostEqual(data["deals"][0]["pct_capital"], expected)
+
+        store.save_deals(self.tdb, 123, [close(4, lastweek + timedelta(hours=1), 0.07)])
+        response = await self.call("GET", "/api/accounts/123/report?period=lastweek")
+        self.assertIsNone((await response.json())["summary"]["pct_capital"])
+
     async def test_trade_insights_separate_current_and_previous_week(self):
         previous = miniapp.logic.period("lastweek")[1] + timedelta(days=1)
         current = trades.clock()  # часы брокера, как и period() — иначе тест плывёт у границы недели
