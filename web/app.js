@@ -35,7 +35,7 @@ function esc(value){return String(value??'').replace(/[&<>"']/g, c=>({'&':'&amp;
 function displayAmount(value,cur){if(cur===state.displayCurrency)return value;const rates=state.data?.fx?.byn_per_unit;if(!rates||!rates[cur]||!rates[state.displayCurrency])return null;return Number(value)*rates[cur]/rates[state.displayCurrency];}
 function money(value, cur='USD', signed=false){if(value==null||!Number.isFinite(Number(value)))return '—';const source=cur||'USD',converted=displayAmount(Number(value),source);if(converted==null)return `${signed&&Number(value)>0?'+':''}${number(value)} ${esc(source)}`;const opts={maximumFractionDigits:2,signDisplay:signed?'exceptZero':'auto'};try{return `${source===state.displayCurrency?'':'≈ '}${new Intl.NumberFormat('ru-RU',{...opts,style:'currency',currency:state.displayCurrency||source}).format(converted)}`;}catch{return `${source===state.displayCurrency?'':'≈ '}${new Intl.NumberFormat('ru-RU',{...opts,minimumFractionDigits:2}).format(converted)} ${esc(state.displayCurrency||source)}`;}}
 function number(value){return new Intl.NumberFormat('ru-RU',{maximumFractionDigits:2}).format(value||0);}
-function percent(value){return `${value>=0?'+':''}${new Intl.NumberFormat('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:3}).format(value)}%`;}
+function percent(value){if(value==null)return '—';return `${value>=0?'+':''}${new Intl.NumberFormat('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:3}).format(value)}%`;}
 function resultPair(value,cur,pct){return `<span class="result-pair ${signedClass(value)}"><b>${money(value,cur,true)}</b>${pct==null?'':`<small title="Доля от текущего вложенного капитала">${percent(pct)}</small>`}</span>`;}
 // Некорректная дата (пустое поле, чужой формат) не должна ронять весь экран:
 // Intl.format и toISOString на ней бросают «Invalid time value»
@@ -582,7 +582,6 @@ function accountView(){
  const a=currentAccount();
  if(!a)return empty('Счёт не найден','Возможно, владелец отозвал доступ.');
  const t=a.totals,rep=state.report,cur=t?.cur||'USD';
- const pct=value=>t?.now>0?Number(value||0)/t.now*100:null;
  // владелец и номер счёта уже в подзаголовке — в реквизитах только то, чего там нет
  const meta=[['Кабинет',a.cabinet||'—'],['Сервер',a.server||'—']]
    .map(([k,v])=>`<span><small>${esc(k)}</small><b>${esc(v)}</b></span>`).join('');
@@ -591,7 +590,7 @@ function accountView(){
  const intro=`<div class="detail-top"><a href="#accounts" class="text-link back">${icon('back')} Все счета</a>${button('account-settings','Настроить','secondary small','settings',`data-login="${esc(a.login)}"`)}</div>`
   +`<section class="panel detail-hero"><div class="detail-hero-top"><div class="strategy-icon green">${icon('chart')}</div><div class="detail-hero-name"><h1>${esc(a.strategy||a.name)}</h1><span class="cab-id">${esc(a.holder||'—')} · ${esc(a.login)}</span>${sharedNote(a)}</div>${tag}</div>`
   +`<div class="detail-balance"><small>Баланс</small><strong>${t?money(t.now,cur):'—'}</strong></div>`
-  +(t?`<div class="detail-cells">${cell('Сегодня',t.today_net,pct(t.today_net))}${cell('Этот месяц',t.month_net,pct(t.month_net))}${cell('Всё время',t.pnl,pct(t.pnl),`<em>ROI ${percent(t.roi)}</em>`)}</div>`:'')
+  +(t?`<div class="detail-cells">${cell('Сегодня',t.today_net,t.today_pct)}${cell('Этот месяц',t.month_net,t.month_pct)}${cell('Всё время',t.pnl,t.roi)}</div>`:'')
   +`<div class="detail-identity">${meta}</div></section>`;
  const dynamics=`<section class="panel chart-panel detail-chart fade-swap"><div class="panel-head"><div><span class="eyebrow">Динамика</span><h2>${esc(rep?.title||'')}</h2></div><span class="badge">${countLabel(rep?.summary.count,['сделка','сделки','сделок'])}</span></div><div class="chart-summary">${resultPair(rep?.summary.net_income,rep?.currency,rep?.summary.pct_capital)}</div>${rep?dayFeed(rep,t?.now):''}</section>`;
  // сделки, движения средств и месячные итоги живут здесь же: отдельного

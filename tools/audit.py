@@ -96,16 +96,23 @@ for acc in accounts.load():
           f"1-е число {was:.2f} → сейчас {cap:.2f}")
 
     # 5. доходность за всё время = произведение месяцев
-    compound = 1.0
-    for m in trades.monthly(limit=1000):
-        if m.get("_live"):
-            continue
-        if m.get("growth") is not None:
-            compound *= 1 + m["growth"] / 100
-    compound *= 1 + trades.growth_pct(rows, rows) / 100
-    check(money_close((compound - 1) * 100, trades.growth_all(), 0.01),
+    returns = trades.TradeReturns(rows, current=cap)
+    by_month = {}
+    for row in rows:
+        by_month.setdefault(row["time"].strftime("%Y-%m"), []).append(row)
+    months = [returns.period(part) for part in by_month.values()]
+    months += [returns.period([], (m,)) for m in trades.monthly(limit=1000) if not m.get("_live")]
+    expected = None
+    if all(value is not None for value in months):
+        compound = 1.0
+        for value in months:
+            compound *= 1 + value / 100
+        expected = (compound - 1) * 100
+    actual = trades.growth_all()
+    check(expected == actual or (expected is not None and actual is not None
+                                 and money_close(expected, actual, 0.01)),
           f"{name}: доходность = произведение месяцев",
-          f"{(compound - 1) * 100:+.3f}% против {trades.growth_all():+.3f}%")
+          f"{trades.pct(expected)} против {trades.pct(actual)}")
 
     # 6. Invested сверяем с капиталом, сложенным агентом из истории. Ноль там
     # означает, что исходное пополнение старше доступной истории терминала —

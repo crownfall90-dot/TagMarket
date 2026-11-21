@@ -350,7 +350,7 @@ def month_growth(login: int, rows: list[dict]) -> float:
     # и уже входит сюда — складывать его со своими же строками нельзя, переводы
     # посчитались бы дважды и капитал восстановился бы неверно
     flows = trades.fetch(datetime(2000, 1, 1), trades.clock() + timedelta(days=1))
-    return trades.growth_pct(rows, flows)
+    return trades.TradeReturns(rows, flows).period(rows)
 
 
 def account_totals(acc: dict) -> dict | None:
@@ -389,12 +389,13 @@ def account_totals(acc: dict) -> dict | None:
     # shared portfolio date (today, otherwise the most recent day with trades).
     last_trade_day = max(all_by_day, default=None)
 
+    returns = trades.TradeReturns(rows, current=my, acc=acc)
     kept = trades.retained()
     # отдельного профита больше нет: результат сделок сразу в балансе, вывод его уменьшает
     return {"now": my + kept, "capital": my, "pnl": earned, "kept": kept,
             "days": [trades.net_of_fee(trades.mine(by_day[d])) for d in sorted(by_day)],
-            "month_pct": trades.growth_pct(month_rows, rows),
-            "roi": trades.growth_all(),
+            "month_pct": returns.period(month_rows), "today_pct": returns.period(today_rows),
+            "roi": returns.period(rows, (m for m in trades.monthly(1000) if not m.get("_live"))),
             "month_net": month_net, "today_net": today_net, "month_trades": m["count"],
             "last_trade_day": last_trade_day.isoformat() if last_trade_day else None,
             "last_trade_net": (trades.net_of_fee(trades.mine(all_by_day[last_trade_day]))
@@ -449,7 +450,8 @@ def term_stats(acc: dict, end_day: date) -> dict | None:
     income = trades.net_of_fee(trades.mine(trades.summary(in_term)["total"]))
     return {"start": start_day.isoformat(), "end": end_day.isoformat(), "days": (end_day - start_day).days,
             "was": was, "income": income, "capital_end": capital_end, "total": capital_end + income,
-            "pct": (income / was * 100) if was > 0 else None, "cur": trades.currency()}
+            "pct": trades.TradeReturns(in_term, rows, current, acc).period(in_term),
+            "cur": trades.currency()}
 
 
 def dashboard(owner) -> tuple[str, InlineKeyboardMarkup]:
@@ -466,12 +468,14 @@ def dashboard(owner) -> tuple[str, InlineKeyboardMarkup]:
     blocks, rows = [], app_rows
     grand_now = grand_pnl = grand_month = 0.0
     grand_weighted = grand_weighted_roi = 0.0
+    grand_missing = set()
     cur = "USD"
     for cab, info in sorted(groups.items()):
         now = pnl = month = 0.0
         month_trades = dead = 0
         weighted = weighted_roi = 0.0   # проценты кабинета — средние по счетам
         days: list = []
+        missing = set()
         for acc in info["accounts"]:
             t = account_totals(acc)
             if not t:
@@ -481,8 +485,11 @@ def dashboard(owner) -> tuple[str, InlineKeyboardMarkup]:
             pnl += t["pnl"]
             month += t["month_net"]
             month_trades += t["month_trades"]
-            weighted += t["month_pct"] * t["now"]
-            weighted_roi += t["roi"] * t["now"]
+            for key in ("month_pct", "roi"):
+                if t[key] is None and t["now"]:
+                    missing.add(key)
+            weighted += (t["month_pct"] or 0) * t["now"]
+            weighted_roi += (t["roi"] or 0) * t["now"]
             # дни складываем поштучно: у счетов кабинета сделки в одни и те же дни
             for i, v in enumerate(t["days"]):
                 if i < len(days):
@@ -495,11 +502,12 @@ def dashboard(owner) -> tuple[str, InlineKeyboardMarkup]:
         grand_month += month
         grand_weighted += weighted
         grand_weighted_roi += weighted_roi
-        roi = weighted_roi / now if now else 0.0
+        grand_missing.update(missing)
+        roi = weighted_roi / now if now and "roi" not in missing else None
         # складывать профит и делить на общий капитал нельзя: у счетов разный
         # размер, и крупный счёт заглушал бы процент мелкого. Берём средний по
         # счетам процент, взвешенный их капиталом
-        month_pct = weighted / now if now else 0.0
+        month_pct = weighted / now if now and "month_pct" not in missing else None
 
         who = info["holder"] or (cab if cab != accounts.NO_CABINET else "Без кабинета")
         n = len(info["accounts"])
@@ -527,8 +535,8 @@ def dashboard(owner) -> tuple[str, InlineKeyboardMarkup]:
     now_month = MONTHS[trades.clock().month]
     head = f"📊 <b>Мой кабинет</b> · <i>{now_month} {trades.clock():%Y}</i>"
     if len(groups) > 1:
-        total_roi = grand_weighted_roi / grand_now if grand_now else 0.0
-        month_pct = grand_weighted / grand_now if grand_now else 0.0
+        total_roi = grand_weighted_roi / grand_now if grand_now and "roi" not in grand_missing else None
+        month_pct = grand_weighted / grand_now if grand_now and "month_pct" not in grand_missing else None
         mark = "▲" if grand_month >= 0 else "▼"
         head += (f"\n<blockquote>💎 <b>{trades.amount(grand_now, cur, whole=True)}</b> <i>баланс</i>\n"
                  f"{mark} {now_month.lower()} <b>{trades.amount(grand_month, cur, signed=True)}</b>"
@@ -1159,6 +1167,7 @@ def _guest_period_summary(db, uid, exclude_logins: frozenset = frozenset()) -> s
     any_data = False
     cur = ""
     weight = 0.0
+    missing = set()
     for a in accs:
         # только деньги самого гостя: демо и выданные ему копии чужих счетов
         # (в том числе счета пригласившего) в его заработок не входят
@@ -1170,15 +1179,20 @@ def _guest_period_summary(db, uid, exclude_logins: frozenset = frozenset()) -> s
         cur = trades.currency()
         base = max(trades.capital(), 0.0)
         all_rows = trades.fetch(datetime(2000, 1, 1), now + timedelta(days=1), all_history=True)
+        returns = trades.TradeReturns(all_rows, current=base, acc=a)
         for label, start in periods:
             period_rows = [r for r in all_rows if r["time"] >= start]
             net = trades.net_of_fee(trades.mine(trades.summary(period_rows)["total"]))
             sums[label] += net
             # проценты разных счетов не складываем: средний, взвешенный по капиталу
-            pcts[label] += trades.growth_pct(period_rows, all_rows) * (base or 1.0)
+            gain = returns.period(period_rows)
+            if gain is None:
+                missing.add(label)
+            else:
+                pcts[label] += gain * (base or 1.0)
         weight += base or 1.0
     if weight:
-        pcts = {label: value / weight for label, value in pcts.items()}
+        pcts = {label: value / weight if label not in missing else None for label, value in pcts.items()}
 
     if not any_data:
         return ""

@@ -976,6 +976,16 @@ class RollupCarryTests(unittest.TestCase):
             "profit": net, "swap": 0, "commission": 0, "net": net,
             "is_balance": False, "is_closing": True, "is_opening": False, "comment": ""}])
 
+    def test_rollup_preserves_unavailable_return(self):
+        store.save_state(self.tdb, 123, 0, 0, "USD", "Demo")
+        self.closing(1, 0.07, "2026-08-12T10:00:00")
+        store.rollup(self.tdb, "2026-09-01", trades.is_transfer, trades.is_perf_fee,
+                     self.bot.month_growth, trades.is_profit_side, trades.REPORT_FROM.isoformat())
+        month, = store.months(self.tdb, 123)
+        self.assertEqual(month["growth_unavailable"], 1)
+        self.assertIsNone(month["growth"])
+        self.assertIsNone(trades.TradeReturns([], current=100).period([], [month]))
+
     def test_release_announcements_are_sent_once_with_quotes_and_push(self):
         import asyncio, types
         class FakeBot:
@@ -3466,9 +3476,23 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertAlmostEqual(next(iter(data["day_totals"].values()))["pct_capital"], expected)
             self.assertAlmostEqual(data["deals"][0]["pct_capital"], expected)
 
+        response = await self.call("GET", f"/api/accounts/123/report?period=custom&from={week:%Y-%m-%d}&to={week:%Y-%m-%d}")
+        custom = await response.json()
+        self.assertAlmostEqual(custom["summary"]["pct_capital"], 2.1)
+        self.assertIn("+2.1%", custom["report"])
+        response = await self.call("GET", "/api/accounts/123/report?period=all")
+        report = await response.json()
+        expected = 3.5 if week.month == lastweek.month else 3.5294
+        self.assertAlmostEqual(report["summary"]["pct_capital"], expected, places=3)
+        totals = bot.account_totals(accounts.load(1)[0])
+        self.assertAlmostEqual(totals["roi"], expected)
+        self.assertAlmostEqual(totals["month_pct"], 3.5 if week.month == lastweek.month else 2.1)
+        self.assertAlmostEqual(bot.month_growth(123, trades.since_ticket(0)), expected)
+
         store.save_deals(self.tdb, 123, [close(4, lastweek + timedelta(hours=1), 0.07)])
         response = await self.call("GET", "/api/accounts/123/report?period=lastweek")
         self.assertIsNone((await response.json())["summary"]["pct_capital"])
+        self.assertIsNone(bot.account_totals(accounts.load(1)[0])["roi"])
 
     async def test_trade_insights_separate_current_and_previous_week(self):
         previous = miniapp.logic.period("lastweek")[1] + timedelta(days=1)

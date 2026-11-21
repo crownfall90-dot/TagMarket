@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS months (
     volume    REAL,                -- суммарный объём
     growth    REAL,                -- доходность месяца, % (считается до удаления
                                    -- сделок: потом восстановить её уже нечем)
+    growth_unavailable INTEGER DEFAULT 0,
     PRIMARY KEY (login, month)
 );
 
@@ -149,7 +150,8 @@ def open_db(path: str = None) -> sqlite3.Connection:
     have = {r["name"] for r in db.execute("PRAGMA table_info(months)").fetchall()}
     for col, kind in (("wins", "INTEGER"), ("losses", "INTEGER"),
                       ("best", "REAL"), ("worst", "REAL"), ("volume", "REAL"),
-                      ("growth", "REAL"), ("capital_transfers", "REAL")):
+                      ("growth", "REAL"), ("capital_transfers", "REAL"),
+                      ("growth_unavailable", "INTEGER DEFAULT 0")):
         if col not in have:
             db.execute(f"ALTER TABLE months ADD COLUMN {col} {kind}")
     db.commit()
@@ -385,10 +387,11 @@ def _rollup_locked(db, keep_from, is_transfer, is_perf_fee, growth_of,
                 acc["platform"] += net
 
     for (login, month), a in totals.items():
+        growth = growth_of(login, months_rows[(login, month)]) if growth_of else None
         db.execute(
             "INSERT INTO months (login, month, trades, gross, platform, transfers, "
-            "deposits, capital_transfers, wins, losses, best, worst, volume, growth) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "deposits, capital_transfers, wins, losses, best, worst, volume, growth, growth_unavailable) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             # COALESCE(...,0) на всех колонках, что могли остаться NULL у строк,
             # заведённых до ALTER TABLE ADD COLUMN (без DEFAULT) — иначе
             # NULL+x=NULL и MAX/MIN(NULL,x)=NULL в SQLite тихо стирают всю
@@ -406,11 +409,12 @@ def _rollup_locked(db, keep_from, is_transfer, is_perf_fee, growth_of,
             "worst=MIN(COALESCE(months.worst, excluded.worst), excluded.worst), "
             "volume=COALESCE(months.volume,0)+excluded.volume, "
             "growth=CASE WHEN excluded.growth IS NULL THEN months.growth "
-            "ELSE COALESCE(months.growth, 0) + excluded.growth END",
+            "ELSE COALESCE(months.growth, 0) + excluded.growth END, "
+            "growth_unavailable=MAX(months.growth_unavailable, excluded.growth_unavailable)",
             (login, month, a["trades"], a["gross"], a["platform"],
              a["transfers"], a["deposits"], a["capital_transfers"], a["wins"], a["losses"],
              a["best"], a["worst"], a["volume"],
-             growth_of(login, months_rows.get((login, month), [])) if growth_of else None))
+             growth, int(growth_of is not None and growth is None)))
 
     for login, delta in profit_delta.items():
         db.execute("UPDATE state SET profit_carry = COALESCE(profit_carry, 0) + ? "

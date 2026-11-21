@@ -4,6 +4,7 @@
 """
 
 import bisect
+import calendar
 import html
 import logging
 import os
@@ -221,6 +222,7 @@ class _Account:
 
 _db = None          # соединение с базой сделок, если работаем без терминала
 _login: int = 0
+_active_account: dict | None = None
 
 
 def _store_db():
@@ -237,7 +239,8 @@ def use(acc: dict) -> None:
     второй запущенный терминал получает bind error и Python до него не достучится.
     Смена счёта логином занимает около секунды — этого достаточно.
     """
-    global _current, _multiplier, _login, _base, _base_at
+    global _current, _multiplier, _login, _base, _base_at, _active_account
+    _active_account = acc
     _multiplier = float(acc.get("multiplier", 1) or 1)
     _login = int(acc["login"])
     _base = float(acc["base"]) if acc.get("base") is not None else None
@@ -497,7 +500,7 @@ COPIED_CLOSE_WINDOW = timedelta(seconds=2)
 
 def reference_trade_percentages(acc: dict, deals: list[tuple[dict, float]], cur: str) -> dict[int, float]:
     """Процент того же закрытия на более крупном счёте, если свой неточен или недоступен."""
-    if HAS_MT5:
+    if HAS_MT5 or acc is None:
         return {}
     small_deals = [(row, base) for row, base in deals
                    if row["is_closing"] and row.get("price")
@@ -508,6 +511,8 @@ def reference_trade_percentages(acc: dict, deals: list[tuple[dict, float]], cur:
 
     db = _store_db()
     best = {}
+    first = min(row["time"] for row, _ in small_deals)
+    last = max(row["time"] for row, _ in small_deals)
     try:
         sources = [peer for peer in accounts.load() if not peer.get("shared_by")]
         for peer in accounts.dedup(sources, by_owner=False):
@@ -518,12 +523,16 @@ def reference_trade_percentages(acc: dict, deals: list[tuple[dict, float]], cur:
             if not state or (state["currency"] or "USD") != cur:
                 continue
 
+            peer_rows = store.fetch(db, login, first - COPIED_CLOSE_WINDOW, last + COPIED_CLOSE_WINDOW)
+            times = [r["time"] for r in peer_rows]
             history = None
             for row, base in small_deals:
                 when = row["time"]
                 symbol = row["symbol"].split(".")[0].upper()
                 side = row["side"].upper()
-                nearby = store.fetch(db, login, when - COPIED_CLOSE_WINDOW, when + COPIED_CLOSE_WINDOW)
+                start = bisect.bisect_left(times, when - COPIED_CLOSE_WINDOW)
+                end = bisect.bisect_right(times, when + COPIED_CLOSE_WINDOW)
+                nearby = peer_rows[start:end]
                 matches = [other for other in nearby
                            if other["is_closing"] and (other["symbol"] or "").split(".")[0].upper() == symbol
                            and (other["side"] or "").upper() == side and other["price"]
@@ -545,6 +554,41 @@ def reference_trade_percentages(acc: dict, deals: list[tuple[dict, float]], cur:
     finally:
         use(acc)
     return {ticket: percent for ticket, (_, percent) in best.items()}
+
+
+class TradeReturns:
+    """Проценты сделок и периодов одного счёта, рассчитанные из общей выборки."""
+
+    def __init__(self, rows, flows=None, current=None, acc=None, cur=None):
+        self.flows = rows if flows is None else flows
+        self.current = capital() if current is None else current
+        bases = [(row, capital_at(row["time"], self.flows, self.current))
+                 for row in rows if row["is_closing"]]
+        active = acc if acc is not None else _active_account
+        self.references = reference_trade_percentages(active, bases, cur or currency()) if active else {}
+        self.deals = {
+            row.get("ticket"): self.references.get(
+                row.get("ticket"), net_of_fee(mine(row["net"])) / base * 100
+                if base >= MIN_RELIABLE_TRADE_CAPITAL else None)
+            for row, base in bases
+        }
+
+    def period(self, rows, archived=()):
+        archived = tuple(archived)
+        if any(m.get("growth_unavailable") or
+               ((m.get("trades") or m.get("gross") or m.get("platform")) and m.get("growth") is None
+                and self.archive_base(m) < MIN_RELIABLE_TRADE_CAPITAL)
+               for m in archived):
+            return None
+        if any(r["is_closing"] and self.deals.get(r.get("ticket")) is None for r in rows):
+            return None
+        return period_growth(rows, self.flows, archived, self.current,
+                             reference_pcts=self.references)
+
+    def archive_base(self, month):
+        year, mon = map(int, month["month"].split("-"))
+        end = datetime(year, mon, calendar.monthrange(year, mon)[1], 23, 59, 59)
+        return capital_at(end, self.flows, self.current)
 
 
 def capital_around(row: dict) -> tuple[float, float]:
@@ -601,7 +645,6 @@ def period_growth(rows: list[dict], flows: list[dict], archived=(), current: flo
     месяца), а карточка «Этот месяц» — каждую сделку на капитал её момента;
     при пополнении или выводе посреди месяца проценты расходились.
     """
-    import calendar
     g = 1.0
     for m in archived:
         if m.get("growth") is not None:
@@ -1077,6 +1120,8 @@ def pct(v: float, signed: bool = True) -> str:
     У них 0.951%, но 3.73% и 86.6% — то есть три знака после запятой с
     отброшенными нулями. Так наши цифры сравнимы с их отчётами один в один.
     """
+    if v is None:
+        return "—"
     s = f"{v:+.3f}" if signed else f"{v:.3f}"
     return s.rstrip("0").rstrip(".") + "%"
 
@@ -1186,7 +1231,7 @@ def winrate_bar(wins: int, total: int, width: int = 10) -> str:
 
 def fmt_report(title: str, rows: list[dict], cur: str, subtitle: str = "",
                since: datetime = None, with_deals: bool = False,
-               until: datetime = None) -> str:
+               until: datetime = None, *, returns: TradeReturns = None) -> str:
     """Сводка за период: итог, статистика, разбивка по дням и символам."""
     s = summary(rows)
     head = f"<b>{title}</b>"
@@ -1214,11 +1259,13 @@ def fmt_report(title: str, rows: list[dict], cur: str, subtitle: str = "",
     # прежнем, меньшем капитале. По капиталу на начало дня тоже неточно —
     # деньги заводят и в середине дня: счёт показывал 7.599% там, где соседние
     # с той же стратегией давали 7.12%. По моменту сделки все сходятся.
-    flows = fetch(since, clock() + timedelta(days=1)) if since else []
+    if returns is None:
+        flows = fetch(since, clock() + timedelta(days=1)) if since else rows
+        returns = TradeReturns(rows, flows, cap, cur=cur)
     by_day: dict = {}
     for r in rows:
         if r["is_closing"]:
-            by_day.setdefault(r["time"].date(), []).append(r["net"])
+            by_day.setdefault(r["time"].date(), []).append(r)
 
     weighed = any(r["is_closing"] for r in rows)
     if old_count:
@@ -1227,14 +1274,14 @@ def fmt_report(title: str, rows: list[dict], cur: str, subtitle: str = "",
         # меньше денег, что стоят рядом
         grew = growth_all()
     elif weighed:
-        grew = growth_pct(rows, flows)
+        grew = returns.period(rows)
     else:
-        grew = net / cap * 100 if cap else 0.0
-    roi = f"  <i>{pct(grew)}</i>" if (weighed or cap) else ""
+        grew = net / cap * 100 if cap >= MIN_RELIABLE_TRADE_CAPITAL else None
+    roi = f"  <i>{pct(grew)}</i>" if grew is not None else ""
 
     # главная строка — крупно результат, под ней мини-график формы периода
     out = [head, THIN, f"{mark} <b>{amount(net, cur, signed=True)}</b>{roi}"]
-    shape = spark([net_of_fee(mine(sum(by_day[d]))) for d in sorted(by_day)])
+    shape = spark([net_of_fee(mine(sum(r["net"] for r in by_day[d]))) for d in sorted(by_day)])
     if shape:
         out.append(f"<code>{shape}</code>  <i>по дням</i>")
     if gross != net:
@@ -1264,20 +1311,10 @@ def fmt_report(title: str, rows: list[dict], cur: str, subtitle: str = "",
     # по дням — только чистый профит и число сделок, без путающего баланса
     if len(by_day) > 1:
         days = sorted(by_day)[-31:]
-        totals = {d: net_of_fee(mine(sum(by_day[d]))) for d in days}
-        # процент дня — перемноженные доходности его сделок, каждая к капиталу
-        # на свой момент: пополнение в середине дня иначе задирает весь день
-        # доходности складываем, а не перемножаем: прибыль не остаётся на
-        # стратегии и базу не увеличивает. Иначе недельный блок расходился с
-        # процентом того же периода в заголовке — 3.759% против 3.709%
-        gains = {d: 0.0 for d in days}
-        for r in rows:
-            if r["is_closing"] and r["time"].date() in gains:
-                base = capital_at(r["time"], flows, cap)
-                if base > 0:
-                    gains[r["time"].date()] += net_of_fee(mine(r["net"])) / base
+        totals = {d: net_of_fee(mine(sum(r["net"] for r in by_day[d]))) for d in days}
+        gains = {d: returns.period(by_day[d]) for d in days}
         vals = {d: money(totals[d]) for d in days}
-        pcts = {d: pct(gains[d] * 100) for d in days}
+        pcts = {d: pct(gains[d]) for d in days}
         wv, wp = widest(vals.values()), widest(pcts.values())
         lines = []
         week = None
@@ -1285,7 +1322,7 @@ def fmt_report(title: str, rows: list[dict], cur: str, subtitle: str = "",
             if week is not None and d.isocalendar().week != week:
                 lines.append("")        # пустая строка между неделями
             week = d.isocalendar().week
-            share = f" · <i>{col(pcts[d], wp)}</i>" if cap else ""
+            share = f" · <i>{col(pcts[d], wp)}</i>" if gains[d] is not None else ""
             lines.append(f"{d:%d.%m} · <b>{col(vals[d], wv)}</b>{share} · "
                          f"{len(by_day[d])} сд · <i>{WEEKDAYS[d.weekday()]}</i>")
         out += ["", "📅 <b>По дням</b> <i>(МСК)</i>", quote(lines)]
@@ -1296,27 +1333,28 @@ def fmt_report(title: str, rows: list[dict], cur: str, subtitle: str = "",
         for d in days:
             key = d.isocalendar()[:2]       # год и номер недели
             w = weeks.setdefault(key, {"from": d, "to": d, "money": 0.0,
-                                       "gain": 0.0, "trades": 0})
+                                       "rows": [], "trades": 0})
             w["to"] = d
             w["money"] += totals[d]
-            w["gain"] += gains[d]
+            w["rows"].extend(by_day[d])
             w["trades"] += len(by_day[d])
         if len(weeks) > 1:
             wm = widest([money(w["money"]) for w in weeks.values()])
-            wp2 = widest([pct(w["gain"] * 100) for w in weeks.values()])
+            week_pcts = [pct(returns.period(w["rows"])) for w in weeks.values()]
+            wp2 = widest(week_pcts)
             wl = [f"{w['from']:%d.%m}–{w['to']:%d.%m} · <b>{col(money(w['money']), wm)}</b>"
-                  f" · <i>{col(pct(w['gain'] * 100), wp2)}</i> · {w['trades']} сд"
-                  for w in weeks.values()]
+                  f" · <i>{col(gain, wp2)}</i> · {w['trades']} сд"
+                  for w, gain in zip(weeks.values(), week_pcts)]
             out += ["", "🗓 <b>По неделям</b>", quote(wl)]
     elif with_deals:
         shown = [r for r in rows if r["is_closing"]]
         vals = [net_of_fee(mine(r["net"])) for r in shown[-40:]]
         wv = widest([money(v) for v in vals])
-        bases = [capital_at(r["time"], flows, cap) or cap for r in shown[-40:]]
-        wp = widest([pct(v / b * 100) for v, b in zip(vals, bases) if b])
+        gains = [returns.deals.get(r.get("ticket")) for r in shown[-40:]]
+        wp = widest([pct(gain) for gain in gains])
         lines = []
-        for r, val, base in zip(shown[-40:], vals, bases):
-            share = f" · <i>{col(pct(val / base * 100), wp)}</i>" if base else ""
+        for r, val, gain in zip(shown[-40:], vals, gains):
+            share = f" · <i>{col(pct(gain), wp)}</i>" if gain is not None else ""
             lines.append(f"{r['time']:%H:%M} · <b>{col(money(val), wv)}</b>{share} · "
                          f"<i>{r['side']} {short(r['symbol'])}</i>")
         if lines:
@@ -1425,7 +1463,7 @@ def monthly(limit: int = 12) -> list[dict]:
     return [out[k] for k in sorted(out)][-limit:]
 
 
-def growth_all() -> float:
+def growth_all() -> float | None:
     """Доходность за всю показываемую историю, %.
 
     Месяцы перемножаются: у свёрнутых берём сохранённый при свёртке процент,
@@ -1435,7 +1473,7 @@ def growth_all() -> float:
     # месяцы перемножаются: между ними прибыль выводится и реинвестируется,
     # так что новый месяц стартует с уже изменившегося капитала
     live = fetch(REPORT_FROM, clock() + timedelta(days=1))
-    return period_growth(live, live, [m for m in monthly(limit=1000) if not m.get("_live")])
+    return TradeReturns(live).period(live, [m for m in monthly(limit=1000) if not m.get("_live")])
 
 
 def archived_before_now() -> tuple[float, int, int, int]:
@@ -1469,12 +1507,13 @@ def fmt_archive(cur: str, since: datetime = None, until: datetime = None) -> str
     cap = capital()
     now = clock().strftime("%Y-%m")
     all_rows = fetch(REPORT_FROM, clock() + timedelta(days=1))
+    returns = TradeReturns(all_rows, current=cap, cur=cur)
     nets = [net_of_fee(mine((m["gross"] or 0) + (m["platform"] or 0))) for m in rows]
     pcts = []
     for m in rows:
         live = ([r for r in all_rows if f"{r['time']:%Y-%m}" == m["month"]]
                 if m.get("_live") else [])
-        pcts.append(period_growth(live, all_rows, () if m.get("_live") else (m,), cap))
+        pcts.append(returns.period(live, () if m.get("_live") else (m,)))
     wv = widest([f"{v:+.2f}" for v in nets])
     wp = widest([pct(v) for v in pcts])
     lines = []
@@ -1547,8 +1586,6 @@ def fmt_money_moves(cur: str, limit: int = 60) -> str:
 def fmt_head(cur: str) -> str:
     """Шапка счёта: баланс стратегии и весь заработок с процентом — одной строкой."""
     cap = capital()
-    if not cap:
-        return ""
     # к сделкам в базе прибавляем свёрнутые месяцы, иначе история обрывается
     # на текущем месяце
     gross = summary(fetch(datetime(2000, 1, 1), clock()))["total"] + archived_before_now()[0]
@@ -1557,7 +1594,7 @@ def fmt_head(cur: str) -> str:
     # процент к балансу стратегии — единая мера во всём боте (дни, месяцы,
     # сделки). От заведённых денег считать нельзя: пополнение усилено плечом,
     # и месяц с одним взносом давал сотни процентов
-    roi = f" ({pct(grew)})" if cap else ""
+    roi = f" ({pct(grew)})" if grew is not None else ""
     return (f"💎 <b>{amount(cap, cur, whole=True)}</b>\n"
             f"◆ всего <b>{amount(earned, cur, signed=True)}</b>{roi}")
 
@@ -1602,7 +1639,8 @@ def fmt_status(cur: str) -> str:
     # с отчётом «за всё время» по тому же счёту
     gross = summary(fetch(datetime(2000, 1, 1), clock()))["total"] + archived_before_now()[0]
     earned = net_of_fee(mine(gross))
-    roi = f" ({pct(growth_all())})" if cap else ""
+    grew = growth_all()
+    roi = f" ({pct(grew)})" if grew is not None else ""
 
     out = [f"💼 <b>Счёт {a.login}</b>", THIN,
            f"На стратегии <b>{cap:.2f}{sign(cur)}</b>",
@@ -1815,26 +1853,28 @@ def _trade_notification(row: dict, cur: str, day_net: float, day_count: int,
     # вырасти депозитом, процент к текущему капиталу занижен — тот же счёт,
     # что и соседние по стратегии, показывал бы другое число на ту же сделку
     try:
-        cap_then = capital_at(row["time"], fetch(datetime(2000, 1, 1), clock() + timedelta(days=1)), cap)
+        flows = fetch(datetime(2000, 1, 1), clock() + timedelta(days=1))
+        cap_then = capital_at(row["time"], flows, cap)
     except Exception as e:
         # история недоступна (терминал занят/переподключается) — не падаем,
         # но это откат ровно к той просадке процента, ради которой и
         # придумали capital_at, так что тихо мимо лога она проходить не должна
         log.warning("капитал на момент сделки не посчитан, беру текущий: %s", e)
+        flows = []
         cap_then = cap
-    pct_base = cap_then if cap_then else cap
     around = strategy_around(row)
-    # капитал мог оказаться нулём (нет опорной суммы, вывод до нуля) — тогда процент
-    # считаем к балансу счёта до сделки, а не молча теряем его из уведомления
-    if not pct_base:
-        pct_base = around["was"] or around["became"] - profit
-    nth, total = ordinal_today(row)
-    reference_pct = (reference_trade_percentages(acc, [(row, cap_then)], cur).get(row["ticket"])
-                     if acc is not None else None)
-    deal_pct = reference_pct
-    if deal_pct is None and pct_base > 0:
-        deal_pct = profit / pct_base * 100
-    plus = (reference_pct if reference_pct is not None else profit) >= 0
+    deal_pct = profit / cap_then * 100 if cap_then >= MIN_RELIABLE_TRADE_CAPITAL else None
+    day_gain = deal_pct
+    if acc is not None:
+        day_rows = [r for r in flows if r["is_closing"] and r["time"].date() == row["time"].date()
+                    and r["ticket"] != row["ticket"]]
+        day_rows.append(row)
+        returns = TradeReturns(day_rows, flows, cap, acc, cur)
+        deal_pct = returns.deals.get(row["ticket"])
+        day_gain = returns.period(day_rows)
+    elif day_net is not None and cap_then >= MIN_RELIABLE_TRADE_CAPITAL:
+        day_gain = net_of_fee(mine(day_net)) / cap_then * 100
+    plus = (deal_pct if deal_pct is not None else profit) >= 0
     label = "Сделка в плюс" if plus else "Сделка в минус"
 
     # коротко: когда, итог, результат, за день, что накоплено и сколько на стратегии
@@ -1848,7 +1888,7 @@ def _trade_notification(row: dict, cur: str, day_net: float, day_count: int,
     # а не только когда сделок больше одной
     day_profit = net_of_fee(mine(day_net)) if day_net is not None else profit
     n = day_count if day_count is not None else 1
-    day_pct = f" · <b>{pct(day_profit / pct_base * 100)}</b>" if pct_base else ""
+    day_pct = f" · <b>{pct(day_gain)}</b>" if day_gain is not None else ""
     out.append(f"💵 За день: <b>{money(day_profit)}{sign(cur)}</b>{day_pct} "
                f"<i>({n} {plural(n, 'сделка', 'сделки', 'сделок')})</i>")
 

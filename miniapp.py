@@ -544,6 +544,7 @@ async def overview_report(request):
     chart = {}
     total = count = account_count = archived_count = pending_count = 0
     current_capital = weighted = 0
+    incomplete_return = False
     timelines = []
     for acc in personal:
         state = store.get_state(db, acc["login"])
@@ -564,7 +565,12 @@ async def overview_report(request):
         # мерой, что карточки (как в сводке бота), а не сумма ÷ общий капитал
         all_rows = trades.fetch(datetime(2000, 1, 1), logic.utcnow() + timedelta(days=1))
         timelines.append((report_timeline({r["time"].date().isoformat(): 0 for r in all_rows}, since, until, state, all_rows, retained_history_start(db, acc["login"])), factor))
-        weighted += max(0, cap) * factor * trades.period_growth(rows, all_rows, archived, cap)
+        if cap > 0:
+            growth = trades.TradeReturns(rows, all_rows, cap).period(rows, archived)
+            if growth is None:
+                incomplete_return = True
+            else:
+                weighted += cap * factor * growth
         total += trades.net_of_fee(trades.mine(
             summary["total"] + sum((m["gross"] or 0) + (m["platform"] or 0) for m in archived))) * factor
         count += summary["count"] + sum(m["trades"] or 0 for m in archived)
@@ -587,7 +593,7 @@ async def overview_report(request):
         if balances and not pending_count and all(b is not None for b in balances):
             point["balance"] = round(sum(b * factor for b, (_, factor) in zip(balances, per_account)), 2)
     return web.json_response({"timeline": timeline, "title": title, "summary": {"count": count, "net_income": total,
-        "pct_capital": round(weighted / current_capital, 3) if current_capital > 0 else None},
+        "pct_capital": round(weighted / current_capital, 3) if current_capital > 0 and not incomplete_return else None},
         "currency": "USD", "chart": [{"day": k, "value": v} for k, v in sorted(chart.items())],
         "archived": bool(archived_count), "accounts": account_count, "pending_accounts": pending_count})
 
@@ -665,16 +671,12 @@ async def report(request):
     archived = report_archive(since, until)
     total = summary["total"] + sum((m["gross"] or 0) + (m["platform"] or 0) for m in archived)
     summary["net_income"] = trades.net_of_fee(trades.mine(total))
-    requested_period = request.query.get("period", "month")
-    weekly_report = requested_period in ("week", "lastweek")
     # один раз на запрос: капитал на дату сделки/месяца — это он же минус
     # позднейшие движения (trades.capital_at с current), а не новый пересчёт
     raw_capital = trades.capital()
     # проценты — единой мерой trades.period_growth, как у карточек счёта: вся
     # история движений нужна, чтобы найти капитал на момент каждой сделки
     all_rows = trades.fetch(datetime(2000, 1, 1), logic.utcnow() + timedelta(days=1))
-    if not weekly_report:
-        summary["pct_capital"] = round(trades.period_growth(rows, all_rows, archived, raw_capital), 3)
     summary["count"] += sum(m["trades"] or 0 for m in archived)
     summary["wins"] += sum(m["wins"] or 0 for m in archived)
     chart = {}
@@ -695,24 +697,17 @@ async def report(request):
     page = filtered[offset:offset + 50]
     cur = trades.currency()
     periods = {key: logic.period(key)[1:3] for key in ("week", "lastweek", "month")}
-    week_start = periods["lastweek"][0]
-    week_end = periods["week"][1]
-    candidates = {r["ticket"]: r for r in all_rows
-                  if r["is_closing"] and week_start <= r["time"] <= week_end}
-    candidates.update((r["ticket"], r) for r in page if r["is_closing"])
-    deal_bases = {ticket: trades.capital_at(r["time"], all_rows, raw_capital)
-                  for ticket, r in candidates.items()}
-    reference_pcts = trades.reference_trade_percentages(
-        acc, [(r, deal_bases[ticket]) for ticket, r in candidates.items()], cur)
-    unreliable = {ticket for ticket, base in deal_bases.items()
-                  if base < trades.MIN_RELIABLE_TRADE_CAPITAL and ticket not in reference_pcts}
+    returns = trades.TradeReturns(all_rows, current=raw_capital, acc=acc, cur=cur)
+
+    def percent_for(selected, old=()):
+        value = returns.period(selected, old)
+        return round(value, 3) if value is not None else None
+
+    summary["pct_capital"] = percent_for(rows, archived)
     deals = []
     for row in page:
-        capital_then = deal_bases.get(row["ticket"], 0)
         net_income = trades.own_amount(row) if row["is_balance"] else trades.net_of_fee(trades.mine(row["net"]))
-        pct = reference_pcts.get(row["ticket"])
-        if pct is None and capital_then > 0 and not (weekly_report and row["ticket"] in unreliable):
-            pct = net_income / capital_then * 100
+        pct = returns.deals.get(row["ticket"])
         item = {**row, "time": row["time"].isoformat() + "Z", "net_income": net_income,
                 "pct_capital": round(pct, 4) if pct is not None else None}
         if row["is_balance"]:
@@ -723,13 +718,13 @@ async def report(request):
     # процент месяца — к капиталу на момент каждой сделки (свёрнутый — тем, что
     # сохранили при свёртке), а не к сегодняшнему: счёт, с которого капитал
     # потом вывели, делил прошлую прибыль на остаток около нуля (+4 550 067%)
+    monthly_rows = trades.monthly(120)
     months = []
-    for m in trades.monthly(120):
+    for m in monthly_rows:
         live = [r for r in all_rows if f"{r['time']:%Y-%m}" == m["month"]] if m.get("_live") else []
         months.append({"month": m["month"], "count": m["trades"] or 0,
                        "net": trades.net_of_fee(trades.mine((m["gross"] or 0) + (m["platform"] or 0))),
-                       "pct_capital": round(trades.period_growth(
-                           live, all_rows, () if m.get("_live") else (m,), raw_capital), 3)})
+                       "pct_capital": percent_for(live, () if m.get("_live") else (m,))})
     recent_start = min(first for first, _ in periods.values())
     recent = [r for r in all_rows if r["time"] >= recent_start]
     insights = {}
@@ -738,20 +733,13 @@ async def report(request):
         selected = [r for r in recent if first <= r["time"] <= last]
         summary_for_period = trades.summary(selected)
         amount = summary_for_period["total"] + sum((m["gross"] or 0) + (m["platform"] or 0) for m in old)
-        weekly = key in ("week", "lastweek")
-        # Без надёжной базы или совпадения частичный процент недели вводит в заблуждение.
-        missing = weekly and any(r["ticket"] in unreliable for r in selected)
-        pct = None if missing else round(trades.period_growth(
-            selected, all_rows, old, raw_capital, reference_pcts=reference_pcts if weekly else None), 3)
         insights[key] = {"available": True, "count": summary_for_period["count"] +
                          sum(m["trades"] or 0 for m in old),
                          "net": trades.net_of_fee(trades.mine(amount)),
-                         "pct_capital": pct}
-    if weekly_report:
-        summary["pct_capital"] = insights[requested_period]["pct_capital"]
+                         "pct_capital": percent_for(selected, old)}
     insights["all"] = {"available": True, "count": sum(m["count"] for m in months),
                        "net": sum(m["net"] for m in months),
-                       "pct_capital": round(trades.growth_all(), 3)}   # тот же ROI, что на карточке
+                       "pct_capital": percent_for(all_rows, (m for m in monthly_rows if not m.get("_live")))}
     # итоги дня — только для сделок: у движений средств интерфейс их не
     # показывает, а «процент от капитала» у суммы пополнений смысла не имеет
     by_day = {}
@@ -761,11 +749,8 @@ async def report(request):
     for day, day_rows in by_day.items():
         day_summary = trades.summary(day_rows)
         day_net = trades.net_of_fee(trades.mine(day_summary["total"]))
-        missing = weekly_report and any(r["ticket"] in unreliable for r in day_rows)
-        day_pct = None if missing else round(trades.growth_pct(
-            day_rows, all_rows, raw_capital, reference_pcts=reference_pcts if weekly_report else None), 3)
         day_totals[day] = {"count": day_summary["count"], "net": day_net,
-                           "pct_capital": day_pct}
+                           "pct_capital": percent_for(day_rows)}
     extra = {}
     if kind == "moves":
         # общая сумма удержанной комиссии брокера (30%) — одной цифрой вместо
@@ -786,7 +771,7 @@ async def report(request):
         "insights": insights, "day_totals": day_totals,
         "chart": [{"day": k, "value": v} for k, v in sorted(chart.items())],
         "months": months, "archived": bool(archived),
-        "report": plain_report(trades.fmt_report(title, rows, cur, since=since, until=until))})
+        "report": plain_report(trades.fmt_report(title, rows, cur, since=since, until=until, returns=returns))})
 
 
 async def price_chart(request):
