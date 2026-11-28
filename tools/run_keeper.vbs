@@ -1,12 +1,8 @@
-' Launch keeper.ps1 with absolutely no window. powershell.exe -WindowStyle
-' Hidden still creates a console host process that can flash on screen for
-' an instant before hiding - WScript.Shell.Run with the third argument
-' False and the second argument 0 (SW_HIDE) creates no window at all, the
-' same trick already used by run_agent.vbs for the agent itself.
-Set shell = CreateObject("WScript.Shell")
+Option Explicit
+
+Dim fso, shell, launcher
 Set fso = CreateObject("Scripting.FileSystemObject")
-
-scriptDir = fso.GetParentFolderName(WScript.ScriptFullName)
-keeperScript = scriptDir & "\keeper.ps1"
-
-shell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File """ & keeperScript & """", 0, True
+Set shell = CreateObject("WScript.Shell")
+launcher = fso.BuildPath(fso.GetParentFolderName(WScript.ScriptFullName), "run_agent.vbs")
+WScript.Quit shell.Run(Chr(34) & WScript.FullName & Chr(34) & _
+    " //B //NoLogo " & Chr(34) & launcher & Chr(34) & " /watch", 0, True)

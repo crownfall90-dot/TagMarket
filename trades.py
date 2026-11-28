@@ -108,7 +108,45 @@ _IDLE_IO = 0     # PROCESS_MODE_BACKGROUND_BEGIN — заодно понижае
 _BACKGROUND_MODE = 0x00100000 if os.name == "nt" else 0     # PROCESS_MODE_BACKGROUND_BEGIN
 
 
-def _launch() -> None:
+def _terminal_running(executable: str = "terminal64.exe") -> bool:
+    """Проверить в памяти без запуска tasklist, работает ли уже терминал."""
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _ProcessEntry32W(ctypes.Structure):
+            _fields_ = [
+                ("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
+                ("th32ProcessID", wintypes.DWORD), ("th32DefaultHeapID", ctypes.c_size_t),
+                ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+                ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", ctypes.c_long),
+                ("dwFlags", wintypes.DWORD), ("szExeFile", wintypes.WCHAR * 260),
+            ]
+
+        kernel32 = ctypes.windll.kernel32
+        snap = kernel32.CreateToolhelp32Snapshot(0x00000002, 0)
+        if snap in (0, -1, wintypes.HANDLE(-1).value):
+            return False
+        try:
+            entry = _ProcessEntry32W()
+            entry.dwSize = ctypes.sizeof(_ProcessEntry32W)
+            target = os.path.basename(executable).lower()
+            if kernel32.Process32FirstW(snap, ctypes.byref(entry)):
+                while True:
+                    if entry.szExeFile.lower() == target:
+                        return True
+                    if not kernel32.Process32NextW(snap, ctypes.byref(entry)):
+                        break
+        finally:
+            kernel32.CloseHandle(snap)
+    except Exception:
+        pass
+    return False
+
+
+def _launch(terminal_path: str = TERMINAL) -> None:
     """Поднять терминал скрытым и с минимальным приоритетом, если он ещё не запущен.
 
     Терминалу нужен рабочий стол, поэтому службой его не сделать, но окно
@@ -120,8 +158,8 @@ def _launch() -> None:
         startup = subprocess.STARTUPINFO()
         startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startup.wShowWindow = 0     # SW_HIDE — ни окна, ни кнопки в панели задач
-    flags = (getattr(subprocess, "DETACHED_PROCESS", 0) | _NO_WINDOW | _IDLE_PRIORITY)
-    proc = subprocess.Popen([TERMINAL], cwd=os.path.dirname(TERMINAL), startupinfo=startup,
+    flags = _NO_WINDOW | _IDLE_PRIORITY
+    proc = subprocess.Popen([terminal_path], cwd=os.path.dirname(terminal_path), startupinfo=startup,
                             creationflags=flags)
     _lower_priority(proc.pid)
     # MT5 может сам показать окно уже после старта: прячем его сразу и
@@ -256,14 +294,18 @@ def use(acc: dict) -> None:
         return
     mt5.shutdown()
 
+    terminal_path = acc.get("terminal") or TERMINAL
+
     def start() -> bool:
-        return mt5.initialize(path=acc.get("terminal") or TERMINAL, login=int(acc["login"]),
+        return mt5.initialize(path=terminal_path, login=int(acc["login"]),
                               password=acc["password"], server=acc["server"], timeout=60000)
 
+    if not _terminal_running(terminal_path):
+        _launch(terminal_path)
     ok = start()
     hide_terminal()
     if not ok:                  # терминал ещё не запущен — поднимаем сами и пробуем снова
-        _launch()
+        _launch(terminal_path)
         ok = start()
         hide_terminal()
     if not ok:

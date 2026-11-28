@@ -36,6 +36,7 @@ import logging.handlers
 import os
 import re
 import socket
+import subprocess
 import sys
 import time
 import uuid
@@ -62,9 +63,9 @@ _NO_WINDOW = 0x08000000 if os.name == "nt" else 0     # CREATE_NO_WINDOW
 
 
 def _quiet_run(args, **kw):
-    import subprocess
     kw.setdefault("creationflags", 0)
     kw["creationflags"] |= _NO_WINDOW
+    kw.setdefault("stdin", subprocess.DEVNULL)
     if os.name == "nt":
         si = kw.get("startupinfo") or subprocess.STARTUPINFO()
         si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
@@ -74,7 +75,6 @@ def _quiet_run(args, **kw):
 
 
 def _quiet_popen(args, **kw):
-    import subprocess
     kw.setdefault("creationflags", 0)
     kw["creationflags"] |= _NO_WINDOW
     if os.name == "nt":
@@ -143,16 +143,77 @@ class _BoundAdapter(requests.adapters.HTTPAdapter):
 
 
 def _physical_ips() -> list[str]:
-    """IPv4 физических адаптеров (Wi-Fi, Ethernet) — без туннелей VPN."""
+    """IPv4 физических адаптеров (Wi-Fi, Ethernet) без запуска PowerShell."""
     if os.name != "nt":
         return []
     try:
-        r = _quiet_run(["powershell", "-NoProfile", "-Command",
-                        "Get-NetAdapter -Physical | Where-Object Status -eq Up | "
-                        "Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | "
-                        "Select-Object -ExpandProperty IPAddress"],
-                       capture_output=True, text=True, timeout=20)
-        return [ip for ip in r.stdout.split() if not ip.startswith("169.254.")]
+        import ctypes
+        from ctypes import wintypes
+
+        class _SockAddrIn(ctypes.Structure):
+            _fields_ = [("sin_family", ctypes.c_ushort), ("sin_port", ctypes.c_ushort),
+                        ("sin_addr", ctypes.c_ubyte * 4), ("sin_zero", ctypes.c_char * 8)]
+
+        class _SocketAddress(ctypes.Structure):
+            _fields_ = [("lpSockaddr", ctypes.POINTER(_SockAddrIn)), ("iSockaddrLength", ctypes.c_int)]
+
+        class _UnicastAddr(ctypes.Structure):
+            pass
+
+        _UnicastAddr._fields_ = [
+            ("Length", wintypes.ULONG), ("Flags", wintypes.DWORD),
+            ("Next", ctypes.POINTER(_UnicastAddr)), ("Address", _SocketAddress),
+        ]
+
+        class _AdapterAddrs(ctypes.Structure):
+            pass
+
+        _AdapterAddrs._fields_ = [
+            ("Length", wintypes.ULONG), ("IfIndex", wintypes.DWORD),
+            ("Next", ctypes.POINTER(_AdapterAddrs)),
+            ("AdapterName", ctypes.c_char_p),
+            ("FirstUnicastAddress", ctypes.POINTER(_UnicastAddr)),
+            ("FirstAnycastAddress", ctypes.c_void_p),
+            ("FirstMulticastAddress", ctypes.c_void_p),
+            ("FirstDnsServerAddress", ctypes.c_void_p),
+            ("DnsSuffix", wintypes.LPWSTR),
+            ("Description", wintypes.LPWSTR),
+            ("FriendlyName", wintypes.LPWSTR),
+            ("PhysicalAddress", ctypes.c_ubyte * 8),
+            ("PhysicalAddressLength", wintypes.DWORD),
+            ("Flags", wintypes.DWORD),
+            ("Mtu", wintypes.DWORD),
+            ("IfType", wintypes.DWORD),
+            ("OperStatus", ctypes.c_int),
+        ]
+
+        flags = 2 | 4 | 8  # SKIP_ANYCAST | SKIP_MULTICAST | SKIP_DNS_SERVER
+        size = wintypes.ULONG(32768)
+        for _ in range(3):
+            buf = ctypes.create_string_buffer(size.value)
+            ret = ctypes.windll.iphlpapi.GetAdaptersAddresses(2, flags, None, buf, ctypes.byref(size))
+            if ret != 111:  # ERROR_BUFFER_OVERFLOW
+                break
+        if ret != 0:
+            return []
+
+        skip_words = ("virtual", "vpn", "tap", "tun", "vmware", "vbox", "hyper-v", "loopback", "bluetooth")
+        ips: list[str] = []
+        ptr = ctypes.cast(buf, ctypes.POINTER(_AdapterAddrs))
+        while ptr:
+            adapter = ptr.contents
+            desc = f"{adapter.FriendlyName or ''} {adapter.Description or ''}".lower()
+            if adapter.IfType in (6, 71) and adapter.OperStatus == 1 and not any(w in desc for w in skip_words):
+                unicast = adapter.FirstUnicastAddress
+                while unicast:
+                    sockaddr = unicast.contents.Address.lpSockaddr.contents
+                    if sockaddr.sin_family == 2:
+                        ip = socket.inet_ntoa(bytes(sockaddr.sin_addr))
+                        if not ip.startswith(("169.254.", "127.")):
+                            ips.append(ip)
+                    unicast = unicast.contents.Next
+            ptr = adapter.Next
+        return ips
     except Exception as e:
         log.warning("не получил адреса сетевых адаптеров: %s", e)
         return []
@@ -188,9 +249,9 @@ class _Net:
         self._next_probe = 0.0
 
     @staticmethod
-    def _candidates() -> list[tuple[str, requests.Session]]:
+    def _candidates(discover_adapters: bool) -> list[tuple[str, requests.Session]]:
         routes = []
-        for ip in _physical_ips():
+        for ip in _physical_ips() if discover_adapters else ():
             s = requests.Session()
             s.trust_env = False
             s.mount("https://", _BoundAdapter(ip))
@@ -202,10 +263,10 @@ class _Net:
         routes.append(("через системный прокси", requests.Session()))
         return routes
 
-    def _pick_route(self) -> tuple[str, requests.Session] | None:
+    def _pick_route(self, discover_adapters: bool) -> tuple[str, requests.Session] | None:
         if time.monotonic() < self._next_probe:
             return None
-        for name, session in self._candidates():
+        for name, session in self._candidates(discover_adapters):
             try:
                 session.get(f"{SERVER}/status", timeout=(5, 8))
             except requests.exceptions.RequestException:
@@ -216,16 +277,16 @@ class _Net:
         self._next_probe = time.monotonic() + self.PROBE_COOLDOWN
         return None
 
-    def request(self, method: str, url: str, **kwargs) -> requests.Response:
+    def request(self, method: str, url: str, *, discover_adapters: bool = True, **kwargs) -> requests.Response:
         if self._route is None:
-            self._route = self._pick_route()
+            self._route = self._pick_route(discover_adapters)
         if self._route is None:
             raise requests.exceptions.ConnectionError(f"сервер {SERVER} недоступен ни одним путём")
         current = self._route
         try:
             return current[1].request(method, url, **kwargs)
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
-            self._route = self._pick_route()
+            self._route = self._pick_route(discover_adapters)
             if (isinstance(e, requests.exceptions.ConnectionError)
                     and self._route is not None and self._route[0] != current[0]):
                 return self._route[1].request(method, url, **kwargs)
@@ -241,22 +302,31 @@ class _Net:
 http = _Net()
 
 
-def claim_terminal() -> bool:
+DISABLED_CHECK_INTERVAL = 60
+
+
+def claim_terminal(*, discover_adapters: bool = False) -> str:
     """Never touch MT5 without an exclusive server-issued polling lease.
 
     A recovered primary takes the lease back from a standby at once (see
     coordination.claim); everyone else waits for the current owner.
-    Network errors and an older server both fail closed.
+    The disabled state stops maintenance as well as releasing the lease.
     """
     try:
         response = http.post(f"{SERVER}/agent/claim", headers={"X-Token": TOKEN},
                              json={"host": socket.gethostname(), "session": SESSION,
-                                   "role": ROLE}, timeout=15)
+                                   "role": ROLE}, timeout=15, discover_adapters=discover_adapters)
         response.raise_for_status()
-        return response.json().get("granted") is True
+        state = response.json()
+        if state.get("disabled") is True:
+            return "disabled"
+        if state.get("granted") is True:
+            return "granted"
+        if state.get("granted") is False:
+            return "standby"
     except Exception as exc:
         log.warning("не получил право опроса терминала: %s", exc)
-        return False
+    return "unavailable"
 # ощутимо больше цикла синка (по умолчанию 15с) — короткая сетевая заминка
 # на primary не должна включать вторую машину поверх первой
 STANDBY_TIMEOUT = int(os.getenv("STANDBY_TIMEOUT", 90))
@@ -384,8 +454,9 @@ GIT_BRANCH = os.getenv("GIT_BRANCH", "main")
 
 
 def _run_git(*args, timeout=30) -> str:
+    env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="never")
     r = _quiet_run(["git", *args], cwd=ROOT, capture_output=True,
-                   text=True, timeout=timeout)
+                   stdin=subprocess.DEVNULL, text=True, timeout=timeout, env=env)
     if r.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)}: {r.stderr.strip()[:200]}")
     return r.stdout.strip()
@@ -518,7 +589,7 @@ def _write_pending(commit: str) -> None:
     _write_marker(PENDING_COMMIT_FILE, f"{commit}|{utcnow().isoformat()}")
 
 
-def _read_pending() -> tuple[str, float] | None:
+def _read_pending(now: datetime | None = None) -> tuple[str, float] | None:
     """Возвращает (commit, seconds_since_written) или None, если маркера нет
     или он в устаревшем формате без временной метки (тогда считаем его сразу
     «старым» — 0 секунд грации не бывает, safer to treat as no-marker)."""
@@ -529,19 +600,29 @@ def _read_pending() -> tuple[str, float] | None:
     if not sep:
         return None     # старый формат без метки времени — не с чем сверяться
     try:
-        age = (utcnow() - datetime.fromisoformat(stamp)).total_seconds()
+        age = ((now or utcnow()) - datetime.fromisoformat(stamp)).total_seconds()
     except ValueError:
         return None
     return commit, age
 
 
-def _check_and_rollback_bad_update(lock: socket.socket) -> bool:
+def _confirm_disabled_pending() -> bool:
+    """Подтвердить обновление по файлу без git, если выключенная машина жива и дошла до паузы."""
+    pending_info = _read_pending()
+    if not pending_info:
+        return False
+    _write_marker(LAST_GOOD_COMMIT_FILE, pending_info[0])
+    _write_marker(PENDING_COMMIT_FILE, "")
+    return True
+
+
+def _check_and_rollback_bad_update(lock: socket.socket, started_at: datetime | None = None) -> bool:
     """При старте: если предыдущий запуск не подтвердил обновление — откатиться.
 
     Возвращает True, если откат произошёл (и уже запущен новый процесс на
     старом коде — этот процесс должен завершиться, ничего больше не начиная).
     """
-    pending_info = _read_pending()
+    pending_info = _read_pending(started_at)
     current = _local_commit()
     if not pending_info or not current:
         return False
@@ -576,10 +657,8 @@ def _check_and_rollback_bad_update(lock: socket.socket) -> bool:
     _write_marker(BAD_COMMIT_FILE, current)     # не обновляться на него снова
     try:
         _write_marker(PENDING_COMMIT_FILE, "")   # больше не «в процессе обновления»
-        import subprocess
         pythonw = sys.executable.replace("python.exe", "pythonw.exe")
-        _quiet_popen([pythonw, os.path.join(ROOT, "agent.py")], cwd=ROOT,
-                    creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
+        _quiet_popen([pythonw, os.path.join(ROOT, "agent.py")], cwd=ROOT)
     except Exception as e:
         log.error("откатился, но не запустил процесс на старом коде — "
                  "нужен ручной перезапуск: %s", e)
@@ -795,11 +874,9 @@ def _self_update_and_restart(lock: socket.socket, target_commit: str) -> None:
 
     log.info("код обновлён до %s, перезапускаюсь", target_commit[:8])
     try:
-        import subprocess
         pythonw = sys.executable.replace("python.exe", "pythonw.exe")
         child_env = dict(os.environ, AGENT_RESPAWN_WAIT=str(RESPAWN_WAIT))
-        proc = _quiet_popen([pythonw, os.path.join(ROOT, "agent.py")], cwd=ROOT, env=child_env,
-                            creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
+        proc = _quiet_popen([pythonw, os.path.join(ROOT, "agent.py")], cwd=ROOT, env=child_env)
     except Exception as e:
         log.error("не запустил новый процесс, остаюсь на старом коде до ручного рестарта: %s", e)
         return
@@ -860,6 +937,8 @@ def _retry_request(fn, *, retries: int = 3, backoff: float = 3.0):
         try:
             return fn()
         except requests.exceptions.RequestException as e:
+            if e.response is not None and e.response.status_code in (403, 409):
+                raise
             last_exc = e
             if attempt < retries:
                 time.sleep(backoff * (attempt + 1))
@@ -897,7 +976,8 @@ def push_candles(since: datetime, until: datetime) -> int:
                     trades.CHART_SYMBOL, since, until)
         return 0
     def _do():
-        r = http.post(f"{SERVER}/agent/candles", json={"candles": rows},
+        r = http.post(f"{SERVER}/agent/candles",
+                      json={"candles": rows, "host": socket.gethostname(), "session": SESSION},
                       headers={"X-Token": TOKEN}, timeout=15)
         r.raise_for_status()
         return r.json().get("new", 0)
@@ -1029,9 +1109,7 @@ def main():
     # подождём вместо мгновенной смерти (см. RESPAWN_WAIT в _self_update_and_restart)
     retry = float(os.environ.pop("AGENT_RESPAWN_WAIT", 0) or 0)
     lock = only_one_copy(retry_seconds=retry)      # держим до конца работы
-
-    if AUTO_UPDATE and _check_and_rollback_bad_update(lock):
-        return      # откатились и запустили новый процесс на старом коде — этот выходит
+    _touch_beat()
 
     log.info("агент запущен (роль: %s), сервер %s, круг раз в %d с", ROLE, SERVER, INTERVAL)
 
@@ -1043,25 +1121,52 @@ def main():
     took_over = False   # держит право опроса — важен для безопасного автообновления
     update_confirmed = False   # первый успешный круг на этом коде уже подтверждён
     started_at = time.monotonic()
-    last_env_sync = 0.0
-    last_update_check = 0.0
-    last_canary_report = 0.0
-    last_candle_sync = 0.0
+    started_wall = utcnow()
+    last_env_sync: float | None = None
+    last_update_check: float | None = None
+    last_canary_report: float | None = None
+    last_candle_sync: float | None = None
     candles_backfilled = False      # история за 60 дней ушла на сервер
     # закэшировано на весь процесс: код меняется только через рестарт после
     # обновления, так что local-commit и «свой ли это коммит» не меняются
     # между запусками git заново на каждый круг
-    canary_commit = _local_commit() if AUTO_UPDATE else None
-    is_own_commit = (canary_commit and AUTO_UPDATE
-                     and _remote_commit_host(canary_commit) == socket.gethostname())
+    canary_commit = None
+    is_own_commit = False
+    maintenance_ready = False
+    paused = False
+    discover_adapters = False
     while True:
+        lease_state = claim_terminal(discover_adapters=discover_adapters)
+        if lease_state in ("disabled", "unavailable"):
+            if lease_state == "disabled":
+                if not paused:
+                    log.info("машина выключена в панели управления")
+                    paused = True
+                    standing_by = None
+                if AUTO_UPDATE and not update_confirmed and _confirm_disabled_pending():
+                    update_confirmed = True
+            discover_adapters = not paused
+            took_over = False
+            _touch_beat()
+            time.sleep(DISABLED_CHECK_INTERVAL if paused else INTERVAL)
+            continue
+        paused = False
+        discover_adapters = True
+
+        if AUTO_UPDATE and not maintenance_ready:
+            if _check_and_rollback_bad_update(lock, started_at=started_wall):
+                return
+            canary_commit = _local_commit()
+            is_own_commit = bool(canary_commit and _remote_commit_host(canary_commit) == socket.gethostname())
+            maintenance_ready = True
+
         # раз в ENV_SYNC_EVERY, а не каждый круг — токены меняются редко,
         # незачем дёргать сервер лишним запросом каждые 15 секунд
-        if time.monotonic() - last_env_sync > ENV_SYNC_EVERY:
+        if last_env_sync is None or time.monotonic() - last_env_sync > ENV_SYNC_EVERY:
             sync_env()
             last_env_sync = time.monotonic()
 
-        if AUTO_UPDATE and time.monotonic() - last_update_check > UPDATE_CHECK_EVERY:
+        if AUTO_UPDATE and (last_update_check is None or time.monotonic() - last_update_check > UPDATE_CHECK_EVERY):
             check_for_update(lock, holding_terminal=took_over)     # обновится и выйдет сама
             last_update_check = time.monotonic()
 
@@ -1071,13 +1176,13 @@ def main():
         # числе активная работа с терминалом). Источник сам себя не
         # репортует — обкатка нужна именно на другой машине
         if (AUTO_UPDATE and canary_commit and not is_own_commit
-                and time.monotonic() - last_canary_report > INTERVAL):
+                and (last_canary_report is None or time.monotonic() - last_canary_report > INTERVAL)):
             report_canary(canary_commit)
             last_canary_report = time.monotonic()
 
         # Проверяем владение на каждом круге, включая primary и уже активный
         # standby. Потеря связи с сервером означает ожидание, а не второй опрос.
-        if not claim_terminal():
+        if lease_state != "granted":
             if standing_by is not True:
                 log.info("право опроса не получено, жду следующего круга")
                 if standing_by is False:      # реальный переход, не первый запуск
@@ -1116,14 +1221,13 @@ def main():
             time.sleep(INTERVAL)
             continue
 
-        # терминал может показать окно сам: при обновлении, всплывающих
-        # сообщениях брокера или после переподключения — прячем каждый круг
-        trades.hide_terminal()
-
         ok = False
         for acc in accs:
-            if not claim_terminal():
+            lease_state = claim_terminal()
+            if lease_state != "granted":
                 break
+            # MT5 может показать окно при обновлении или переподключении.
+            trades.hide_terminal()
             try:
                 payload = collect(acc)
                 new = push(payload)
@@ -1138,7 +1242,9 @@ def main():
 
         # свечи графика цены: раз в CANDLE_SYNC_EVERY, не на каждый счёт —
         # символ общий, а терминал сейчас подключён (после collect() выше)
-        if ok and time.monotonic() - last_candle_sync > CANDLE_SYNC_EVERY:
+        candle_due = (ok and lease_state == "granted"
+                      and (last_candle_sync is None or time.monotonic() - last_candle_sync > CANDLE_SYNC_EVERY))
+        if candle_due and (lease_state := claim_terminal()) == "granted":
             try:
                 until = trades.clock()
                 # первый круг после запуска — история за 60 дней (столько хранит
@@ -1152,6 +1258,14 @@ def main():
             except Exception as e:
                 log.warning("не отправил свечи: %s", e)
             last_candle_sync = time.monotonic()
+
+        if lease_state == "disabled":
+            log.info("машина выключена в панели управления")
+            paused, discover_adapters, took_over = True, False, False
+            standing_by = None
+            _touch_beat()
+            time.sleep(DISABLED_CHECK_INTERVAL)
+            continue
 
         # подтверждаем по факту «дожили до конца цикла без краха», не по
         # успеху MT5/сети конкретно в этом круге — см. комментарий выше

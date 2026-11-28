@@ -913,14 +913,22 @@ def _candle_row(raw) -> dict:
 
 
 async def agent_candles(request):
-    """Агент прислал свечи XAUUSD для графика цены — не привязано к счёту/лизу:
-    котировки одного символа общие для всех, кто сейчас держит терминал.
-    """
+    """Агент прислал общие свечи XAUUSD для графика цены."""
     check_token(request)
     try:
         data = await request.json()
         if not isinstance(data, dict):
             raise ValueError("object required")
+        # Старые агенты не передают идентификатор для свечей. Новые не могут
+        # загрузить свечи после того, как их аренда была отозвана.
+        if "host" in data or "session" in data:
+            host = _agent_host(data.get("host"))
+            session = data.get("session")
+            if not isinstance(session, str) or not 16 <= len(session) <= 128:
+                raise ValueError("invalid agent identity")
+            control_db = request.app["db"]
+            if coordination.is_disabled(control_db, host) or not coordination.permits(control_db, host, session):
+                raise web.HTTPConflict(text="polling lease lost")
         rows = data.get("candles")
         if not isinstance(rows, list) or len(rows) > 10000:
             raise ValueError("candles: list required")

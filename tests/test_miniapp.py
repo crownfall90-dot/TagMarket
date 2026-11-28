@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, patch
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlencode
-from contextlib import closing
+from contextlib import ExitStack, closing
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 _root = tempfile.TemporaryDirectory()
@@ -98,6 +98,97 @@ class LeaseTests(unittest.TestCase):
         coordination.renew(self.db, "main", "old", 175)
         self.assertEqual(coordination.read(self.db)["expires"], 180)
         self.assertFalse(coordination.claim(self.db, "main", "old", "primary", 179)["granted"])
+
+    def test_disabled_agent_waits_without_maintenance_and_resumes(self):
+        with ExitStack() as stack:
+            stack.enter_context(patch.multiple(agent, TOKEN="agent-test", AUTO_UPDATE=True))
+            claim = stack.enter_context(patch.object(agent, "claim_terminal",
+                                                     side_effect=("disabled", "unavailable", "granted")))
+            sleep = stack.enter_context(patch.object(agent.time, "sleep"))
+            beat = stack.enter_context(patch.object(agent, "_touch_beat"))
+            for name in ("only_one_copy", "_run_quietly"):
+                stack.enter_context(patch.object(agent, name))
+            maintenance = {name: stack.enter_context(patch.object(agent, name)) for name in (
+                "_check_and_rollback_bad_update", "_local_commit", "_remote_commit_host",
+                "sync_env", "check_for_update", "report_canary", "send_heartbeat", "fetch_accounts")}
+
+            def check_sleep(seconds):
+                self.assertEqual(seconds, agent.DISABLED_CHECK_INTERVAL)
+                for operation in maintenance.values():
+                    operation.assert_not_called()
+
+            sleep.side_effect = check_sleep
+            maintenance["_check_and_rollback_bad_update"].return_value = True
+            agent.main()
+            self.assertEqual(claim.call_count, 3)
+            self.assertTrue(all(call.kwargs == {"discover_adapters": False} for call in claim.call_args_list))
+            self.assertEqual(sleep.call_count, 2)
+            self.assertEqual(beat.call_count, 3)
+            maintenance["_check_and_rollback_bad_update"].assert_called_once()
+
+    def test_disabled_agent_confirms_pending_update_without_git(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            good_file = os.path.join(tmp, "last_good_commit")
+            pending_file = os.path.join(tmp, "pending_commit")
+            bad_file = os.path.join(tmp, "bad_commit")
+            agent._write_marker(good_file, "old1111")
+            agent._write_marker(pending_file, f"new2222|{agent.utcnow().isoformat()}")
+            with ExitStack() as stack:
+                stack.enter_context(patch.multiple(
+                    agent, TOKEN="agent-test", AUTO_UPDATE=True, _running_commit=None,
+                    LAST_GOOD_COMMIT_FILE=good_file, PENDING_COMMIT_FILE=pending_file,
+                    BAD_COMMIT_FILE=bad_file))
+                stack.enter_context(patch.object(agent, "claim_terminal", side_effect=("disabled", "granted")))
+                stack.enter_context(patch.object(agent.time, "sleep"))
+                stack.enter_context(patch.object(agent, "_touch_beat"))
+                for name in ("only_one_copy", "_run_quietly", "_remote_commit_host",
+                             "sync_env", "check_for_update", "report_canary", "send_heartbeat"):
+                    stack.enter_context(patch.object(agent, name))
+                run_git = stack.enter_context(patch.object(agent, "_run_git", return_value="new2222"))
+                stack.enter_context(patch.object(agent, "fetch_accounts", side_effect=StopIteration))
+                with self.assertRaises(StopIteration):
+                    agent.main()
+            self.assertEqual(agent._read_marker(good_file), "new2222")
+            self.assertIsNone(agent._read_marker(pending_file))
+            # While disabled, git was not invoked; only _local_commit ran after enabling.
+            self.assertEqual(run_git.call_args_list, [(("rev-parse", "HEAD"),)])
+
+    def test_unavailable_agent_enables_adapter_discovery_and_keeps_start_grace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            good_file = os.path.join(tmp, "last_good_commit")
+            pending_file = os.path.join(tmp, "pending_commit")
+            bad_file = os.path.join(tmp, "bad_commit")
+            agent._write_marker(good_file, "old1111")
+            t0 = agent.utcnow()
+            agent._write_marker(pending_file, f"new2222|{(t0 - timedelta(seconds=2)).isoformat()}")
+            with ExitStack() as stack:
+                stack.enter_context(patch.multiple(
+                    agent, TOKEN="agent-test", AUTO_UPDATE=True, MIN_CONFIRM_GRACE=30.0, _running_commit=None,
+                    LAST_GOOD_COMMIT_FILE=good_file, PENDING_COMMIT_FILE=pending_file,
+                    BAD_COMMIT_FILE=bad_file))
+                stack.enter_context(patch.object(agent, "utcnow", side_effect=[t0, t0 + timedelta(seconds=120)]))
+                claim = stack.enter_context(patch.object(agent, "claim_terminal",
+                                                         side_effect=("unavailable", "standby")))
+                stack.enter_context(patch.object(agent.time, "sleep"))
+                stack.enter_context(patch.object(agent, "_touch_beat"))
+                for name in ("only_one_copy", "_run_quietly", "_remote_commit_host",
+                             "sync_env", "check_for_update", "report_canary"):
+                    stack.enter_context(patch.object(agent, name))
+                run_git = stack.enter_context(patch.object(agent, "_run_git", return_value="new2222"))
+                stack.enter_context(patch.object(agent, "send_heartbeat", side_effect=StopIteration))
+                with self.assertRaises(StopIteration):
+                    agent.main()
+            self.assertEqual([c.kwargs for c in claim.call_args_list],
+                             [{"discover_adapters": False}, {"discover_adapters": True}])
+            # Must not roll back just because the agent waited > MIN_CONFIRM_GRACE while unavailable.
+            self.assertEqual(agent._read_marker(good_file), "old1111")
+            self.assertEqual(run_git.call_args_list, [(("rev-parse", "HEAD"),)])
+
+    def test_physical_ips_does_not_spawn_subprocess(self):
+        with patch.object(agent, "_quiet_run", side_effect=AssertionError("subprocess should not run")):
+            ips = agent._physical_ips()
+        self.assertIsInstance(ips, list)
+        self.assertTrue(all(not ip.startswith(("169.254.", "127.")) for ip in ips))
 
     def test_legacy_standby_cannot_take_over_while_owner_is_alive(self):
         coordination.claim(self.db, "main", "m", "primary", 0)
@@ -4241,6 +4332,13 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status, 200, await r.text())
         panel = {m["host"]: m for m in (await r.json())["machines"]}
         self.assertTrue(panel["laptop"]["disabled"])
+        identity = {"host": "laptop", "session": "session-aaaaaaaaaaaaaaaa", "role": "standby"}
+        headers = {"X-Token": "agent-test"}
+        r = await self.client.post("/agent/claim", headers=headers, json=identity)
+        self.assertEqual(r.status, 200)
+        self.assertTrue((await r.json())["disabled"])
+        r = await self.client.post("/agent/candles", headers=headers, json={**identity, "candles": []})
+        self.assertEqual(r.status, 409)
         # выключенная машина не получает список счетов
         r = await self.client.get("/agent/accounts", headers={"X-Token": "agent-test", "X-Agent-Host": "laptop"})
         self.assertEqual(await r.json(), [])
@@ -4250,6 +4348,10 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         panel = {m["host"]: m for m in data["machines"]}
         self.assertEqual((panel["laptop"]["role"], panel["lancaster"]["role"]), ("primary", "standby"))
         self.assertFalse(panel["laptop"]["disabled"])
+        r = await self.client.post("/agent/claim", headers=headers, json=identity)
+        self.assertTrue((await r.json())["granted"])
+        r = await self.client.post("/agent/candles", headers=headers, json={**identity, "candles": []})
+        self.assertEqual(r.status, 200)
         # приоритетную выключить нельзя, чужая машина и мусор — ошибки, не-основатель — 403
         self.assertEqual((await post({"host": "laptop", "action": "disable"})).status, 400)
         self.assertEqual((await post({"host": "nope", "action": "enable"})).status, 404)

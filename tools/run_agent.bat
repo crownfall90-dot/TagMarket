@@ -1,3 +1,3 @@
 @echo off
-cd /d "D:\TagMarket-main"
-start "" /min "C:\Users\crown\AppData\Local\Programs\Python\Python314\pythonw.exe" agent.py
+rem Compatibility for callers that already have a console.
+"%SystemRoot%\System32\wscript.exe" //B //NoLogo "%~dp0run_agent.vbs"

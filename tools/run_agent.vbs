@@ -1,48 +1,89 @@
-' Launch the agent with absolutely no window. A .bat always flashes its own
-' cmd.exe window for an instant, even when the agent itself runs through
-' pythonw with no window of its own. WScript.Shell.Run with the third
-' argument False and the second argument 0 (SW_HIDE) creates no window at
-' all - no flicker on alt-tab or when minimizing a fullscreen game.
-'
-' Paths are resolved from the script's own location and the user's
-' environment variables rather than hardcoded - the same file works on
-' this machine and on the laptop, regardless of drive letter or Python
-' version. Comments are kept in plain ASCII on purpose: VBScript reads
-' the file in the system's ANSI codepage, and Cyrillic here has caused
-' encoding-dependent breakage before.
+Option Explicit
+
+Dim fso, shell, scriptDir, projectDir, agentScript, pythonw, watching
 Set fso = CreateObject("Scripting.FileSystemObject")
 Set shell = CreateObject("WScript.Shell")
-
 scriptDir = fso.GetParentFolderName(WScript.ScriptFullName)
-projectDir = fso.GetParentFolderName(scriptDir)     ' tools\ -> project root
+projectDir = fso.GetParentFolderName(scriptDir)
+agentScript = projectDir & "\agent.py"
+watching = WScript.Arguments.Count > 0
+
+If watching Then
+    If WScript.Arguments(0) <> "/watch" Then WScript.Quit 2
+    If Not NeedsRestart() Then WScript.Quit 0
+End If
 
 pythonw = FindPythonw()
-If pythonw = "" Then
-    ' not found under the usual per-user install path - fall back to PATH
-    On Error Resume Next
-    pythonw = Trim(shell.Exec("cmd /c where pythonw").StdOut.ReadAll())
-    On Error Goto 0
-    If InStr(pythonw, vbCrLf) > 0 Then pythonw = Left(pythonw, InStr(pythonw, vbCrLf) - 1)
-End If
-
-If pythonw = "" Or Not fso.FileExists(pythonw) Then
-    WScript.Quit 1     ' pythonw not found - quit quietly, nothing to flash anyway
-End If
-
+If pythonw = "" Then WScript.Quit 1
 shell.CurrentDirectory = projectDir
-shell.Run """" & pythonw & """ agent.py", 0, False
+shell.Run Quote(pythonw) & " " & Quote(agentScript), 0, False
+
+Function Quote(value)
+    Quote = Chr(34) & value & Chr(34)
+End Function
 
 Function FindPythonw()
-    Dim base, pyFolder, candidate
-    base = shell.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\Programs\Python"
+    Dim candidate, base, folder, directory
     FindPythonw = ""
+    For Each directory In Array(".venv", "venv")
+        candidate = projectDir & "\" & directory & "\Scripts\pythonw.exe"
+        If fso.FileExists(candidate) Then
+            FindPythonw = candidate
+            Exit Function
+        End If
+    Next
+    base = shell.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\Programs\Python"
     If fso.FolderExists(base) Then
-        For Each pyFolder In fso.GetFolder(base).SubFolders
-            candidate = pyFolder.Path & "\pythonw.exe"
+        For Each folder In fso.GetFolder(base).SubFolders
+            candidate = folder.Path & "\pythonw.exe"
             If fso.FileExists(candidate) Then
                 FindPythonw = candidate
                 Exit Function
             End If
         Next
     End If
+    For Each directory In Split(shell.ExpandEnvironmentStrings("%PATH%"), ";")
+        directory = Trim(Replace(directory, Chr(34), ""))
+        If directory <> "" Then
+            candidate = fso.BuildPath(directory, "pythonw.exe")
+            If fso.FileExists(candidate) Then
+                FindPythonw = candidate
+                Exit Function
+            End If
+        End If
+    Next
+End Function
+
+Function MatchesAgentCommandLine(cmd)
+    Dim trimmed
+    trimmed = LCase(Trim(cmd))
+    If InStr(1, cmd, agentScript, vbTextCompare) > 0 Then
+        MatchesAgentCommandLine = True
+    ElseIf InStr(1, cmd, """agent.py""", vbTextCompare) > 0 Then
+        MatchesAgentCommandLine = True
+    ElseIf Right(trimmed, 9) = " agent.py" Then
+        MatchesAgentCommandLine = True
+    Else
+        MatchesAgentCommandLine = False
+    End If
+End Function
+
+Function NeedsRestart()
+    Dim beat, wmi, process, found
+    beat = projectDir & "\data\agent.beat"
+    Set wmi = GetObject("winmgmts:\\.\root\cimv2")
+    found = False
+    NeedsRestart = False
+    For Each process In wmi.ExecQuery("SELECT ProcessId, CommandLine FROM Win32_Process WHERE Name = 'pythonw.exe' OR Name = 'python.exe'")
+        If Not IsNull(process.CommandLine) Then
+            If MatchesAgentCommandLine(process.CommandLine) Then
+                found = True
+                If Not fso.FileExists(beat) Then Exit Function
+                If DateDiff("s", fso.GetFile(beat).DateLastModified, Now) < 180 Then Exit Function
+                If process.Terminate() <> 0 Then Exit Function
+            End If
+        End If
+    Next
+    If found Then WScript.Sleep 2000
+    NeedsRestart = True
 End Function
