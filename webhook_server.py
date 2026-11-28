@@ -971,6 +971,20 @@ async def agent_claim(request):
     return web.json_response(result)
 
 
+async def agent_release(request):
+    check_token(request)
+    try:
+        data = await request.json()
+        host, session = data["host"], data["session"]
+        if (not isinstance(host, str) or not 1 <= len(host) <= 128
+                or not isinstance(session, str) or not 16 <= len(session) <= 128):
+            raise ValueError("invalid agent identity")
+    except (ValueError, TypeError, KeyError):
+        raise web.HTTPBadRequest(text="invalid agent identity")
+    coordination.release(request.app["db"], host, session)
+    return web.json_response({"ok": True})
+
+
 async def main():
     ensure_token()
     import aiohttp
@@ -997,6 +1011,7 @@ async def main():
     app.router.add_post("/agent/sync", agent_sync)
     app.router.add_post("/agent/candles", agent_candles)
     app.router.add_post("/agent/claim", agent_claim)
+    app.router.add_post("/agent/release", agent_release)
     app.router.add_post("/agent/role_change", agent_role_change)
     app.router.add_post("/agent/update_notify", agent_update_notify)
     app.router.add_post("/agent/update_report", agent_update_report)

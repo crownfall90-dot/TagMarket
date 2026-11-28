@@ -327,6 +327,16 @@ def claim_terminal(*, discover_adapters: bool = False) -> str:
     except Exception as exc:
         log.warning("не получил право опроса терминала: %s", exc)
     return "unavailable"
+
+
+def release_terminal() -> None:
+    """Освободить аренду при штатном завершении/перезапуске, чтобы новый процесс не ждал TTL."""
+    try:
+        http.post(f"{SERVER}/agent/release", headers={"X-Token": TOKEN},
+                  json={"host": socket.gethostname(), "session": SESSION},
+                  timeout=5, discover_adapters=False)
+    except Exception:
+        pass
 # ощутимо больше цикла синка (по умолчанию 15с) — короткая сетевая заминка
 # на primary не должна включать вторую машину поверх первой
 STANDBY_TIMEOUT = int(os.getenv("STANDBY_TIMEOUT", 90))
@@ -665,6 +675,7 @@ def _check_and_rollback_bad_update(lock: socket.socket, started_at: datetime | N
         return True     # код уже откачен на диске — следующий ручной/сторожевой
                         # запуск подхватит его сам, даже если этот Popen не удался
 
+    release_terminal()
     _report_rollback(current, good)
     lock.close()
     sys.exit(0)
@@ -889,6 +900,7 @@ def _self_update_and_restart(lock: socket.socket, target_commit: str) -> None:
         log.error("новый процесс сразу завершился (код %s) — остаюсь на старом коде "
                   "до ручного разбора", proc.poll())
         return
+    release_terminal()
     notify_update(target_commit)
     lock.close()
     log.info("новый процесс запущен и жив, этот завершается")
@@ -969,11 +981,10 @@ def push_candles(since: datetime, until: datetime) -> int:
     """
     rows = trades.candles(since, until)
     if not rows:
-        # тихий возврат [] (без исключения) — терминал ещё не отдал историю
-        # по символу или CHART_SYMBOL не совпадает с тикером у брокера;
-        # логируем явно, иначе это неотличимо от "всё в порядке, просто рано"
-        log.warning("свечи %s: терминал вернул пустой список за %s..%s",
-                    trades.CHART_SYMBOL, since, until)
+        # На выходных (сб/вс) рынок закрыт и пустой ответ нормален — не шумим WARNING.
+        level = logging.INFO if since.weekday() >= 5 and until.weekday() >= 5 else logging.WARNING
+        log.log(level, "свечи %s: терминал вернул пустой список за %s..%s",
+                trades.CHART_SYMBOL, since, until)
         return 0
     def _do():
         r = http.post(f"{SERVER}/agent/candles",

@@ -60,6 +60,19 @@ def claim(db, host, session, role, now=None):
             "ttl": TTL, "retry_after": max(1, int(wait_until - now))}
 
 
+def release(db, host, session):
+    """Освободить аренду досрочно при штатном выходе или перезапуске владельца."""
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        current = read(db)
+        if current and (current["host"], current["session"]) == (host, session):
+            db.execute("DELETE FROM kv WHERE key=?", (KEY,))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+
 def renew(db, host, session, now=None):
     """Only successful uploads extend ownership; heartbeat alone is not health."""
     now = time.time() if now is None else now

@@ -190,6 +190,25 @@ class LeaseTests(unittest.TestCase):
         self.assertIsInstance(ips, list)
         self.assertTrue(all(not ip.startswith(("169.254.", "127.")) for ip in ips))
 
+    def test_release_frees_own_lease_immediately_and_ignores_others(self):
+        coordination.claim(self.db, "main", "session-1", "primary", 100)
+        coordination.release(self.db, "main", "wrong-session")
+        coordination.release(self.db, "other", "session-1")
+        self.assertFalse(coordination.claim(self.db, "main", "session-2", "primary", 105)["granted"])
+        coordination.release(self.db, "main", "session-1")
+        self.assertTrue(coordination.claim(self.db, "main", "session-2", "primary", 105)["granted"])
+
+    def test_empty_candles_logs_info_on_weekend_and_warning_on_weekday(self):
+        sat = datetime(2026, 11, 28, 12, 0)
+        mon = datetime(2026, 11, 30, 12, 0)
+        with patch.object(agent.trades, "candles", return_value=[]):
+            with self.assertLogs("agent", level="INFO") as weekend_logs:
+                self.assertEqual(agent.push_candles(sat - timedelta(hours=2), sat), 0)
+            self.assertEqual(weekend_logs.records[0].levelname, "INFO")
+            with self.assertLogs("agent", level="INFO") as weekday_logs:
+                self.assertEqual(agent.push_candles(mon - timedelta(hours=2), mon), 0)
+            self.assertEqual(weekday_logs.records[0].levelname, "WARNING")
+
     def test_legacy_standby_cannot_take_over_while_owner_is_alive(self):
         coordination.claim(self.db, "main", "m", "primary", 0)
         self.assertFalse(coordination.may_poll_anonymously(self.db, 100))
@@ -1494,6 +1513,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.app.router.add_post("/agent/sync", webhook_server.agent_sync)
         self.app.router.add_post("/agent/candles", webhook_server.agent_candles)
         self.app.router.add_post("/agent/claim", webhook_server.agent_claim)
+        self.app.router.add_post("/agent/release", webhook_server.agent_release)
         self.app.router.add_post("/agent/role_change", webhook_server.agent_role_change)
         self.app.router.add_get("/agent/accounts", webhook_server.agent_accounts)
         self.app.router.add_post("/agent/heartbeat", webhook_server.agent_heartbeat)
@@ -2696,7 +2716,8 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(sorted(p.name for p in out.glob("*.gz"))[0], "state-2026-10-03.db.gz")
             self.assertEqual(len(list(out.glob("*.gz"))), backup.KEEP)
             self.assertTrue(backup.restore_check(path))
-            self.assertEqual(oct(path.stat().st_mode & 0o777), "0o600")
+            if os.name != "nt":
+                self.assertEqual(oct(path.stat().st_mode & 0o777), "0o600")
             self.assertIsNone(backup.snapshot(str(Path(tmp) / "нет.db"), out))
 
     async def test_changing_the_kind_changes_the_title_too(self):
@@ -4352,6 +4373,11 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue((await r.json())["granted"])
         r = await self.client.post("/agent/candles", headers=headers, json={**identity, "candles": []})
         self.assertEqual(r.status, 200)
+        # release позволяет перезапущенному процессу забрать аренду сразу, не ожидая TTL
+        r = await self.client.post("/agent/release", headers=headers, json={"host": "laptop", "session": identity["session"]})
+        self.assertEqual(r.status, 200)
+        r = await self.client.post("/agent/claim", headers=headers, json={**identity, "session": "session-bbbbbbbbbbbbbbbb"})
+        self.assertTrue((await r.json())["granted"])
         # приоритетную выключить нельзя, чужая машина и мусор — ошибки, не-основатель — 403
         self.assertEqual((await post({"host": "laptop", "action": "disable"})).status, 400)
         self.assertEqual((await post({"host": "nope", "action": "enable"})).status, 404)
@@ -4389,7 +4415,6 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_release_journal_is_valid_served_and_shipped(self):
         import re
         import tools.deploy_miniapp as deploy
-        import tools.rollback_miniapp as rollback
         r = await self.client.get("/app/releases.json")
         self.assertEqual(r.status, 200)
         entries = json.loads(await r.text())
@@ -4411,7 +4436,9 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         build = re.search(r"app\.js\?v=(\d{8}-\d+)", index).group(1)
         self.assertEqual(entries[0]["v"], build)
         self.assertIn("web/releases.json", deploy.FILES)
-        self.assertIn("web/releases.json", rollback.OPTIONAL_FILES)
+        if os.name != "nt":
+            import tools.rollback_miniapp as rollback
+            self.assertIn("web/releases.json", rollback.OPTIONAL_FILES)
 
     async def test_theme_script_and_font_are_served_and_shipped(self):
         # тема до первой отрисовки (theme.js) и шрифт Inter: отдаются сервером и есть в поставке,
@@ -4436,16 +4463,19 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         # ронял бы сервер на импорте после «успешной» выкладки
         import re
         import tools.deploy_miniapp as deploy
-        import tools.rollback_miniapp as rollback
         root = Path(__file__).resolve().parents[1]
         shipped = {name for name in deploy.FILES if name.endswith(".py")}
-        rollbackable = set(rollback.FILES) | set(rollback.OPTIONAL_FILES)
+        rollbackable = set()
+        if os.name != "nt":
+            import tools.rollback_miniapp as rollback
+            rollbackable = set(rollback.FILES) | set(rollback.OPTIONAL_FILES)
         for name in ("webhook_server.py", "miniapp.py", "bot.py"):
             for module in re.findall(r"^(?:import|from)\s+(\w+)", (root / name).read_text(encoding="utf-8"), re.M):
                 if (root / f"{module}.py").exists():
                     with self.subTest(module=module):
                         self.assertIn(f"{module}.py", shipped)
-                        self.assertIn(f"{module}.py", rollbackable)
+                        if os.name != "nt":
+                            self.assertIn(f"{module}.py", rollbackable)
         for module in ("activity", "lists", "banks", "insights", "projects", "spend", "income", "goals", "friends", "backup", "devices", "live"):
             self.assertIn(f"{module}.py", shipped)
 
